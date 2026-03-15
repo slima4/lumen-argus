@@ -33,9 +33,17 @@ class ExtensionRegistry:
         self._detectors = []  # type: List[BaseDetector]
         self._notifiers = []  # type: list
 
-    def add_detector(self, detector: BaseDetector) -> None:
-        """Register an additional detector."""
-        self._detectors.append(detector)
+    def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
+        """Register an additional detector.
+
+        Args:
+            detector: Detector instance to register.
+            priority: If True, prepend (runs before community detectors).
+        """
+        if priority:
+            self._detectors.insert(0, detector)
+        else:
+            self._detectors.append(detector)
 
     def add_notifier(self, notifier: object) -> None:
         """Register an additional notifier."""
