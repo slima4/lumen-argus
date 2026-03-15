@@ -162,6 +162,14 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                 server.stats.record(provider, len(body), scan_result)
                 return
 
+            # Apply redaction if action is "redact" and a hook is registered
+            if scan_result.action == "redact" and server.redact_hook is not None:
+                try:
+                    body = server.redact_hook(body, scan_result.findings)
+                    log.debug("#%d redacted %d findings", request_id, len(scan_result.findings))
+                except Exception as e:
+                    log.warning("#%d redaction failed: %s", request_id, e)
+
             # Forward to upstream with retry and connection pooling.
             # On retry after a stale-connection failure, force a fresh
             # connection instead of pulling another potentially stale one
@@ -320,6 +328,7 @@ class ArgusProxyServer(http.server.ThreadingHTTPServer):
         retries: int = 1,
         max_body_size: int = 50 * 1024 * 1024,
         pool_size: int = 4,
+        redact_hook: object = None,
     ):
         # Hard safety invariant: never bind to 0.0.0.0
         if bind != "127.0.0.1" and bind != "localhost":
@@ -334,6 +343,7 @@ class ArgusProxyServer(http.server.ThreadingHTTPServer):
         self.timeout = timeout
         self.retries = retries
         self.max_body_size = max_body_size
+        self.redact_hook = redact_hook
         self.pool = ConnectionPool(
             pool_size=pool_size, timeout=timeout, idle_timeout=timeout * 2,
         )

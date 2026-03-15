@@ -19,9 +19,10 @@ write custom detectors using the same mechanism.
 
 import logging
 import sys
-from typing import List
+from typing import Callable, List, Optional
 
 from lumen_argus.detectors import BaseDetector
+from lumen_argus.models import Finding
 
 log = logging.getLogger("argus.extensions")
 
@@ -29,9 +30,13 @@ log = logging.getLogger("argus.extensions")
 class ExtensionRegistry:
     """Discovers and loads extensions via Python entry points."""
 
+    # Type for redact hook: (body: bytes, findings: List[Finding]) -> bytes
+    RedactHook = Callable[[bytes, List[Finding]], bytes]
+
     def __init__(self):
         self._detectors = []  # type: List[BaseDetector]
         self._notifiers = []  # type: list
+        self._redact_hook = None  # type: Optional[ExtensionRegistry.RedactHook]
 
     def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
         """Register an additional detector.
@@ -48,6 +53,14 @@ class ExtensionRegistry:
     def add_notifier(self, notifier: object) -> None:
         """Register an additional notifier."""
         self._notifiers.append(notifier)
+
+    def set_redact_hook(self, hook: "ExtensionRegistry.RedactHook") -> None:
+        """Register a redaction callback: (body, findings) -> redacted_body."""
+        self._redact_hook = hook
+
+    def get_redact_hook(self) -> "Optional[ExtensionRegistry.RedactHook]":
+        """Return the registered redaction hook, or None."""
+        return self._redact_hook
 
     def extra_detectors(self) -> List[BaseDetector]:
         return list(self._detectors)

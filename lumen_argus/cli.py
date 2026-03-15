@@ -133,6 +133,7 @@ def main(argv=None):
             timeout=config.proxy.timeout,
             retries=config.proxy.retries,
             max_body_size=config.proxy.max_body_size,
+            redact_hook=extensions.get_redact_hook(),
         )
     except OSError as e:
         print("Error: Could not bind to %s:%d — %s" % (bind, port, e), file=sys.stderr)
