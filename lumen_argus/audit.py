@@ -1,0 +1,52 @@
+"""Audit logger: thread-safe JSONL writer with secure file permissions."""
+
+import json
+import os
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from lumen_argus.models import AuditEntry
+
+
+class AuditLogger:
+    """Thread-safe JSONL audit log writer."""
+
+    def __init__(self, log_dir: Optional[str] = None):
+        if log_dir:
+            self._log_dir = Path(os.path.expanduser(log_dir))
+        else:
+            self._log_dir = Path.home() / ".lumen-argus" / "audit"
+
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+
+        # Open log file with secure permissions
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        self._log_path = self._log_dir / ("guard-%s.jsonl" % timestamp)
+
+        # Use os.open for atomic permission setting
+        fd = os.open(
+            str(self._log_path),
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
+        )
+        self._file = os.fdopen(fd, "w")
+        self._lock = threading.Lock()
+
+    @property
+    def log_path(self) -> Path:
+        return self._log_path
+
+    def log(self, entry: AuditEntry) -> None:
+        """Write an audit entry as a single JSONL line."""
+        line = json.dumps(entry.to_dict(), separators=(",", ":"))
+        with self._lock:
+            self._file.write(line + "\n")
+            self._file.flush()
+
+    def close(self) -> None:
+        """Flush and close the log file."""
+        with self._lock:
+            self._file.flush()
+            self._file.close()

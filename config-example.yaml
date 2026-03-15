@@ -1,0 +1,48 @@
+# lumen-argus configuration
+# Copy to ~/.lumen-argus/config.yaml
+version: "1"
+
+# Proxy settings
+proxy:
+  port: 8080
+  bind: "127.0.0.1"
+  upstream:
+    anthropic: "https://api.anthropic.com"
+    openai: "https://api.openai.com"
+
+# Global default action: log | alert | block
+default_action: alert
+
+# Detection settings
+detectors:
+  secrets:
+    enabled: true
+    action: block
+    entropy_threshold: 4.5
+
+  pii:
+    enabled: true
+    action: alert
+
+  proprietary:
+    enabled: true
+    action: alert
+
+# Allowlists — never flag these
+allowlists:
+  secrets:
+    - "AKIAIOSFODNN7EXAMPLE"
+    - "sk-ant-api03-example"
+  pii:
+    - "*@example.com"
+    - "*@test.local"
+  paths:
+    - "test/**"
+    - "fixtures/**"
+    - "*.test.*"
+
+# Audit settings
+audit:
+  log_dir: "~/.lumen-argus/audit"
+  retention_days: 90
+  include_request_summary: true
