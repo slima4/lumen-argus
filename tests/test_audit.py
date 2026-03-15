@@ -121,5 +121,42 @@ class TestAuditLogger(unittest.TestCase):
             self.assertEqual(len(lines), 5)
 
 
+class TestLogRotation(unittest.TestCase):
+    def test_old_logs_deleted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create fake old log files
+            old_file = os.path.join(tmpdir, "guard-20240101-120000.jsonl")
+            recent_file = os.path.join(tmpdir, "guard-20260315-120000.jsonl")
+            with open(old_file, "w") as f:
+                f.write("{}\n")
+            with open(recent_file, "w") as f:
+                f.write("{}\n")
+
+            logger = AuditLogger(log_dir=tmpdir, retention_days=30)
+            logger.close()
+
+            # Old file should be deleted
+            self.assertFalse(os.path.exists(old_file))
+            # Recent file should remain
+            self.assertTrue(os.path.exists(recent_file))
+
+    def test_current_log_not_deleted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            logger = AuditLogger(log_dir=tmpdir, retention_days=1)
+            self.assertTrue(logger.log_path.exists())
+            logger.close()
+
+    def test_non_log_files_ignored(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            other_file = os.path.join(tmpdir, "notes.txt")
+            with open(other_file, "w") as f:
+                f.write("keep me")
+
+            logger = AuditLogger(log_dir=tmpdir, retention_days=1)
+            logger.close()
+
+            self.assertTrue(os.path.exists(other_file))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,7 @@ No anchors, aliases, or multi-line blocks.
 """
 
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -166,10 +167,30 @@ def _parse_sequence(lines: list, start: int, indent: int) -> Tuple[list, int]:
     return result, i
 
 
+def _parse_flow_sequence(text: str) -> Optional[list]:
+    """Parse a YAML flow sequence like [a, b, c]."""
+    text = text.strip()
+    if not text.startswith("[") or not text.endswith("]"):
+        return None
+    inner = text[1:-1].strip()
+    if not inner:
+        return []
+    items = []
+    for item in inner.split(","):
+        items.append(_parse_scalar(item.strip()))
+    return items
+
+
 def _parse_scalar(text: str) -> Any:
     """Parse a scalar value."""
     if not text:
         return None
+
+    # Flow sequence [a, b, c]
+    if text.startswith("[") and text.endswith("]"):
+        result = _parse_flow_sequence(text)
+        if result is not None:
+            return result
 
     # Quoted string
     if (text.startswith('"') and text.endswith('"')) or \
@@ -219,6 +240,9 @@ def _remove_comment(text: str) -> str:
 class ProxyConfig:
     port: int = 8080
     bind: str = "127.0.0.1"
+    timeout: int = 30
+    retries: int = 1
+    max_body_size: int = 50 * 1024 * 1024  # 50MB
 
 
 @dataclass
@@ -264,7 +288,7 @@ _KNOWN_TOP_KEYS = {
     "version", "proxy", "default_action", "detectors",
     "allowlists", "audit", "notifications", "custom_rules",
 }
-_KNOWN_PROXY_KEYS = {"port", "bind", "upstream"}
+_KNOWN_PROXY_KEYS = {"port", "bind", "upstream", "timeout", "retries", "max_body_size"}
 _KNOWN_DETECTOR_KEYS = {"enabled", "action", "entropy_threshold", "severity_threshold", "patterns", "types", "keywords", "file_patterns"}
 _KNOWN_AUDIT_KEYS = {"log_dir", "retention_days", "include_request_summary", "redact_findings_in_log"}
 
@@ -316,6 +340,20 @@ def _validate_config(data: dict, source: str) -> List[str]:
                     "%s: proxy.bind '%s' is not allowed (must be 127.0.0.1 or localhost)"
                     % (source, bind)
                 )
+        if "timeout" in proxy:
+            try:
+                t = int(proxy["timeout"])
+                if t < 1 or t > 300:
+                    warnings.append("%s: proxy.timeout %d is out of range (1-300)" % (source, t))
+            except (ValueError, TypeError):
+                warnings.append("%s: proxy.timeout must be an integer" % source)
+        if "retries" in proxy:
+            try:
+                r = int(proxy["retries"])
+                if r < 0 or r > 5:
+                    warnings.append("%s: proxy.retries %d is out of range (0-5)" % (source, r))
+            except (ValueError, TypeError):
+                warnings.append("%s: proxy.retries must be an integer" % source)
 
     # Validate detector sections
     detectors = data.get("detectors", {})
@@ -379,6 +417,38 @@ def _validate_config(data: dict, source: str) -> List[str]:
 # Config loading
 # ---------------------------------------------------------------------------
 
+def _check_unsupported_yaml(text: str, source: str) -> List[str]:
+    """Detect unsupported YAML syntax and return warnings."""
+    warnings = []  # type: List[str]
+    for lineno, line in enumerate(text.split("\n"), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Block scalars (| or >)
+        if re.match(r"^[^#]*:\s*[|>]\s*$", stripped):
+            warnings.append(
+                "%s line %d: multi-line block scalars (| or >) are not supported, "
+                "use quoted strings instead" % (source, lineno)
+            )
+        # Anchors and aliases
+        if re.match(r"^[^#]*[&*]\w+", stripped) and not stripped.startswith("-"):
+            # Avoid false positives on glob patterns in allowlists
+            colon_pos = stripped.find(":")
+            if colon_pos == -1 or stripped.find("&") < colon_pos or stripped.find("*") < colon_pos:
+                pass  # could be an anchor in a key position — unlikely in our schema
+        # Flow mappings {key: value}
+        colon_pos = stripped.find(":")
+        if colon_pos != -1:
+            value = stripped[colon_pos + 1:].strip()
+            value = _remove_comment(value)
+            if value.startswith("{") and value.endswith("}"):
+                warnings.append(
+                    "%s line %d: flow mappings ({...}) are not supported, "
+                    "use indented key: value pairs instead" % (source, lineno)
+                )
+    return warnings
+
+
 def load_config(
     config_path: Optional[str] = None,
     project_path: Optional[str] = None,
@@ -399,6 +469,8 @@ def load_config(
     if global_path.exists():
         try:
             text = global_path.read_text(encoding="utf-8")
+            for w in _check_unsupported_yaml(text, str(global_path)):
+                _warn(w)
             data = _parse_yaml(text)
             for w in _validate_config(data, str(global_path)):
                 _warn(w)
@@ -415,6 +487,8 @@ def load_config(
     if proj.exists():
         try:
             text = proj.read_text(encoding="utf-8")
+            for w in _check_unsupported_yaml(text, str(proj)):
+                _warn(w)
             data = _parse_yaml(text)
             for w in _validate_config(data, str(proj)):
                 _warn(w)
@@ -437,6 +511,12 @@ def _apply_config(config: Config, data: dict) -> None:
             config.proxy.port = int(proxy["port"])
         if "bind" in proxy:
             config.proxy.bind = str(proxy["bind"])
+        if "timeout" in proxy:
+            config.proxy.timeout = int(proxy["timeout"])
+        if "retries" in proxy:
+            config.proxy.retries = int(proxy["retries"])
+        if "max_body_size" in proxy:
+            config.proxy.max_body_size = int(proxy["max_body_size"])
         upstream = proxy.get("upstream", {})
         if isinstance(upstream, dict):
             config.upstreams.update(upstream)

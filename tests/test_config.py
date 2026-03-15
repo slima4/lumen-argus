@@ -2,7 +2,7 @@
 
 import unittest
 
-from lumen_argus.config import _parse_yaml, _validate_config, Config, load_config
+from lumen_argus.config import _parse_yaml, _validate_config, _check_unsupported_yaml, Config, load_config
 
 
 class TestYAMLParser(unittest.TestCase):
@@ -203,6 +203,80 @@ detectors:
             data = {"default_action": action}
             warnings = _validate_config(data, "test")
             self.assertEqual(len(warnings), 0, "action '%s' should be valid" % action)
+
+    def test_timeout_out_of_range(self):
+        data = {"proxy": {"timeout": 999}}
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("timeout" in w for w in warnings))
+
+    def test_retries_out_of_range(self):
+        data = {"proxy": {"retries": 10}}
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("retries" in w for w in warnings))
+
+    def test_valid_timeout_retries(self):
+        data = {"proxy": {"timeout": 30, "retries": 1}}
+        warnings = _validate_config(data, "test")
+        self.assertEqual(len(warnings), 0)
+
+
+class TestFlowSequences(unittest.TestCase):
+    def test_flow_sequence_parsed(self):
+        yaml = """
+items: [one, two, three]
+"""
+        result = _parse_yaml(yaml)
+        self.assertEqual(result["items"], ["one", "two", "three"])
+
+    def test_empty_flow_sequence(self):
+        yaml = """
+items: []
+"""
+        result = _parse_yaml(yaml)
+        self.assertEqual(result["items"], [])
+
+    def test_flow_sequence_with_numbers(self):
+        yaml = """
+ports: [8080, 9090, 3000]
+"""
+        result = _parse_yaml(yaml)
+        self.assertEqual(result["ports"], [8080, 9090, 3000])
+
+    def test_flow_sequence_with_quoted_strings(self):
+        yaml = """
+names: ["hello", "world"]
+"""
+        result = _parse_yaml(yaml)
+        self.assertEqual(result["names"], ["hello", "world"])
+
+
+class TestUnsupportedYAMLDetection(unittest.TestCase):
+    def test_block_scalar_warned(self):
+        yaml = "description: |\n  multi\n  line\n"
+        warnings = _check_unsupported_yaml(yaml, "test")
+        self.assertTrue(any("block scalar" in w for w in warnings))
+
+    def test_folded_scalar_warned(self):
+        yaml = "description: >\n  folded\n  text\n"
+        warnings = _check_unsupported_yaml(yaml, "test")
+        self.assertTrue(any("block scalar" in w for w in warnings))
+
+    def test_flow_mapping_warned(self):
+        yaml = "proxy: {port: 8080, bind: localhost}\n"
+        warnings = _check_unsupported_yaml(yaml, "test")
+        self.assertTrue(any("flow mapping" in w for w in warnings))
+
+    def test_normal_config_no_warnings(self):
+        yaml = """
+proxy:
+  port: 8080
+  bind: "127.0.0.1"
+allowlists:
+  secrets:
+    - "AKIAIOSFODNN7EXAMPLE"
+"""
+        warnings = _check_unsupported_yaml(yaml, "test")
+        self.assertEqual(len(warnings), 0)
 
 
 if __name__ == "__main__":

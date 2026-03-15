@@ -68,7 +68,7 @@ def main(argv=None):
 
     # Construct components
     display = TerminalDisplay(no_color=args.no_color)
-    audit = AuditLogger(log_dir=log_dir)
+    audit = AuditLogger(log_dir=log_dir, retention_days=config.audit.retention_days)
     extensions = ExtensionRegistry()
     allowlist = AllowlistMatcher(
         secrets=config.allowlist.secrets,
@@ -93,6 +93,9 @@ def main(argv=None):
             router=router,
             audit=audit,
             display=display,
+            timeout=config.proxy.timeout,
+            retries=config.proxy.retries,
+            max_body_size=config.proxy.max_body_size,
         )
     except OSError as e:
         print("Error: Could not bind to %s:%d — %s" % (bind, port, e), file=sys.stderr)

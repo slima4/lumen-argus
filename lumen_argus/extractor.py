@@ -154,6 +154,35 @@ class RequestExtractor:
                         text=tool_content,
                     ))
 
+            # Tool calls from assistant messages (#9)
+            if role == "assistant":
+                tool_calls = msg.get("tool_calls", [])
+                if isinstance(tool_calls, list):
+                    for k, tc in enumerate(tool_calls):
+                        if not isinstance(tc, dict):
+                            continue
+                        func = tc.get("function", {})
+                        if not isinstance(func, dict):
+                            continue
+                        args_str = func.get("arguments", "")
+                        if not isinstance(args_str, str) or not args_str:
+                            continue
+                        try:
+                            args_data = json.loads(args_str)
+                            if isinstance(args_data, dict):
+                                for arg_key, arg_val in args_data.items():
+                                    if isinstance(arg_val, str) and arg_val:
+                                        fields.append(ScanField(
+                                            path="messages[%d].tool_calls[%d].function.arguments.%s" % (i, k, arg_key),
+                                            text=arg_val,
+                                        ))
+                        except (json.JSONDecodeError, ValueError):
+                            if len(args_str) > 20:
+                                fields.append(ScanField(
+                                    path="messages[%d].tool_calls[%d].function.arguments" % (i, k),
+                                    text=args_str,
+                                ))
+
         return fields
 
     def _extract_gemini(self, data: dict) -> List[ScanField]:
@@ -180,15 +209,47 @@ class RequestExtractor:
                 continue
             parts = content.get("parts", [])
             for j, part in enumerate(parts):
-                if isinstance(part, dict):
-                    text = part.get("text", "")
-                    if text:
-                        fields.append(ScanField(
-                            path="contents[%d].parts[%d]" % (i, j),
-                            text=text,
-                        ))
+                if not isinstance(part, dict):
+                    continue
+                text = part.get("text", "")
+                if text:
+                    fields.append(ScanField(
+                        path="contents[%d].parts[%d]" % (i, j),
+                        text=text,
+                    ))
+                # Function response (#10)
+                func_resp = part.get("functionResponse", {})
+                if isinstance(func_resp, dict):
+                    resp_data = func_resp.get("response", {})
+                    if isinstance(resp_data, dict):
+                        self._walk_nested(
+                            resp_data,
+                            "contents[%d].parts[%d].functionResponse.response" % (i, j),
+                            fields,
+                        )
+                # Function call arguments (#10)
+                func_call = part.get("functionCall", {})
+                if isinstance(func_call, dict):
+                    args = func_call.get("args", {})
+                    if isinstance(args, dict):
+                        self._walk_nested(
+                            args,
+                            "contents[%d].parts[%d].functionCall.args" % (i, j),
+                            fields,
+                        )
 
         return fields
+
+    def _walk_nested(self, obj: object, path: str, fields: List[ScanField]) -> None:
+        """Recursively extract string values from nested dicts/lists."""
+        if isinstance(obj, str) and obj:
+            fields.append(ScanField(path=path, text=obj))
+        elif isinstance(obj, dict):
+            for k, v in obj.items():
+                self._walk_nested(v, "%s.%s" % (path, k), fields)
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                self._walk_nested(v, "%s[%d]" % (path, i), fields)
 
     def _extract_generic(self, data: dict) -> List[ScanField]:
         """Fallback: recursively extract all string values > 20 chars."""

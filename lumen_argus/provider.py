@@ -19,29 +19,32 @@ class ProviderRouter:
         if upstreams:
             self._upstreams.update(upstreams)
 
-    def route(self, path: str, headers: dict) -> Tuple[str, int, str]:
-        """Determine upstream host, port, and provider name from request.
+    def route(self, path: str, headers: dict) -> Tuple[str, int, bool, str]:
+        """Determine upstream host, port, SSL flag, and provider name.
 
         Args:
             path: Request path (e.g. "/v1/messages").
             headers: Request headers dict.
 
         Returns:
-            (upstream_host, upstream_port, provider_name)
+            (upstream_host, upstream_port, use_ssl, provider_name)
         """
         provider = self._detect_provider(path, headers)
         upstream_url = self._upstreams.get(provider, self._upstreams["anthropic"])
 
-        # Parse URL into host and port
+        # Parse URL into host, port, and protocol
         if upstream_url.startswith("https://"):
             host = upstream_url[8:]
             port = 443
+            use_ssl = True
         elif upstream_url.startswith("http://"):
             host = upstream_url[7:]
             port = 80
+            use_ssl = False
         else:
             host = upstream_url
             port = 443
+            use_ssl = True
 
         # Handle host:port format
         if ":" in host:
@@ -55,7 +58,7 @@ class ProviderRouter:
         # Strip trailing slash
         host = host.rstrip("/")
 
-        return host, port, provider
+        return host, port, use_ssl, provider
 
     def _detect_provider(self, path: str, headers: dict) -> str:
         """Detect provider from path and headers."""

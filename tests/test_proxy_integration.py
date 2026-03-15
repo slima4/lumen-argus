@@ -141,6 +141,34 @@ class TestProxyIntegration(unittest.TestCase):
         # Alert action should forward (not block)
         self.assertEqual(status, 200)
 
+    def test_streaming_secret_blocked_as_sse(self):
+        """#2: Blocked SSE request should return SSE error event."""
+        body = json.dumps({
+            "model": "claude-opus-4-6",
+            "stream": True,
+            "messages": [
+                {"role": "user", "content": "My key: AKIAIOSFODNN7EXAMPLE"},
+            ],
+        }).encode()
+        req = urllib.request.Request(
+            "http://127.0.0.1:%d/v1/messages" % self.proxy_port,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": "test-key",
+                "anthropic-version": "2024-01-01",
+            },
+            method="POST",
+        )
+        resp = urllib.request.urlopen(req)
+        # SSE block returns 200 with text/event-stream
+        self.assertEqual(resp.status, 200)
+        content_type = resp.headers.get("Content-Type", "")
+        self.assertIn("text/event-stream", content_type)
+        data = resp.read().decode()
+        self.assertIn("event: error", data)
+        self.assertIn("request_blocked", data)
+
 
 if __name__ == "__main__":
     unittest.main()

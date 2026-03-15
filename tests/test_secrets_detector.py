@@ -159,6 +159,19 @@ class TestSecretsDetector(unittest.TestCase):
         # Full value should be in matched_value
         self.assertEqual(aws.matched_value, "AKIAIOSFODNN7EXAMPLE")
 
+    # --- False positive prevention (#8) ---
+    def test_openai_low_entropy_not_flagged(self):
+        """#8: Low-entropy sk- strings should not be flagged (needs_entropy=True)."""
+        findings = self._scan("sk-aaaaaaaaaaaaaaaaaaaaaaa")
+        openai = [f for f in findings if f.type == "openai_api_key"]
+        self.assertEqual(len(openai), 0)
+
+    def test_openai_high_entropy_flagged(self):
+        """#8: High-entropy sk- strings should still be detected."""
+        findings = self._scan("sk-proj1234567890abcdefghij")
+        types = [f.type for f in findings]
+        self.assertIn("openai_api_key", types)
+
     # --- No false positives ---
     def test_normal_code_no_findings(self):
         findings = self._scan("def hello():\n    return 'world'")

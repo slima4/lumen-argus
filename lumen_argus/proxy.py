@@ -17,10 +17,10 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from lumen_argus.actions import build_block_response, should_forward
+from lumen_argus.actions import build_block_response, build_sse_block_response, should_forward
 from lumen_argus.audit import AuditLogger
 from lumen_argus.display import TerminalDisplay
-from lumen_argus.models import AuditEntry, ScanResult
+from lumen_argus.models import AuditEntry, Finding, ScanResult
 from lumen_argus.pipeline import ScannerPipeline
 from lumen_argus.provider import ProviderRouter
 
@@ -29,9 +29,6 @@ _SSL_CTX = ssl.create_default_context()
 
 # Thread-safe request counter.
 _request_counter = itertools.count(1)
-
-# Maximum request body size to scan (50MB safety valve).
-MAX_BODY_SIZE = 50 * 1024 * 1024
 
 # Hop-by-hop headers that must not be forwarded.
 _HOP_BY_HOP = frozenset({
@@ -85,9 +82,9 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
             if content_length > 0:
                 body = self.rfile.read(content_length)
 
-            # Detect provider and determine upstream
+            # Detect provider and determine upstream (#1: use_ssl flag)
             headers_dict = {k.lower(): v for k, v in self.headers.items()}
-            host, port, provider = server.router.route(self.path, headers_dict)
+            host, port, use_ssl, provider = server.router.route(self.path, headers_dict)
 
             # Extract model from request body for display
             if body:
@@ -95,7 +92,6 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                     req_data = json.loads(body)
                     if isinstance(req_data, dict):
                         model = req_data.get("model", "")
-                        # Detect streaming
                         is_streaming = req_data.get("stream", False)
                     else:
                         is_streaming = False
@@ -104,20 +100,40 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
             else:
                 is_streaming = False
 
-            # Scan request body if it's not too large
-            if body and len(body) <= MAX_BODY_SIZE:
+            # Scan request body (#5: oversized bodies get a finding)
+            if body and len(body) <= server.max_body_size:
                 scan_result = server.pipeline.scan(body, provider)
-            elif len(body) > MAX_BODY_SIZE:
-                # Log oversized body warning but don't scan
-                scan_result = ScanResult(action="pass")
+            elif len(body) > server.max_body_size:
+                scan_result = ScanResult(
+                    action="pass",
+                    findings=[Finding(
+                        detector="proxy",
+                        type="scan_skipped_oversized",
+                        severity="warning",
+                        location="request_body",
+                        value_preview="%d bytes" % len(body),
+                        matched_value="",
+                        action="log",
+                    )],
+                )
+                server.display.show_error(
+                    request_id,
+                    "body too large to scan (%d bytes > %d limit)"
+                    % (len(body), server.max_body_size),
+                )
 
-            # Check if we should block
+            # Check if we should block (#2: SSE-aware block response)
             if not should_forward(scan_result):
-                # Send block response
-                block_body = build_block_response(scan_result)
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(block_body)))
+                if is_streaming:
+                    block_body = build_sse_block_response(scan_result)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                else:
+                    block_body = build_block_response(scan_result)
+                    self.send_response(403)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(block_body)))
                 self.end_headers()
                 self.wfile.write(block_body)
                 resp_size = len(block_body)
@@ -133,54 +149,69 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                 )
                 return
 
-            # Forward to upstream
-            if port == 443:
-                conn = http.client.HTTPSConnection(host, port, context=_SSL_CTX)
-            else:
-                conn = http.client.HTTPConnection(host, port)
+            # Forward to upstream (#1: use_ssl flag, #3: retry + timeout)
+            last_err = None
+            for attempt in range(server.retries + 1):
+                conn = None
+                try:
+                    if use_ssl:
+                        conn = http.client.HTTPSConnection(
+                            host, port, context=_SSL_CTX, timeout=server.timeout,
+                        )
+                    else:
+                        conn = http.client.HTTPConnection(
+                            host, port, timeout=server.timeout,
+                        )
 
-            try:
-                # Build forwarding headers
-                fwd_headers = {}
-                for key, val in self.headers.items():
-                    lk = key.lower()
-                    if lk in _HOP_BY_HOP:
+                    # Build forwarding headers
+                    fwd_headers = {}
+                    for key, val in self.headers.items():
+                        lk = key.lower()
+                        if lk in _HOP_BY_HOP:
+                            continue
+                        if lk in ("host", "accept-encoding"):
+                            continue
+                        fwd_headers[key] = val
+                    fwd_headers["Host"] = host
+
+                    conn.request(self.command, self.path, body, fwd_headers)
+                    resp = conn.getresponse()
+
+                    # Forward response status and headers
+                    self.send_response(resp.status)
+                    content_type = ""
+                    for hdr, val in resp.getheaders():
+                        lk = hdr.lower()
+                        if lk in _HOP_BY_HOP:
+                            continue
+                        if lk == "content-type":
+                            content_type = val
+                        if lk == "content-length" and (is_streaming or "text/event-stream" in content_type):
+                            continue
+                        self.send_header(hdr, val)
+                    self.end_headers()
+
+                    # Stream or read response body
+                    is_sse = is_streaming or "text/event-stream" in content_type
+
+                    if is_sse:
+                        resp_size = self._stream_sse(resp)
+                    else:
+                        data = resp.read()
+                        self.wfile.write(data)
+                        resp_size = len(data)
+
+                    conn.close()
+                    last_err = None
+                    break  # success
+
+                except (ConnectionError, OSError, http.client.HTTPException) as e:
+                    last_err = e
+                    if conn:
+                        conn.close()
+                    if attempt < server.retries:
                         continue
-                    if lk in ("host", "accept-encoding"):
-                        continue
-                    fwd_headers[key] = val
-                fwd_headers["Host"] = host
-
-                conn.request(self.command, self.path, body, fwd_headers)
-                resp = conn.getresponse()
-
-                # Forward response status and headers
-                self.send_response(resp.status)
-                content_type = ""
-                for hdr, val in resp.getheaders():
-                    lk = hdr.lower()
-                    if lk in _HOP_BY_HOP:
-                        continue
-                    if lk == "content-type":
-                        content_type = val
-                    # Don't forward content-length for streaming
-                    if lk == "content-length" and (is_streaming or "text/event-stream" in content_type):
-                        continue
-                    self.send_header(hdr, val)
-                self.end_headers()
-
-                # Stream or read response body
-                is_sse = is_streaming or "text/event-stream" in content_type
-
-                if is_sse:
-                    resp_size = self._stream_sse(resp)
-                else:
-                    data = resp.read()
-                    self.wfile.write(data)
-                    resp_size = len(data)
-
-            finally:
-                conn.close()
+                    raise
 
             # Display request line
             server.display.show_request(
@@ -269,6 +300,9 @@ class ArgusProxyServer(http.server.ThreadingHTTPServer):
         router: ProviderRouter,
         audit: AuditLogger,
         display: TerminalDisplay,
+        timeout: int = 30,
+        retries: int = 1,
+        max_body_size: int = 50 * 1024 * 1024,
     ):
         # Hard safety invariant: never bind to 0.0.0.0
         if bind != "127.0.0.1" and bind != "localhost":
@@ -280,5 +314,8 @@ class ArgusProxyServer(http.server.ThreadingHTTPServer):
         self.router = router
         self.audit = audit
         self.display = display
+        self.timeout = timeout
+        self.retries = retries
+        self.max_body_size = max_body_size
 
         super().__init__((bind, port), ArgusProxyHandler)

@@ -49,7 +49,7 @@ SECRETS_PATTERNS = (
     SecretPattern(
         "openai_api_key",
         re.compile(r"sk-[a-zA-Z0-9]{20,}"),
-        "critical", False,
+        "critical", True,
     ),
 
     # --- Version Control & CI ---

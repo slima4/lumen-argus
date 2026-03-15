@@ -27,6 +27,12 @@ def build_block_response(result: ScanResult) -> bytes:
     return json.dumps(body).encode("utf-8")
 
 
+def build_sse_block_response(result: ScanResult) -> bytes:
+    """Build an SSE-formatted error event for blocked streaming requests."""
+    body = build_block_response(result)
+    return b"event: error\ndata: " + body + b"\n\n"
+
+
 def should_forward(result: ScanResult) -> bool:
     """Return True if the request should be forwarded to upstream."""
     return result.action != "block"

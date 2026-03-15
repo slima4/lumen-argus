@@ -114,9 +114,44 @@ class TestOpenAIExtractor(unittest.TestCase):
             ],
         }).encode()
         fields = self.extractor.extract(body, "openai")
-        # Should extract tool content
         texts = [f.text for f in fields]
         self.assertTrue(any("Tool output" in t for t in texts))
+
+    def test_tool_calls_extraction(self):
+        """#9: Extract function arguments from assistant tool_calls."""
+        body = json.dumps({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "call_1", "type": "function", "function": {
+                        "name": "write_file",
+                        "arguments": '{"path": "/tmp/test.txt", "content": "secret data here"}'
+                    }}
+                ]}
+            ],
+        }).encode()
+        fields = self.extractor.extract(body, "openai")
+        texts = [f.text for f in fields]
+        self.assertTrue(any("secret data here" in t for t in texts))
+        paths = [f.path for f in fields]
+        self.assertTrue(any("tool_calls" in p for p in paths))
+
+    def test_tool_calls_non_json_arguments(self):
+        """#9: Non-JSON arguments longer than 20 chars are extracted as-is."""
+        body = json.dumps({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "call_1", "type": "function", "function": {
+                        "name": "run",
+                        "arguments": "this is not json but longer than twenty chars"
+                    }}
+                ]}
+            ],
+        }).encode()
+        fields = self.extractor.extract(body, "openai")
+        texts = [f.text for f in fields]
+        self.assertTrue(any("this is not json" in t for t in texts))
 
 
 class TestGeminiExtractor(unittest.TestCase):
@@ -137,6 +172,36 @@ class TestGeminiExtractor(unittest.TestCase):
         paths = [f.path for f in fields]
         self.assertIn("systemInstruction.parts[0]", paths)
         self.assertIn("contents[0].parts[0]", paths)
+
+    def test_function_response(self):
+        """#10: Extract Gemini functionResponse data."""
+        body = json.dumps({
+            "contents": [{
+                "role": "function",
+                "parts": [{"functionResponse": {
+                    "name": "get_secret",
+                    "response": {"result": "sensitive_value_here"}
+                }}]
+            }]
+        }).encode()
+        fields = self.extractor.extract(body, "gemini")
+        texts = [f.text for f in fields]
+        self.assertIn("sensitive_value_here", texts)
+
+    def test_function_call_args(self):
+        """#10: Extract Gemini functionCall arguments."""
+        body = json.dumps({
+            "contents": [{
+                "role": "model",
+                "parts": [{"functionCall": {
+                    "name": "store_data",
+                    "args": {"data": "secret_content"}
+                }}]
+            }]
+        }).encode()
+        fields = self.extractor.extract(body, "gemini")
+        texts = [f.text for f in fields]
+        self.assertIn("secret_content", texts)
 
 
 class TestGenericExtractor(unittest.TestCase):
