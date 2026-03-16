@@ -363,6 +363,14 @@ class ArgusProxyServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
+    def handle_error(self, request, client_address):
+        """Suppress connection reset errors from client disconnections."""
+        import sys
+        exc_type = sys.exc_info()[0]
+        if exc_type in (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+            return  # Normal — client closed the connection
+        super().handle_error(request, client_address)
+
     def __init__(
         self,
         bind: str,
