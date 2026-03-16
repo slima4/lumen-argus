@@ -122,24 +122,37 @@ lumen-argus serve [--port PORT] [--config PATH] [--log-dir DIR] [--format text|j
 
 JSON format outputs one JSON line per request — useful for piping to `jq`, scripts, or log aggregation.
 
-### scan — Scan files for secrets (pre-commit hook)
+### scan — Catch secrets before they reach AI tools
+
+The proxy catches secrets at request time — but by then the AI tool already read the file and the secret is stuck in conversation history. `scan` catches them earlier, at commit time:
 
 ```bash
-# Scan specific files
-lumen-argus scan .env config.yaml
+$ lumen-argus scan .env config/database.yml
+lumen-argus: .env — 3 finding(s)
+  [CRITICAL] secrets: aws_secret_key
+  [CRITICAL] secrets: database_url
+  [HIGH] secrets: generic_password
+lumen-argus: config/database.yml — 1 finding(s)
+  [CRITICAL] secrets: database_url
 
-# Scan stdin
-cat secrets.txt | lumen-argus scan
+$ echo $?
+1
+```
 
-# JSON output for CI
+```bash
+# Scan stdin (e.g. from a pipe)
+cat deployment.yaml | lumen-argus scan
+
+# JSON output for CI pipelines
 lumen-argus scan --format json .env
+{"file":".env","count":3,"findings":[{"detector":"secrets","type":"aws_secret_key","severity":"critical","count":1},...]}
 
-# As a git pre-commit hook
+# As a git pre-commit hook — blocks commits with secrets
 echo 'lumen-argus scan "$@"' > .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 ```
 
-Exit code: `0` = clean, `1` = findings detected.
+Same detection engine as the proxy, same config, same allowlists. Exit code `0` = clean, `1` = findings.
 
 ## Configuration
 
