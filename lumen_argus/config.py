@@ -243,7 +243,7 @@ def _remove_comment(text: str) -> str:
 class ProxyConfig:
     port: int = 8080
     bind: str = "127.0.0.1"
-    timeout: int = 30
+    timeout: int = 120
     retries: int = 1
     max_body_size: int = 50 * 1024 * 1024  # 50MB
 
@@ -463,7 +463,7 @@ version: "1"
 proxy:
   port: 8080
   bind: "127.0.0.1"
-  timeout: 30
+  timeout: 120
   retries: 1
 
 # Global default action: log | alert | block

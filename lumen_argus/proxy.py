@@ -14,6 +14,7 @@ import http.server
 import itertools
 import json
 import logging
+import socket
 import ssl
 import threading
 import time
@@ -274,6 +275,29 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
 
         except (BrokenPipeError, ConnectionResetError):
             pass  # Client disconnected
+        except socket.timeout:
+            msg = (
+                "Upstream timed out after %ds. "
+                "Increase proxy.timeout in ~/.lumen-argus/config.yaml "
+                "or the dashboard Settings page."
+                % server.timeout
+            )
+            server.display.show_error(request_id, msg)
+            server.stats.record(provider, len(body), scan_result)
+            # Only send error response if headers haven't been sent yet
+            if not resp_size:
+                try:
+                    error_body = json.dumps({
+                        "error": {"type": "timeout", "message": msg}
+                    }).encode("utf-8")
+                    self.send_response(504)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(error_body)))
+                    self.end_headers()
+                    self.wfile.write(error_body)
+                except Exception:
+                    pass
+            return
         except Exception as e:
             server.display.show_error(request_id, str(e))
             server.stats.record(provider, len(body), scan_result)

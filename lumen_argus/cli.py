@@ -135,6 +135,8 @@ def main(argv=None):
             max_body_size=config.proxy.max_body_size,
             redact_hook=extensions.get_redact_hook(),
         )
+        # Store server reference for Pro runtime config updates
+        extensions._proxy_server = server
     except OSError as e:
         print("Error: Could not bind to %s:%d — %s" % (bind, port, e), file=sys.stderr)
         sys.exit(1)
