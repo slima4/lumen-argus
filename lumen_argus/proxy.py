@@ -70,8 +70,27 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
     def do_PATCH(self):
         self._forward()
 
+    def _handle_health(self):
+        """Respond to /health endpoint with proxy status."""
+        server = self.server  # type: ArgusProxyServer
+        body = json.dumps({
+            "status": "ok",
+            "version": __import__("lumen_argus").__version__,
+            "requests": server.stats.total_requests,
+        }).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _forward(self):
         """Main request handling: read -> scan -> forward or block."""
+        # Health check endpoint — handled locally, not forwarded
+        if self.path == "/health":
+            self._handle_health()
+            return
+
         request_id = next(_request_counter)
         server = self.server  # type: ArgusProxyServer
         t0 = time.monotonic()
