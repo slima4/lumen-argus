@@ -189,6 +189,10 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                             continue
                         if lk in ("host", "accept-encoding"):
                             continue
+                        # Recalculate Content-Length if body was modified (e.g. by redaction)
+                        if lk == "content-length":
+                            fwd_headers[key] = str(len(body))
+                            continue
                         fwd_headers[key] = val
                     fwd_headers["Host"] = host
 

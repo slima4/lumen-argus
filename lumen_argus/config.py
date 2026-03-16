@@ -290,6 +290,9 @@ _VALID_ACTIONS = {"log", "alert", "redact", "block"}
 _KNOWN_TOP_KEYS = {
     "version", "proxy", "default_action", "detectors",
     "allowlists", "audit", "notifications", "custom_rules",
+    # Pro/Enterprise extension keys (read by lumen-argus-pro plugin)
+    "license_key", "redaction", "dashboard", "analytics", "enterprise",
+    "custom_detectors",
 }
 _KNOWN_PROXY_KEYS = {"port", "bind", "upstream", "timeout", "retries", "max_body_size"}
 _KNOWN_DETECTOR_KEYS = {"enabled", "action", "entropy_threshold", "severity_threshold", "patterns", "types", "keywords", "file_patterns"}
