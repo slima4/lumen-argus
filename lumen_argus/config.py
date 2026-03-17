@@ -145,7 +145,7 @@ def _parse_sequence(lines: list, start: int, indent: int) -> Tuple[list, int]:
 
             if next_i < len(lines):
                 next_indent = len(lines[next_i]) - len(lines[next_i].lstrip())
-                if next_indent > current_indent + 2:
+                if next_indent >= current_indent + 2:
                     # Multi-line mapping under sequence item
                     first_key = item_text[:item_text.index(":")].strip().strip('"').strip("'")
                     first_val = _parse_scalar(_remove_comment(item_text[item_text.index(":") + 1:].strip()))
@@ -277,6 +277,15 @@ class LoggingConfig:
 
 
 @dataclass
+class CustomRuleConfig:
+    name: str = ""
+    pattern: str = ""          # raw regex string
+    compiled: object = None    # compiled re.Pattern (set during parsing)
+    severity: str = "high"     # critical, high, warning, info
+    action: str = ""           # empty = use default_action
+
+
+@dataclass
 class Config:
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     default_action: str = "alert"
@@ -287,6 +296,7 @@ class Config:
     allowlist: AllowlistConfig = field(default_factory=AllowlistConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
     logging_config: LoggingConfig = field(default_factory=LoggingConfig)
+    custom_rules: List["CustomRuleConfig"] = field(default_factory=list)
     upstreams: Dict[str, str] = field(default_factory=dict)
 
 
@@ -307,6 +317,8 @@ _KNOWN_PROXY_KEYS = {"port", "bind", "upstream", "timeout", "retries", "max_body
 _KNOWN_DETECTOR_KEYS = {"enabled", "action", "entropy_threshold", "severity_threshold", "patterns", "types", "keywords", "file_patterns"}
 _KNOWN_AUDIT_KEYS = {"log_dir", "retention_days", "include_request_summary", "redact_findings_in_log"}
 _KNOWN_LOGGING_KEYS = {"log_dir", "file_level", "max_size_mb", "backup_count", "format", "output"}
+_KNOWN_CUSTOM_RULE_KEYS = {"name", "pattern", "severity", "action"}
+_VALID_SEVERITIES = {"critical", "high", "warning", "info"}
 
 
 def _warn(msg: str) -> None:
@@ -464,6 +476,42 @@ def _validate_config(data: dict, source: str) -> List[str]:
                 warnings.append(
                     "%s: logging.output '%s' requires Pro license" % (source, output)
                 )
+
+    # Validate custom_rules section
+    rules = data.get("custom_rules", [])
+    if isinstance(rules, list):
+        for i, rule in enumerate(rules):
+            if not isinstance(rule, dict):
+                warnings.append("%s: custom_rules[%d] must be a mapping" % (source, i))
+                continue
+            for key in rule:
+                if key not in _KNOWN_CUSTOM_RULE_KEYS:
+                    warnings.append("%s: unknown key 'custom_rules[%d].%s'" % (source, i, key))
+            if "name" not in rule or not rule["name"]:
+                warnings.append("%s: custom_rules[%d] missing required 'name'" % (source, i))
+            if "pattern" not in rule or not rule["pattern"]:
+                warnings.append("%s: custom_rules[%d] missing required 'pattern'" % (source, i))
+            else:
+                try:
+                    re.compile(str(rule["pattern"]))
+                except re.error as e:
+                    warnings.append(
+                        "%s: custom_rules[%d].pattern is invalid regex: %s" % (source, i, e)
+                    )
+            if "severity" in rule:
+                sev = str(rule["severity"]).lower()
+                if sev not in _VALID_SEVERITIES:
+                    warnings.append(
+                        "%s: custom_rules[%d].severity '%s' is not valid (expected: %s)"
+                        % (source, i, sev, ", ".join(sorted(_VALID_SEVERITIES)))
+                    )
+            if "action" in rule:
+                act = str(rule["action"])
+                if act not in _VALID_ACTIONS:
+                    warnings.append(
+                        "%s: custom_rules[%d].action '%s' is not valid (expected: %s)"
+                        % (source, i, act, ", ".join(sorted(_VALID_ACTIONS)))
+                    )
 
     # Validate allowlists section
     al = data.get("allowlists", {})
@@ -702,6 +750,28 @@ def _apply_config(config: Config, data: dict) -> None:
             config.logging_config.max_size_mb = int(logging_sec["max_size_mb"])
         if "backup_count" in logging_sec:
             config.logging_config.backup_count = int(logging_sec["backup_count"])
+
+    # Custom rules
+    rules = data.get("custom_rules", [])
+    if isinstance(rules, list):
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            name = str(rule.get("name", ""))
+            pattern = str(rule.get("pattern", ""))
+            if not name or not pattern:
+                continue
+            try:
+                compiled = re.compile(pattern)
+            except re.error:
+                continue  # validation already warned
+            config.custom_rules.append(CustomRuleConfig(
+                name=name,
+                pattern=pattern,
+                compiled=compiled,
+                severity=str(rule.get("severity", "high")).lower(),
+                action=str(rule.get("action", "")),
+            ))
 
 
 def _apply_project_config(config: Config, data: dict) -> None:

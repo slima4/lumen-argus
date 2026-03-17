@@ -8,6 +8,7 @@ log = logging.getLogger("argus.pipeline")
 
 from lumen_argus.allowlist import AllowlistMatcher
 from lumen_argus.detectors import BaseDetector
+from lumen_argus.detectors.custom import CustomDetector
 from lumen_argus.detectors.pii import PIIDetector
 from lumen_argus.detectors.proprietary import ProprietaryDetector
 from lumen_argus.detectors.secrets import SecretsDetector
@@ -35,6 +36,7 @@ class ScannerPipeline:
         entropy_threshold: float = 4.5,
         extensions: ExtensionRegistry = None,
         max_scan_bytes: int = MAX_SCAN_TEXT_BYTES,
+        custom_rules: list = None,
     ):
         self._extractor = RequestExtractor()
         self._allowlist = allowlist or AllowlistMatcher()
@@ -51,12 +53,17 @@ class ScannerPipeline:
         self._detectors.append(PIIDetector())
         self._detectors.append(ProprietaryDetector())
 
+        # Custom regex rules from config (reloaded on SIGHUP)
+        self._custom_detector = CustomDetector(custom_rules)
+        self._detectors.append(self._custom_detector)
+
         # Add any pro/enterprise extension detectors
         if extensions:
             self._detectors.extend(extensions.extra_detectors())
 
-    def reload(self, allowlist: AllowlistMatcher, default_action: str, action_overrides: dict = None) -> None:
-        """Reload policy and allowlist from new config.
+    def reload(self, allowlist: AllowlistMatcher, default_action: str,
+               action_overrides: dict = None, custom_rules: list = None) -> None:
+        """Reload policy, allowlist, and custom rules from new config.
 
         Builds replacement objects then swaps references atomically
         (single assignment under CPython GIL) to avoid races with
@@ -69,6 +76,8 @@ class ScannerPipeline:
         # Atomic swaps — each is a single reference assignment
         self._allowlist = allowlist
         self._policy = new_policy
+        if custom_rules is not None:
+            self._custom_detector.update_rules(custom_rules)
 
     def scan(self, body: bytes, provider: str) -> ScanResult:
         """Run the full scan pipeline on a request body.

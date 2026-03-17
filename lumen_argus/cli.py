@@ -117,6 +117,8 @@ def main(argv=None):
     log.info("allowlist: %d secrets, %d pii, %d paths",
         len(config.allowlist.secrets), len(config.allowlist.pii), len(config.allowlist.paths),
     )
+    if config.custom_rules:
+        log.info("custom rules: %d", len(config.custom_rules))
 
     # Build action overrides from per-detector config
     action_overrides = {}
@@ -150,6 +152,7 @@ def main(argv=None):
         allowlist=allowlist,
         entropy_threshold=config.entropy_threshold,
         extensions=extensions,
+        custom_rules=config.custom_rules,
     )
     router = ProviderRouter(upstreams=config.upstreams or None)
 
@@ -290,6 +293,7 @@ def _do_reload(server, config_path, file_handler, console_level,
             allowlist=new_allowlist,
             default_action=new_config.default_action,
             action_overrides=new_overrides,
+            custom_rules=new_config.custom_rules,
         )
         server.timeout = new_config.proxy.timeout
         server.retries = new_config.proxy.retries
