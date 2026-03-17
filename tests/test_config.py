@@ -279,5 +279,116 @@ allowlists:
         self.assertEqual(len(warnings), 0)
 
 
+class TestLoggingConfigValidation(unittest.TestCase):
+    def test_valid_logging_config(self):
+        data = _parse_yaml("""
+logging:
+  log_dir: "~/.lumen-argus/logs"
+  file_level: info
+  max_size_mb: 10
+  backup_count: 5
+""")
+        warnings = _validate_config(data, "test")
+        self.assertEqual(len(warnings), 0)
+
+    def test_unknown_logging_key(self):
+        data = _parse_yaml("""
+logging:
+  bogus: true
+""")
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("unknown key 'logging.bogus'" in w for w in warnings))
+
+    def test_invalid_file_level(self):
+        data = _parse_yaml("""
+logging:
+  file_level: verbose
+""")
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("file_level" in w and "not valid" in w for w in warnings))
+
+    def test_valid_file_levels(self):
+        for level in ("debug", "info", "warning", "error"):
+            data = _parse_yaml("logging:\n  file_level: %s\n" % level)
+            warnings = _validate_config(data, "test")
+            logging_warnings = [w for w in warnings if "file_level" in w]
+            self.assertEqual(len(logging_warnings), 0, "level '%s' should be valid" % level)
+
+    def test_negative_max_size(self):
+        data = _parse_yaml("""
+logging:
+  max_size_mb: -1
+""")
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("max_size_mb" in w for w in warnings))
+
+    def test_negative_backup_count(self):
+        data = _parse_yaml("""
+logging:
+  backup_count: -1
+""")
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("backup_count" in w for w in warnings))
+
+    def test_json_format_warns_pro(self):
+        data = _parse_yaml("""
+logging:
+  format: json
+""")
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("Pro license" in w and "JSON" in w for w in warnings))
+
+    def test_text_format_no_warning(self):
+        data = _parse_yaml("""
+logging:
+  format: text
+""")
+        warnings = _validate_config(data, "test")
+        format_warnings = [w for w in warnings if "format" in w]
+        self.assertEqual(len(format_warnings), 0)
+
+    def test_stdout_output_warns_pro(self):
+        data = _parse_yaml("""
+logging:
+  output: stdout
+""")
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("Pro license" in w and "stdout" in w for w in warnings))
+
+    def test_both_output_warns_pro(self):
+        data = _parse_yaml("""
+logging:
+  output: both
+""")
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("Pro license" in w and "both" in w for w in warnings))
+
+    def test_file_output_no_warning(self):
+        data = _parse_yaml("""
+logging:
+  output: file
+""")
+        warnings = _validate_config(data, "test")
+        output_warnings = [w for w in warnings if "output" in w]
+        self.assertEqual(len(output_warnings), 0)
+
+    def test_invalid_output(self):
+        data = _parse_yaml("""
+logging:
+  output: syslog
+""")
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("output" in w and "not valid" in w for w in warnings))
+
+
+class TestLoggingConfigParsing(unittest.TestCase):
+    def test_default_logging_config(self):
+        config = load_config(config_path="/nonexistent/path/config.yaml")
+        self.assertEqual(config.logging_config.log_dir, "~/.lumen-argus/logs")
+        self.assertEqual(config.logging_config.file_level, "info")
+        self.assertEqual(config.logging_config.max_size_mb, 10)
+        self.assertEqual(config.logging_config.backup_count, 5)
+
+
 if __name__ == "__main__":
     unittest.main()
