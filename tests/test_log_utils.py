@@ -226,6 +226,23 @@ class TestSecureRotatingFileHandler(unittest.TestCase):
                 handler.close()
 
 
+    def test_new_file_created_with_secure_permissions(self):
+        """File should be 0o600 from creation — no race window."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "fresh.log")
+            self.assertFalse(os.path.exists(path))
+            handler = SecureRotatingFileHandler(
+                path, maxBytes=1024, backupCount=1, encoding="utf-8",
+            )
+            try:
+                # File should exist with secure permissions immediately
+                self.assertTrue(os.path.exists(path))
+                mode = stat.S_IMODE(os.stat(path).st_mode)
+                self.assertEqual(mode, 0o600)
+            finally:
+                handler.close()
+
+
 class TestExportLogs(unittest.TestCase):
     def test_export_missing_file(self):
         config = Config(logging_config=LoggingConfig(log_dir="/nonexistent/path"))

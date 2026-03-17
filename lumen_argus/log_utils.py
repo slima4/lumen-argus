@@ -15,17 +15,21 @@ from lumen_argus.provider import DEFAULT_UPSTREAMS
 # ---------------------------------------------------------------------------
 
 class SecureRotatingFileHandler(logging.handlers.RotatingFileHandler):
-    """RotatingFileHandler that enforces 0o600 on rotated files."""
+    """RotatingFileHandler that creates files with 0o600 permissions.
 
-    def doRollover(self):
-        super().doRollover()
-        # Secure the new (empty) base file
-        if self.baseFilename and os.path.exists(self.baseFilename):
-            os.chmod(self.baseFilename, 0o600)
-        # Secure the just-rotated file (.1)
-        rotated = self.baseFilename + ".1"
-        if os.path.exists(rotated):
-            os.chmod(rotated, 0o600)
+    Overrides _open() to use os.open() with O_CREAT for atomic permission
+    setting — no race window between file creation and chmod. Follows the
+    same pattern as AuditLogger.
+    """
+
+    def _open(self):
+        """Open the log file with 0o600 permissions atomically."""
+        fd = os.open(
+            self.baseFilename,
+            os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+            0o600,
+        )
+        return os.fdopen(fd, self.mode, encoding=self.encoding)
 
 
 def setup_file_logging(logging_config):
@@ -54,7 +58,6 @@ def setup_file_logging(logging_config):
         "%(asctime)s.%(msecs)03d %(levelname)-5s [%(name)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     ))
-    os.chmod(log_file_path, 0o600)
 
     return file_handler, log_file_path, file_level
 
