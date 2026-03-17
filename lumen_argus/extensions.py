@@ -139,7 +139,4 @@ class ExtensionRegistry:
                 self._loaded_plugins.append((ep.name, version))
                 log.info("loaded extension: %s", ep.name)
             except Exception as e:
-                print(
-                    "  [extensions] warning: failed to load '%s': %s" % (ep.name, e),
-                    file=sys.stderr,
-                )
+                log.error("failed to load extension '%s': %s", ep.name, e)

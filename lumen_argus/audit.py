@@ -1,6 +1,7 @@
 """Audit logger: thread-safe JSONL writer with secure file permissions."""
 
 import json
+import logging
 import os
 import re
 import threading
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Optional
 
 from lumen_argus.models import AuditEntry
+
+log = logging.getLogger("argus.audit")
 
 _LOG_FILENAME_RE = re.compile(r"^guard-(\d{8})-\d{6}\.jsonl$")
 
@@ -48,9 +51,12 @@ class AuditLogger:
     def log(self, entry: AuditEntry) -> None:
         """Write an audit entry as a single JSONL line."""
         line = json.dumps(entry.to_dict(), separators=(",", ":"))
-        with self._lock:
-            self._file.write(line + "\n")
-            self._file.flush()
+        try:
+            with self._lock:
+                self._file.write(line + "\n")
+                self._file.flush()
+        except OSError as e:
+            log.error("audit log write failed: %s", e)
 
     def close(self) -> None:
         """Flush and close the log file. Safe to call multiple times."""
@@ -78,5 +84,7 @@ class AuditLogger:
                 age_days = (now - file_date).days
                 if age_days > self._retention_days:
                     entry.unlink()
-            except (ValueError, OSError):
+                    log.info("audit log rotation: deleted %s (%d days old)", entry.name, age_days)
+            except (ValueError, OSError) as e:
+                log.error("audit log cleanup failed for %s: %s", entry.name, e)
                 continue

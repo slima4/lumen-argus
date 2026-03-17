@@ -155,6 +155,10 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                         action="log",
                     )],
                 )
+                log.warning(
+                    "#%d oversized body skipped scanning (%d bytes > %d limit)",
+                    request_id, len(body), server.max_body_size,
+                )
                 server.display.show_error(
                     request_id,
                     "body too large to scan (%d bytes > %d limit)"
@@ -289,6 +293,7 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                 "or the dashboard Settings page."
                 % server.timeout
             )
+            log.error("#%d upstream timeout after %ds", request_id, server.timeout)
             server.display.show_error(request_id, msg)
             server.stats.record(provider, len(body), scan_result)
             # Only send error response if headers haven't been sent yet
@@ -306,6 +311,7 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                     pass
             return
         except Exception as e:
+            log.error("#%d upstream error: %s", request_id, e)
             server.display.show_error(request_id, str(e))
             server.stats.record(provider, len(body), scan_result)
             try:

@@ -2,12 +2,12 @@
 
 import argparse
 import logging
-import logging.handlers
 import os
 import platform
 import signal
 import sys
 import threading
+import time
 
 from lumen_argus import __version__
 from lumen_argus.allowlist import AllowlistMatcher
@@ -15,18 +15,10 @@ from lumen_argus.audit import AuditLogger
 from lumen_argus.config import load_config
 from lumen_argus.display import JsonDisplay, TerminalDisplay
 from lumen_argus.extensions import ExtensionRegistry
+from lumen_argus.log_utils import setup_file_logging
 from lumen_argus.pipeline import ScannerPipeline
 from lumen_argus.provider import ProviderRouter
 from lumen_argus.proxy import ArgusProxyServer
-
-
-class _SecureRotatingFileHandler(logging.handlers.RotatingFileHandler):
-    """RotatingFileHandler that enforces 0o600 on rotated files."""
-
-    def doRollover(self):
-        super().doRollover()
-        if self.baseFilename and os.path.exists(self.baseFilename):
-            os.chmod(self.baseFilename, 0o600)
 
 
 def main(argv=None):
@@ -58,10 +50,26 @@ def main(argv=None):
     scan_parser.add_argument("--config", "-c", type=str, default=None, help="Config YAML path")
     scan_parser.add_argument("--format", "-f", type=str, default="text", choices=["text", "json"], dest="output_format", help="Output format")
 
+    # --- "logs" command ---
+    logs_parser = subparsers.add_parser("logs", help="Log file utilities")
+    logs_sub = logs_parser.add_subparsers(dest="logs_command", required=True)
+    export_parser = logs_sub.add_parser("export", help="Export log file for support sharing")
+    export_parser.add_argument("--sanitize", action="store_true", help="Strip IPs, hostnames, and file paths")
+    export_parser.add_argument("--config", "-c", type=str, default=None, help="Config YAML path")
+
     args = parser.parse_args(argv)
 
-    if args.command == "scan":
-        _run_scan(args)
+    if args.command in ("scan", "logs"):
+        # Set up minimal logging for non-serve commands so config
+        # warnings (log.warning) display cleanly on stderr.
+        _handler = logging.StreamHandler(sys.stderr)
+        _handler.setFormatter(logging.Formatter("  [%(name)s] %(levelname)s: %(message)s"))
+        logging.getLogger().addHandler(_handler)
+        logging.getLogger().setLevel(logging.WARNING)
+        if args.command == "scan":
+            _run_scan(args)
+        else:
+            _run_logs(args)
         return
 
     # command == "serve"
@@ -85,22 +93,7 @@ def main(argv=None):
     config = load_config(config_path=args.config)
 
     # Set up file logging with rotation
-    file_level = getattr(logging, config.logging_config.file_level.upper())
-    log_dir_path = os.path.expanduser(config.logging_config.log_dir)
-    os.makedirs(log_dir_path, mode=0o700, exist_ok=True)
-    log_file_path = os.path.join(log_dir_path, "lumen-argus.log")
-    file_handler = _SecureRotatingFileHandler(
-        log_file_path,
-        maxBytes=config.logging_config.max_size_mb * 1024 * 1024,
-        backupCount=config.logging_config.backup_count,
-        encoding="utf-8",
-    )
-    file_handler.setLevel(file_level)
-    file_handler.setFormatter(logging.Formatter(
-        "%(asctime)s.%(msecs)03d %(levelname)-5s [%(name)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    ))
-    os.chmod(log_file_path, 0o600)
+    file_handler, log_file_path, file_level = setup_file_logging(config.logging_config)
     root_logger.addHandler(file_handler)
 
     # Root logger level = most verbose of console and file
@@ -183,6 +176,7 @@ def main(argv=None):
 
     display.show_banner(port, bind)
     log.info("listening on http://%s:%d", bind, port)
+    start_time = time.monotonic()
 
     # Handle graceful shutdown — signal handler must not call
     # server.shutdown() directly because serve_forever() runs in the
@@ -196,6 +190,8 @@ def main(argv=None):
             # Second signal — force exit immediately
             os._exit(1)
         shutting_down[0] = True
+        uptime = time.monotonic() - start_time
+        log.info("shutdown: %d requests, uptime %.0fs", server.stats.total_requests, uptime)
         display.show_shutdown(server.stats.summary())
         server.pool.close_all()
         audit.close()
@@ -208,12 +204,24 @@ def main(argv=None):
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
+    # Track current config for diff on reload
+    current_config = [config]
+
     # SIGHUP: reload config without restarting (Unix only).
     # Build replacement objects fully, then swap references atomically
     # to avoid race conditions with request handler threads.
     def reload_handler(signum, frame):
         try:
             new_config = load_config(config_path=args.config)
+            # Log config diff
+            from lumen_argus.log_utils import config_diff
+            old = current_config[0]
+            changes = config_diff(old, new_config)
+            if changes:
+                log.info("config reloaded: %d changes", len(changes))
+                for change in changes:
+                    log.info("  %s", change)
+            current_config[0] = new_config
             new_allowlist = AllowlistMatcher(
                 secrets=new_config.allowlist.secrets,
                 pii=new_config.allowlist.pii,
@@ -252,10 +260,10 @@ def main(argv=None):
                     reload_hook(server.pipeline)
                 except Exception:
                     pass
-            log.info("config reloaded")
-            print("  [config] reloaded %s" % (args.config or "~/.lumen-argus/config.yaml"), file=sys.stderr)
+            if not changes:
+                log.info("config reloaded (no changes)")
         except Exception as e:
-            print("  [config] reload failed: %s" % e, file=sys.stderr)
+            log.error("config reload failed: %s", e)
 
     if hasattr(signal, "SIGHUP"):  # not available on Windows
         signal.signal(signal.SIGHUP, reload_handler)
@@ -264,6 +272,8 @@ def main(argv=None):
         server.serve_forever()
     except (KeyboardInterrupt, OSError):
         if not shutting_down[0]:
+            uptime = time.monotonic() - start_time
+            log.info("shutdown: %d requests, uptime %.0fs", server.stats.total_requests, uptime)
             display.show_shutdown(server.stats.summary())
             server.pool.close_all()
             audit.close()
@@ -282,6 +292,16 @@ def _run_scan(args):
         text = sys.stdin.read()
         exit_code = scan_text(text, config_path=args.config, output_format=args.output_format)
 
+    sys.exit(exit_code)
+
+
+def _run_logs(args):
+    """Execute the 'logs' subcommand."""
+    from lumen_argus.config import load_config as _load_config
+    from lumen_argus.log_utils import export_logs
+
+    config = _load_config(config_path=args.config)
+    exit_code = export_logs(config, sanitize=args.sanitize)
     sys.exit(exit_code)
 
 

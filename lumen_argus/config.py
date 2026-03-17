@@ -310,8 +310,8 @@ _KNOWN_LOGGING_KEYS = {"log_dir", "file_level", "max_size_mb", "backup_count", "
 
 
 def _warn(msg: str) -> None:
-    """Print a config warning to stderr."""
-    print("  [config] warning: %s" % msg, file=sys.stderr)
+    """Log a config warning. Falls through to stderr via logging handlers."""
+    log.warning("%s", msg)
 
 
 def _validate_config(data: dict, source: str) -> List[str]:
@@ -548,6 +548,13 @@ allowlists:
 audit:
   log_dir: "~/.lumen-argus/audit"
   retention_days: 90
+
+# Application logging (file rotation)
+logging:
+  log_dir: "~/.lumen-argus/logs"
+  file_level: info
+  max_size_mb: 10
+  backup_count: 5
 """
 
 
@@ -591,7 +598,7 @@ def load_config(
             _apply_config(config, data)
             log.debug("loaded config from %s", global_path)
         except Exception as e:
-            _warn("failed to parse %s: %s (using defaults)" % (global_path, e))
+            log.error("failed to parse %s: %s (using defaults)", global_path, e)
 
     # Load project config (can only be more restrictive)
     if project_path:
@@ -609,7 +616,7 @@ def load_config(
                 _warn(w)
             _apply_project_config(config, data)
         except Exception as e:
-            _warn("failed to parse %s: %s (using defaults)" % (proj, e))
+            log.error("failed to parse %s: %s (using defaults)", proj, e)
 
     return config
 

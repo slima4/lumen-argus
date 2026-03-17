@@ -50,7 +50,7 @@ class ConnectionPool:
                 # Check if connection is still alive (not idle too long)
                 if now - last_used > self._idle_timeout:
                     self._close_quiet(conn)
-                    log.debug("evicted idle connection to %s:%d", host, port)
+                    log.warning("evicted idle connection to %s:%d", host, port)
                     continue
                 log.debug("reusing pooled connection to %s:%d", host, port)
                 return conn
