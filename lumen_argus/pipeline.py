@@ -130,6 +130,12 @@ class ScannerPipeline:
 
         elapsed_ms = (time.monotonic() - t0) * 1000
 
+        if elapsed_ms > 50:
+            log.warning(
+                "slow scan: %.1fms (%d fields, %dKB, budget %dKB)",
+                elapsed_ms, len(fields_to_scan), total_text // 1024, self._max_scan_bytes // 1024,
+            )
+
         result = ScanResult(
             findings=decision.findings,
             scan_duration_ms=elapsed_ms,

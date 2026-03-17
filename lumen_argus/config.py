@@ -269,6 +269,14 @@ class AuditConfig:
 
 
 @dataclass
+class LoggingConfig:
+    log_dir: str = "~/.lumen-argus/logs"
+    file_level: str = "info"
+    max_size_mb: int = 10
+    backup_count: int = 5
+
+
+@dataclass
 class Config:
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     default_action: str = "alert"
@@ -278,6 +286,7 @@ class Config:
     entropy_threshold: float = 4.5
     allowlist: AllowlistConfig = field(default_factory=AllowlistConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
+    logging_config: LoggingConfig = field(default_factory=LoggingConfig)
     upstreams: Dict[str, str] = field(default_factory=dict)
 
 
@@ -289,7 +298,7 @@ _VALID_ACTIONS = {"log", "alert", "redact", "block"}
 
 _KNOWN_TOP_KEYS = {
     "version", "proxy", "default_action", "detectors",
-    "allowlists", "audit", "notifications", "custom_rules",
+    "allowlists", "audit", "logging", "notifications", "custom_rules",
     # Pro/Enterprise extension keys (read by lumen-argus-pro plugin)
     "license_key", "redaction", "dashboard", "analytics", "enterprise",
     "custom_detectors",
@@ -297,6 +306,7 @@ _KNOWN_TOP_KEYS = {
 _KNOWN_PROXY_KEYS = {"port", "bind", "upstream", "timeout", "retries", "max_body_size"}
 _KNOWN_DETECTOR_KEYS = {"enabled", "action", "entropy_threshold", "severity_threshold", "patterns", "types", "keywords", "file_patterns"}
 _KNOWN_AUDIT_KEYS = {"log_dir", "retention_days", "include_request_summary", "redact_findings_in_log"}
+_KNOWN_LOGGING_KEYS = {"log_dir", "file_level", "max_size_mb", "backup_count", "format", "output"}
 
 
 def _warn(msg: str) -> None:
@@ -404,6 +414,45 @@ def _validate_config(data: dict, source: str) -> List[str]:
                     warnings.append("%s: audit.retention_days must be positive" % source)
             except (ValueError, TypeError):
                 warnings.append("%s: audit.retention_days must be an integer" % source)
+
+    # Validate logging section
+    logging_sec = data.get("logging", {})
+    if isinstance(logging_sec, dict):
+        for key in logging_sec:
+            if key not in _KNOWN_LOGGING_KEYS:
+                warnings.append("%s: unknown key 'logging.%s'" % (source, key))
+        if "file_level" in logging_sec:
+            lvl = str(logging_sec["file_level"]).lower()
+            if lvl not in ("debug", "info", "warning", "error"):
+                warnings.append(
+                    "%s: logging.file_level '%s' is not valid (expected: debug, info, warning, error)"
+                    % (source, lvl)
+                )
+        if "max_size_mb" in logging_sec:
+            try:
+                sz = int(logging_sec["max_size_mb"])
+                if sz < 1:
+                    warnings.append("%s: logging.max_size_mb must be positive" % source)
+            except (ValueError, TypeError):
+                warnings.append("%s: logging.max_size_mb must be an integer" % source)
+        if "backup_count" in logging_sec:
+            try:
+                bc = int(logging_sec["backup_count"])
+                if bc < 0:
+                    warnings.append("%s: logging.backup_count must be non-negative" % source)
+            except (ValueError, TypeError):
+                warnings.append("%s: logging.backup_count must be an integer" % source)
+        if "format" in logging_sec:
+            fmt = str(logging_sec["format"]).lower()
+            if fmt not in ("text", "json"):
+                warnings.append(
+                    "%s: logging.format '%s' is not valid (expected: text, json)"
+                    % (source, fmt)
+                )
+            elif fmt == "json":
+                warnings.append(
+                    "%s: JSON log format requires Pro license" % source
+                )
 
     # Validate allowlists section
     al = data.get("allowlists", {})
@@ -623,6 +672,18 @@ def _apply_config(config: Config, data: dict) -> None:
             config.audit.retention_days = int(audit["retention_days"])
         if "include_request_summary" in audit:
             config.audit.include_request_summary = bool(audit["include_request_summary"])
+
+    # Logging
+    logging_sec = data.get("logging", {})
+    if isinstance(logging_sec, dict):
+        if "log_dir" in logging_sec:
+            config.logging_config.log_dir = str(logging_sec["log_dir"])
+        if "file_level" in logging_sec:
+            config.logging_config.file_level = str(logging_sec["file_level"]).lower()
+        if "max_size_mb" in logging_sec:
+            config.logging_config.max_size_mb = int(logging_sec["max_size_mb"])
+        if "backup_count" in logging_sec:
+            config.logging_config.backup_count = int(logging_sec["backup_count"])
 
 
 def _apply_project_config(config: Config, data: dict) -> None:

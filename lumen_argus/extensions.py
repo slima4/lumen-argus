@@ -40,6 +40,7 @@ class ExtensionRegistry:
         self._post_scan_hook = None  # type: Optional[Callable]
         self._config_reload_hook = None  # type: Optional[Callable]
         self._evaluate_hook = None  # type: Optional[Callable]
+        self._loaded_plugins = []  # type: List[tuple]
 
     def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
         """Register an additional detector.
@@ -102,6 +103,10 @@ class ExtensionRegistry:
     def extra_notifiers(self) -> list:
         return list(self._notifiers)
 
+    def loaded_plugins(self) -> List[tuple]:
+        """Return list of (name, version) for loaded plugins."""
+        return list(self._loaded_plugins)
+
     def load_plugins(self) -> None:
         """Discover and load all installed lumen_argus.extensions entry points."""
         try:
@@ -124,6 +129,14 @@ class ExtensionRegistry:
             try:
                 register_fn = ep.load()
                 register_fn(self)
+                # Try to get version from the plugin's distribution
+                version = "unknown"
+                try:
+                    from importlib.metadata import version as get_version
+                    version = get_version(ep.name.replace("_", "-"))
+                except Exception:
+                    pass
+                self._loaded_plugins.append((ep.name, version))
                 log.info("loaded extension: %s", ep.name)
             except Exception as e:
                 print(

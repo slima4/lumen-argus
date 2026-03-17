@@ -2,7 +2,9 @@
 
 import argparse
 import logging
+import logging.handlers
 import os
+import platform
 import signal
 import sys
 import threading
@@ -16,6 +18,15 @@ from lumen_argus.extensions import ExtensionRegistry
 from lumen_argus.pipeline import ScannerPipeline
 from lumen_argus.provider import ProviderRouter
 from lumen_argus.proxy import ArgusProxyServer
+
+
+class _SecureRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """RotatingFileHandler that enforces 0o600 on rotated files."""
+
+    def doRollover(self):
+        super().doRollover()
+        if self.baseFilename and os.path.exists(self.baseFilename):
+            os.chmod(self.baseFilename, 0o600)
 
 
 def main(argv=None):
@@ -57,38 +68,63 @@ def main(argv=None):
 
     # Configure logging — explicit handler setup instead of basicConfig()
     # to avoid silent no-op if any import triggered basicConfig earlier.
-    log_level = getattr(logging, args.log_level.upper())
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter(
+    console_level = getattr(logging, args.log_level.upper())
+    console_handler = logging.StreamHandler(sys.stderr)
+    console_handler.setFormatter(logging.Formatter(
         "  %(asctime)s [%(name)s] %(levelname)s: %(message)s",
         datefmt="%H:%M:%S",
     ))
+    console_handler.setLevel(console_level)
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
-    root_logger.addHandler(handler)
-    root_logger.setLevel(log_level)
+    root_logger.addHandler(console_handler)
 
     log = logging.getLogger("argus.cli")
 
     # Load config
     config = load_config(config_path=args.config)
 
+    # Set up file logging with rotation
+    file_level = getattr(logging, config.logging_config.file_level.upper())
+    log_dir_path = os.path.expanduser(config.logging_config.log_dir)
+    os.makedirs(log_dir_path, mode=0o700, exist_ok=True)
+    log_file_path = os.path.join(log_dir_path, "lumen-argus.log")
+    file_handler = _SecureRotatingFileHandler(
+        log_file_path,
+        maxBytes=config.logging_config.max_size_mb * 1024 * 1024,
+        backupCount=config.logging_config.backup_count,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(file_level)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s.%(msecs)03d %(levelname)-5s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    os.chmod(log_file_path, 0o600)
+    root_logger.addHandler(file_handler)
+
+    # Root logger level = most verbose of console and file
+    root_logger.setLevel(min(console_level, file_level))
+
     # CLI args override config
     port = args.port or config.proxy.port
     bind = config.proxy.bind
-    log_dir = args.log_dir or config.audit.log_dir
+    audit_log_dir = args.log_dir or config.audit.log_dir
 
-    log.info("config: default_action=%s", config.default_action)
+    # Startup summary — always at INFO regardless of console level
+    config_path_display = args.config or "~/.lumen-argus/config.yaml"
+    log.info("lumen-argus v%s starting", __version__)
+    log.info("python: %s, os: %s, pid: %d", platform.python_version(), sys.platform, os.getpid())
+    log.info("config: %s", config_path_display)
     log.info(
-        "config: secrets=%s pii=%s proprietary=%s",
+        "detectors: secrets=%s pii=%s proprietary=%s",
         config.secrets.action or config.default_action,
         config.pii.action or config.default_action,
         config.proprietary.action or config.default_action,
     )
-    log.info("config: allowlist secrets=%d pii=%d paths=%d",
+    log.info("allowlist: %d secrets, %d pii, %d paths",
         len(config.allowlist.secrets), len(config.allowlist.pii), len(config.allowlist.paths),
     )
-    log.info("config: timeout=%ds retries=%d", config.proxy.timeout, config.proxy.retries)
 
     # Build action overrides from per-detector config
     action_overrides = {}
@@ -104,9 +140,13 @@ def main(argv=None):
         display = JsonDisplay()
     else:
         display = TerminalDisplay(no_color=args.no_color)
-    audit = AuditLogger(log_dir=log_dir, retention_days=config.audit.retention_days)
+    audit = AuditLogger(log_dir=audit_log_dir, retention_days=config.audit.retention_days)
     extensions = ExtensionRegistry()
     extensions.load_plugins()
+    for pname, pver in extensions.loaded_plugins():
+        log.info("plugin: %s v%s", pname, pver)
+    log.info("audit log: %s", os.path.expanduser(audit_log_dir))
+    log.info("app log: %s (%s level)", log_file_path, config.logging_config.file_level)
     allowlist = AllowlistMatcher(
         secrets=config.allowlist.secrets,
         pii=config.allowlist.pii,
@@ -142,6 +182,7 @@ def main(argv=None):
         sys.exit(1)
 
     display.show_banner(port, bind)
+    log.info("listening on http://%s:%d", bind, port)
 
     # Handle graceful shutdown — signal handler must not call
     # server.shutdown() directly because serve_forever() runs in the
@@ -195,6 +236,15 @@ def main(argv=None):
             server.pipeline._policy = new_policy
             server.timeout = new_config.proxy.timeout
             server.retries = new_config.proxy.retries
+            # Update file log level if changed
+            new_file_level = getattr(logging, new_config.logging_config.file_level.upper())
+            if file_handler.level != new_file_level:
+                log.info("file log level: %s -> %s",
+                    logging.getLevelName(file_handler.level).lower(),
+                    new_config.logging_config.file_level,
+                )
+                file_handler.setLevel(new_file_level)
+                root_logger.setLevel(min(console_level, new_file_level))
             # Notify plugins of config reload
             reload_hook = extensions.get_config_reload_hook()
             if reload_hook:

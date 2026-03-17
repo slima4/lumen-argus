@@ -135,6 +135,13 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                     "#%d scan: %d findings, action=%s, %.1fms",
                     request_id, len(scan_result.findings), scan_result.action, scan_result.scan_duration_ms,
                 )
+                # Block/redact always logged at INFO for the file log
+                if scan_result.action in ("block", "redact") and scan_result.findings:
+                    types = ", ".join(f.type for f in scan_result.findings)
+                    log.info(
+                        "#%d %s %s (%d findings)",
+                        request_id, scan_result.action.upper(), types, len(scan_result.findings),
+                    )
             elif len(body) > server.max_body_size:
                 scan_result = ScanResult(
                     action="pass",
