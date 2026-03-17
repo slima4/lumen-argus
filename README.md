@@ -154,6 +154,19 @@ chmod +x .git/hooks/pre-commit
 
 Same detection engine as the proxy, same config, same allowlists. Exit code `0` = clean, `1` = findings.
 
+### logs export — Share logs safely with support
+
+```bash
+lumen-argus logs export [--sanitize] [--config PATH]
+```
+
+| Flag | Description |
+|---|---|
+| `--sanitize` | Strip IP addresses, hostnames (except AI provider domains), and file paths |
+| `--config`, `-c` | Config file path |
+
+Reads all rotated log files in chronological order and writes to stdout. Pipe to a file for sharing.
+
 ## Configuration
 
 A default config is created at `~/.lumen-argus/config.yaml` on first run. Edit it to customize:
@@ -202,7 +215,7 @@ Send `SIGHUP` to reload config without restarting:
 kill -HUP $(pgrep -f "lumen_argus")
 ```
 
-Updates allowlists, action overrides, timeout, and retries. No proxy downtime.
+Updates allowlists, action overrides, timeout, retries, and file log level. Changed settings are logged. No proxy downtime.
 
 ### Project-Level Overrides
 
@@ -218,7 +231,40 @@ Commit `.lumen-argus.yaml` to your repo root to enforce project-specific rules. 
 
 When multiple detectors flag the same request, the highest-severity action wins: `block > alert > log`.
 
-## Audit Log
+## Logging
+
+### Application Log
+
+lumen-argus writes a rotating application log for diagnostics and support:
+
+```
+~/.lumen-argus/logs/lumen-argus.log
+```
+
+The log captures startup info, blocked/redacted requests, slow scans, errors, and config reloads. Sensitive values are never written to the log — safe to share with support.
+
+Configure in `config.yaml`:
+
+```yaml
+logging:
+  log_dir: "~/.lumen-argus/logs"
+  file_level: info          # debug | info | warning | error
+  max_size_mb: 10           # max size before rotation
+  backup_count: 5           # rotated files to keep
+```
+
+The `--log-level` CLI flag controls **console** output only. The file always logs at `file_level` (default: `info`). SIGHUP reload updates the file level if changed in config.
+
+Log files are created with `0600` permissions.
+
+### Export Logs for Support
+
+```bash
+# Export with IPs, hostnames, and file paths stripped
+lumen-argus logs export --sanitize > support-logs.txt
+```
+
+### Audit Log
 
 Every request produces a JSONL audit entry at `~/.lumen-argus/audit/guard-{timestamp}.jsonl` with `0600` permissions. Matched secret values are never written to disk — only masked previews (e.g., `[REDACTED:aws_access_key_id_value]****`). Old logs are automatically cleaned up based on `retention_days` (default: 90).
 
