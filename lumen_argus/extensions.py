@@ -40,6 +40,7 @@ class ExtensionRegistry:
         self._post_scan_hook = None  # type: Optional[Callable]
         self._config_reload_hook = None  # type: Optional[Callable]
         self._evaluate_hook = None  # type: Optional[Callable]
+        self._pre_request_hook = None  # type: Optional[Callable]
         self._loaded_plugins = []  # type: List[tuple]
 
     def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
@@ -96,6 +97,13 @@ class ExtensionRegistry:
 
     def get_evaluate_hook(self) -> Optional[Callable]:
         return self._evaluate_hook
+
+    def set_pre_request_hook(self, hook: Callable) -> None:
+        """Register: hook(request_id) called at the start of each request."""
+        self._pre_request_hook = hook
+
+    def get_pre_request_hook(self) -> Optional[Callable]:
+        return self._pre_request_hook
 
     def extra_detectors(self) -> List[BaseDetector]:
         return list(self._detectors)

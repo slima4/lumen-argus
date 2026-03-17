@@ -94,6 +94,15 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
 
         request_id = next(_request_counter)
         server = self.server  # type: ArgusProxyServer
+
+        # Pre-request hook — sets correlation ID before any logging
+        pre_hook = server.pipeline._extensions.get_pre_request_hook() if server.pipeline._extensions else None
+        if pre_hook:
+            try:
+                pre_hook(request_id)
+            except Exception:
+                pass
+
         t0 = time.monotonic()
         body = b""
         resp_size = 0
