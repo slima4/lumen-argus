@@ -355,9 +355,12 @@ def _run_scan(args):
     from lumen_argus.scanner import scan_diff, scan_files, scan_text
 
     if args.diff is not None:
-        if args.baseline or args.create_baseline:
-            print("lumen-argus: --baseline/--create-baseline not supported with --diff", file=sys.stderr)
-        exit_code = scan_diff(ref=args.diff or None, config_path=args.config, output_format=args.output_format)
+        if args.create_baseline:
+            print("lumen-argus: --create-baseline not supported with --diff", file=sys.stderr)
+        exit_code = scan_diff(
+            ref=args.diff or None, config_path=args.config,
+            output_format=args.output_format, baseline_path=args.baseline,
+        )
     elif args.files:
         exit_code = scan_files(
             args.files, config_path=args.config, output_format=args.output_format,

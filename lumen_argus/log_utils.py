@@ -149,6 +149,10 @@ def config_diff(old, new):
         changes.append("proxy.retries: %d -> %d" % (old.proxy.retries, new.proxy.retries))
     if old.logging_config.file_level != new.logging_config.file_level:
         changes.append("logging.file_level: %s -> %s" % (old.logging_config.file_level, new.logging_config.file_level))
+    if old.proxy.max_connections != new.proxy.max_connections:
+        changes.append("proxy.max_connections: %d -> %d" % (old.proxy.max_connections, new.proxy.max_connections))
+    if old.proxy.drain_timeout != new.proxy.drain_timeout:
+        changes.append("proxy.drain_timeout: %d -> %d" % (old.proxy.drain_timeout, new.proxy.drain_timeout))
     if old.proxy.ca_bundle != new.proxy.ca_bundle:
         changes.append("proxy.ca_bundle: %s -> %s" % (old.proxy.ca_bundle or "(system)", new.proxy.ca_bundle or "(system)"))
     if old.proxy.verify_ssl != new.proxy.verify_ssl:

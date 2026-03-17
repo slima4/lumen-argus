@@ -88,7 +88,9 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
     def _handle_metrics(self):
         """Respond to /metrics with Prometheus exposition format."""
         server = self.server  # type: ArgusProxyServer
-        body = server.stats.prometheus_metrics().encode("utf-8")
+        body = server.stats.prometheus_metrics(
+            active_requests=server.active_requests,
+        ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -250,7 +252,7 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                 force_fresh = False
                 for attempt in range(server.retries + 1):
                     if force_fresh:
-                        conn = server.pool._create_fresh(host, port, use_ssl)
+                        conn = server.pool.get_fresh(host, port, use_ssl)
                     else:
                         conn = server.pool.get(host, port, use_ssl)
                     try:

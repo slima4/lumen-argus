@@ -147,8 +147,20 @@ cat deployment.yaml | lumen-argus scan
 lumen-argus scan --format json .env
 {"file":".env","count":3,"findings":[{"detector":"secrets","type":"aws_secret_key","severity":"critical","count":1},...]}
 
+# Scan only staged changes (fast pre-commit hook)
+lumen-argus scan --diff
+
+# Scan diff against a branch (PR check)
+lumen-argus scan --diff main
+
+# Ignore known findings from a baseline
+lumen-argus scan --baseline .lumen-argus-baseline.json src/
+
+# Generate a baseline from current state
+lumen-argus scan --create-baseline .lumen-argus-baseline.json src/
+
 # As a git pre-commit hook — blocks commits with secrets
-echo 'lumen-argus scan "$@"' > .git/hooks/pre-commit
+echo 'lumen-argus scan --diff' > .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 ```
 
@@ -184,8 +196,12 @@ A default config is created at `~/.lumen-argus/config.yaml` on first run. Edit i
 proxy:
   port: 8080
   bind: "127.0.0.1"
-  timeout: 120      # upstream connection timeout (seconds)
-  retries: 1        # retry count on connection failure
+  timeout: 120          # upstream connection timeout (seconds)
+  retries: 1            # retry count on connection failure
+  max_connections: 10   # max concurrent upstream connections
+  drain_timeout: 30     # seconds to wait for in-flight requests on shutdown
+  # ca_bundle: "/path/to/ca-certs.pem"  # custom CA for corporate proxies
+  # verify_ssl: false   # disable TLS verification (dev only)
 
 # Global default action: log | alert | block
 default_action: alert
@@ -214,7 +230,21 @@ allowlists:
   paths:
     - "test/**"
     - "fixtures/**"
+
+# Custom detection patterns (unlimited)
+custom_rules:
+  - name: internal_api_token
+    pattern: "itk_[a-zA-Z0-9]{32}"
+    severity: critical
+    action: block
+  - name: staging_db_url
+    pattern: "postgres://staging[^\\s]+"
+    severity: high
 ```
+
+### Custom Rules
+
+Define custom regex patterns without writing a plugin. Each rule has `name` (required), `pattern` (regex, required), `severity` (default: high), and `action` (optional per-rule override). Rules reload on SIGHUP. Findings appear as `detector=custom, type={name}`.
 
 ### Hot-Reload
 
@@ -280,6 +310,7 @@ Every request produces a JSONL audit entry at `~/.lumen-argus/audit/guard-{times
 ## Monitoring
 
 - **`/health`** — returns JSON with proxy status, version, and request count
+- **`/metrics`** — Prometheus exposition format (requests by action, findings by type, scan duration, active requests, bytes scanned)
 - **`--format json`** — structured JSON output for log aggregation
 - **Session stats** — on shutdown, shows request counts, action breakdown, finding types, avg scan time
 

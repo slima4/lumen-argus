@@ -96,7 +96,7 @@ class ConnectionPool:
         log.debug("new connection to %s:%d (ssl=%s)", host, port, use_ssl)
         return conn
 
-    def _create_fresh(self, host: str, port: int, use_ssl: bool) -> http.client.HTTPConnection:
+    def get_fresh(self, host: str, port: int, use_ssl: bool) -> http.client.HTTPConnection:
         """Create a new connection, bypassing the pool. Used on retry after stale failure."""
         if use_ssl:
             conn = http.client.HTTPSConnection(

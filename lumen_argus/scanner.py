@@ -271,6 +271,7 @@ def scan_diff(
     ref: Optional[str] = None,
     config_path: Optional[str] = None,
     output_format: str = "text",
+    baseline_path: Optional[str] = None,
 ) -> int:
     """Scan git diff for secrets/PII/proprietary content.
 
@@ -279,6 +280,7 @@ def scan_diff(
              If None, scans staged changes (git diff --cached).
         config_path: Path to config file.
         output_format: 'text' or 'json'.
+        baseline_path: Path to baseline file (findings to ignore).
 
     Returns:
         Exit code: 0=clean, 1=block findings, 2=alert/redact only, 3=log only.
@@ -313,9 +315,12 @@ def scan_diff(
             print(json.dumps({"status": "clean", "findings": []}))
         return 0
 
+    from lumen_argus.baseline import filter_baseline, load_baseline
+
     config = load_config(config_path=config_path)
     allowlist = _build_allowlist(config)
     detectors = _build_detectors(config)
+    baseline = load_baseline(baseline_path) if baseline_path else set()
     exit_code = 0
 
     for filepath, text in file_texts.items():
@@ -328,6 +333,8 @@ def scan_diff(
             all_findings.extend(det.scan(fields, allowlist))
 
         findings = _deduplicate(all_findings)
+        if baseline:
+            findings = filter_baseline(findings, filepath, baseline)
 
         if findings:
             file_exit = _resolve_exit_code(findings, config)
@@ -358,3 +365,5 @@ def scan_diff(
                         "  [%s] %s: %s%s" % (f.severity.upper(), f.detector, f.type, count_str),
                         file=sys.stderr,
                     )
+
+    return exit_code
