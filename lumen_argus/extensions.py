@@ -41,6 +41,7 @@ class ExtensionRegistry:
         self._config_reload_hook = None  # type: Optional[Callable]
         self._evaluate_hook = None  # type: Optional[Callable]
         self._pre_request_hook = None  # type: Optional[Callable]
+        self._proxy_server = None  # type: Optional[object]
         self._loaded_plugins = []  # type: List[tuple]
 
     def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
@@ -104,6 +105,13 @@ class ExtensionRegistry:
 
     def get_pre_request_hook(self) -> Optional[Callable]:
         return self._pre_request_hook
+
+    def set_proxy_server(self, server: object) -> None:
+        """Store server reference for Pro runtime config updates."""
+        self._proxy_server = server
+
+    def get_proxy_server(self) -> Optional[object]:
+        return self._proxy_server
 
     def extra_detectors(self) -> List[BaseDetector]:
         return list(self._detectors)

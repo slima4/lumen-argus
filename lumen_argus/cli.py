@@ -168,8 +168,7 @@ def main(argv=None):
             max_body_size=config.proxy.max_body_size,
             redact_hook=extensions.get_redact_hook(),
         )
-        # Store server reference for Pro runtime config updates
-        extensions._proxy_server = server
+        extensions.set_proxy_server(server)
     except OSError as e:
         print("Error: Could not bind to %s:%d — %s" % (bind, port, e), file=sys.stderr)
         sys.exit(1)
@@ -234,14 +233,11 @@ def main(argv=None):
                 new_overrides["pii"] = new_config.pii.action
             if new_config.proprietary.action:
                 new_overrides["proprietary"] = new_config.proprietary.action
-            from lumen_argus.policy import PolicyEngine
-            new_policy = PolicyEngine(
+            server.pipeline.reload(
+                allowlist=new_allowlist,
                 default_action=new_config.default_action,
                 action_overrides=new_overrides,
             )
-            # Atomic swaps — each is a single reference assignment
-            server.pipeline._allowlist = new_allowlist
-            server.pipeline._policy = new_policy
             server.timeout = new_config.proxy.timeout
             server.retries = new_config.proxy.retries
             # Update file log level if changed

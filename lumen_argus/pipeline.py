@@ -55,6 +55,21 @@ class ScannerPipeline:
         if extensions:
             self._detectors.extend(extensions.extra_detectors())
 
+    def reload(self, allowlist: AllowlistMatcher, default_action: str, action_overrides: dict = None) -> None:
+        """Reload policy and allowlist from new config.
+
+        Builds replacement objects then swaps references atomically
+        (single assignment under CPython GIL) to avoid races with
+        request handler threads.
+        """
+        new_policy = PolicyEngine(
+            default_action=default_action,
+            action_overrides=action_overrides,
+        )
+        # Atomic swaps — each is a single reference assignment
+        self._allowlist = allowlist
+        self._policy = new_policy
+
     def scan(self, body: bytes, provider: str) -> ScanResult:
         """Run the full scan pipeline on a request body.
 
