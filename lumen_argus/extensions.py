@@ -18,7 +18,6 @@ write custom detectors using the same mechanism.
 """
 
 import logging
-import sys
 from typing import Callable, List, Optional
 
 from lumen_argus.detectors import BaseDetector
