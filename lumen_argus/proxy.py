@@ -108,6 +108,16 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
         request_id = next(_request_counter)
         server = self.server  # type: ArgusProxyServer
 
+        with server._active_lock:
+            server._active_requests += 1
+        try:
+            self._do_forward(request_id, server)
+        finally:
+            with server._active_lock:
+                server._active_requests -= 1
+
+    def _do_forward(self, request_id, server):
+        """Inner forwarding logic — separated for active request tracking."""
         # Pre-request hook — sets correlation ID before any logging
         pre_hook = server.pipeline._extensions.get_pre_request_hook() if server.pipeline._extensions else None
         if pre_hook:
@@ -471,6 +481,8 @@ class ArgusProxyServer(http.server.ThreadingHTTPServer):
         self.max_body_size = max_body_size
         self.redact_hook = redact_hook
         self._conn_semaphore = threading.Semaphore(max_connections)
+        self._active_requests = 0
+        self._active_lock = threading.Lock()
         self.pool = ConnectionPool(
             pool_size=pool_size, timeout=timeout, idle_timeout=timeout * 2,
             ssl_context=ssl_context,
@@ -478,6 +490,31 @@ class ArgusProxyServer(http.server.ThreadingHTTPServer):
         self.stats = SessionStats()
 
         super().__init__((bind, port), ArgusProxyHandler)
+
+    @property
+    def active_requests(self) -> int:
+        with self._active_lock:
+            return self._active_requests
+
+    def drain(self, timeout: int = 30) -> int:
+        """Wait for in-flight requests to complete.
+
+        Args:
+            timeout: Max seconds to wait. 0 = don't wait.
+
+        Returns:
+            Number of requests that were force-closed (still active after timeout).
+        """
+        if timeout <= 0:
+            return self.active_requests
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._active_lock:
+                if self._active_requests == 0:
+                    return 0
+            time.sleep(0.1)
+        with self._active_lock:
+            return self._active_requests
 
     def update_timeout(self, timeout: int) -> None:
         """Update request timeout for the proxy and its connection pool.

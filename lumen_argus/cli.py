@@ -260,7 +260,12 @@ def main(argv=None):
         if not shutting_down[0]:
             raise
 
-    # Cleanup — runs in main thread, safe for all locks
+    # Graceful drain — wait for in-flight requests to finish
+    drain_timeout = config.proxy.drain_timeout
+    remaining = server.drain(timeout=drain_timeout)
+    if remaining and drain_timeout > 0:
+        log.warning("shutdown: %d requests force-closed after %ds drain timeout", remaining, drain_timeout)
+
     uptime = time.monotonic() - start_time
     log.info("shutdown: %d requests, uptime %.0fs", server.stats.total_requests, uptime)
     display.show_shutdown(server.stats.summary())
