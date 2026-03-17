@@ -33,6 +33,9 @@ classifiers = [
 # Zero dependencies — Python stdlib only.
 dependencies = []
 
+[project.optional-dependencies]
+docs = ["mkdocs>=1.5", "mkdocs-material>=9.0"]
+
 [project.scripts]
 lumen-argus = "lumen_argus.cli:main"
 

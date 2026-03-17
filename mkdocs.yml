@@ -1,0 +1,70 @@
+site_name: lumen-argus
+site_description: AI coding tool DLP proxy — scan outbound requests for secrets, PII, and proprietary data
+site_url: https://slima4.github.io/lumen-argus
+repo_url: https://github.com/slima4/lumen-argus
+repo_name: slima4/lumen-argus
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+  - User Guide:
+    - Detection: guide/detection.md
+    - Custom Rules: guide/custom-rules.md
+    - Scanning Files: guide/scan-cli.md
+    - Proxy Server: guide/proxy.md
+    - Allowlists: guide/allowlists.md
+  - Reference:
+    - CLI: reference/cli.md
+    - Config Schema: reference/config.md
+    - API Endpoints: reference/api-endpoints.md
+    - Architecture: reference/architecture.md
+    - Exit Codes: reference/exit-codes.md
+  - Operations:
+    - Logging: operations/logging.md
+    - Monitoring: operations/monitoring.md
+    - Security: operations/security.md
+  - Development:
+    - Extensions: development/extensions.md
+    - Contributing: development/contributing.md
+    - Changelog: development/changelog.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
