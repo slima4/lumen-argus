@@ -145,11 +145,10 @@ class ExtensionRegistry:
             try:
                 register_fn = ep.load()
                 register_fn(self)
-                # Try to get version from the plugin's distribution
+                # Get version from the distribution that provided this entry point
                 version = "unknown"
                 try:
-                    from importlib.metadata import version as get_version
-                    version = get_version(ep.name.replace("_", "-"))
+                    version = ep.dist.metadata["Version"]
                 except Exception:
                     pass
                 self._loaded_plugins.append((ep.name, version))
