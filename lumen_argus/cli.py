@@ -207,8 +207,9 @@ def main(argv=None):
             extensions.set_analytics_store(analytics_store)
             analytics_store.start_cleanup_scheduler(config.analytics.retention_days)
 
-        # Create SSE broadcaster
+        # Create SSE broadcaster and register with extensions so Pro can use it
         sse_broadcaster = SSEBroadcaster()
+        extensions.set_sse_broadcaster(sse_broadcaster)
 
         # Create audit reader (use CLI-overridden log dir, same as AuditLogger)
         audit_reader = AuditReader(log_dir=audit_log_dir)

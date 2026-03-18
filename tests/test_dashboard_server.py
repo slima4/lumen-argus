@@ -676,6 +676,16 @@ class TestExtensionHooks(unittest.TestCase):
         self.assertEqual(len(providers), 1)
         self.assertIs(providers[0], provider)
 
+    def test_set_and_get_sse_broadcaster_none_by_default(self):
+        reg = ExtensionRegistry()
+        self.assertIsNone(reg.get_sse_broadcaster())
+
+    def test_set_and_get_sse_broadcaster(self):
+        reg = ExtensionRegistry()
+        broadcaster = object()
+        reg.set_sse_broadcaster(broadcaster)
+        self.assertIs(reg.get_sse_broadcaster(), broadcaster)
+
     def test_plugin_css_injection(self):
         """Plugin CSS should appear before </style> in served HTML."""
         tmpdir = tempfile.mkdtemp()

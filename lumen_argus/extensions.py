@@ -48,6 +48,7 @@ class ExtensionRegistry:
         self._dashboard_api_handler = None  # type: Optional[Callable]
         self._analytics_store = None  # type: Optional[object]
         self._auth_providers = []  # type: list
+        self._sse_broadcaster = None  # type: Optional[object]
 
     def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
         """Register an additional detector.
@@ -169,6 +170,18 @@ class ExtensionRegistry:
     def get_analytics_store(self) -> Optional[object]:
         """Return plugin-provided analytics store, or None (use community default)."""
         return self._analytics_store
+
+    def set_sse_broadcaster(self, broadcaster: object) -> None:
+        """Store the SSE broadcaster so plugins can broadcast events.
+
+        Called by cli.py after creating the broadcaster, before loading plugins.
+        Pro uses this to broadcast real-time finding events.
+        """
+        self._sse_broadcaster = broadcaster
+
+    def get_sse_broadcaster(self) -> Optional[object]:
+        """Return the SSE broadcaster, or None if dashboard is disabled."""
+        return self._sse_broadcaster
 
     def register_auth_provider(self, provider: object) -> None:
         """Register an authentication provider (Django auth backend pattern).
