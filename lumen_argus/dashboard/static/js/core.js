@@ -85,6 +85,13 @@ function registerPage(name, label, options) {
     div.id = 'page-' + name;
     document.querySelector('.shell').appendChild(div);
   }
+  /* If plugin provides HTML template, inject safely into the page container */
+  if (options.html) {
+    var container = document.getElementById('page-' + name);
+    if (container && !container.children.length) {
+      _safeInjectHTML(container, options.html);
+    }
+  }
   /* If locked, render upgrade prompt */
   if (options.locked) {
     var page = document.getElementById('page-' + name);
@@ -197,6 +204,22 @@ function renderPager(containerId,currentPage,totalItems,perPage,onPageChange,onP
     if(currentPage<totalPages-1)next.addEventListener('click',function(){onPageChange(currentPage+1)});
     btns.appendChild(next);
     el.appendChild(btns);
+  }
+}
+
+function _safeInjectHTML(container, html) {
+  var parser = new DOMParser();
+  var doc = parser.parseFromString(html, 'text/html');
+  doc.querySelectorAll('script').forEach(function(s) { s.remove(); });
+  doc.body.querySelectorAll('*').forEach(function(el) {
+    for (var i = el.attributes.length - 1; i >= 0; i--) {
+      if (el.attributes[i].name.startsWith('on')) {
+        el.removeAttribute(el.attributes[i].name);
+      }
+    }
+  });
+  while (doc.body.firstChild) {
+    container.appendChild(doc.body.firstChild);
   }
 }
 

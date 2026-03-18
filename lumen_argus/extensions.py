@@ -132,7 +132,7 @@ class ExtensionRegistry:
 
         Each page is a dict:
           {"name": "notifications", "label": "Notifications",
-           "js": "<JS source>", "order": 55}
+           "js": "<JS source>", "html": "<HTML template>", "order": 55}
 
         Pages whose name matches a locked community placeholder unlock it.
         New names create entirely new pages.
