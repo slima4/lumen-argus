@@ -666,7 +666,7 @@ default_action: alert
 detectors:
   secrets:
     enabled: true
-    action: block
+    action: alert
     entropy_threshold: 4.5
 
   pii:
