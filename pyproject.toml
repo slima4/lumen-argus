@@ -7,7 +7,7 @@ name = "lumen-argus"
 version = "0.1.0"
 description = "AI coding tool DLP proxy — scan outbound requests for secrets, PII, and proprietary data"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.8"
 authors = [
     {name = "lumen-argus contributors"},
@@ -17,7 +17,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
