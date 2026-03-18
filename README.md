@@ -114,7 +114,7 @@ lumen-argus serve [--port PORT] [--host HOST] [--config PATH] [--log-dir DIR] [-
 | Flag | Default | Description |
 |---|---|---|
 | `--port`, `-p` | 8080 | Proxy port |
-| `--host`, `-H` | 127.0.0.1 | Bind address (use `0.0.0.0` for Docker) |
+| `--host`, `-H` | 127.0.0.1 | Bind address for proxy and dashboard (use `0.0.0.0` for Docker) |
 | `--config`, `-c` | `~/.lumen-argus/config.yaml` | Config file path |
 | `--log-dir` | `~/.lumen-argus/audit/` | Audit log directory |
 | `--format`, `-f` | text | Output format: `text` (human) or `json` (machine-readable) |
@@ -408,11 +408,14 @@ To use a custom config, create `config.yaml` in the project directory and uncomm
 
 ## Security
 
-- Proxy binds to `127.0.0.1` by default. Use `--host 0.0.0.0` only inside Docker containers.
+- Proxy and dashboard bind to `127.0.0.1` by default. `--host 0.0.0.0` binds both (for Docker only)
 - Plain HTTP on localhost, HTTPS to upstream — no TLS interception needed
 - Audit logs and analytics DB created with `0600` permissions
 - Matched values kept in memory only, never written to disk or analytics DB
 - Connection pooling scoped per-host — no auth header leakage across providers
+- Dashboard auth: session cookies (HttpOnly, SameSite=Strict), CSRF double-submit, CRLF-safe login redirects
+- License keys validated for length and format before writing to disk
+- Plugin `html` templates sanitized client-side (scripts and event handlers stripped); plugin `js` is trusted code from pip entry points only
 
 ## License
 

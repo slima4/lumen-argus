@@ -41,6 +41,42 @@ proxy:
 !!! warning
     `verify_ssl: false` logs a warning on startup and should never be used in production.
 
+## Dashboard Security
+
+### Authentication
+
+When `dashboard.password` is set (or `LUMEN_ARGUS_DASHBOARD_PASSWORD` env var), the dashboard requires authentication:
+
+- **Sessions**: 8-hour timeout, stored server-side with `secrets.token_hex(32)`
+- **Cookies**: `argus_session` (HttpOnly, SameSite=Strict), `csrf_token` (SameSite=Strict)
+- **CSRF**: Double-submit cookie pattern with `secrets.compare_digest()` on all mutations (POST/PUT/DELETE). GET requests are exempt.
+- **Login redirect**: Validates `next` parameter against open redirect (rejects `//`, `\/`) and CRLF header injection (strips `\r`, `\n`). Output URL-encoded via `urllib.parse.quote`.
+
+### License Key Storage
+
+License keys submitted via `POST /api/v1/license` are validated before writing:
+
+- Maximum 4KB, no newline characters
+- Saved to `~/.lumen-argus/license.key` with `0o600` permissions
+- Read by Pro plugin on startup and SIGHUP reload
+
+### Plugin Trust Model
+
+Dashboard extensions are loaded from pip-installed entry points only:
+
+- **`js` field**: Injected as raw `<script>` blocks server-side. Treated as **trusted code** — same trust level as any pip-installed package.
+- **`html` field**: Sanitized client-side via `_safeInjectHTML()` which strips `<script>` tags and all `on*` event handlers before DOM insertion.
+- **API handler**: Plugin API handler runs server-side with full access to the analytics store and audit reader.
+
+Only install plugins from trusted sources.
+
+### Thread Safety
+
+- **AnalyticsStore**: Thread-local SQLite connections, WAL mode, write serialization via `threading.Lock`
+- **AuditReader**: Cache protected by `threading.Lock` for concurrent dashboard requests
+- **SSEBroadcaster**: Client list protected by lock; broadcast snapshots list before I/O
+- **DashboardServer**: `ThreadingHTTPServer` with daemon threads; session storage lock-protected
+
 ## Data Security
 
 ### Matched Values Never Persisted
@@ -62,7 +98,8 @@ This prevents the proxy from becoming a secondary exfiltration vector. If logs a
 | Rotated log files | `0o600` | Secured on rotation via `doRollover()` |
 | Log directory | `0o700` | Created with `os.makedirs(mode=0o700)` |
 | Audit log | `0o600` | Atomic via `os.open()` with `O_CREAT` |
-| Analytics DB | `0o600` | `os.chmod()` after creation |
+| Analytics DB | `0o600` | `os.chmod()` on every startup |
+| License key | `0o600` | `os.chmod()` after write |
 
 ### Connection Isolation
 

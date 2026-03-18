@@ -97,7 +97,8 @@ def register(registry):
     # Add pages (unlock locked placeholders or create new ones)
     registry.register_dashboard_pages([
         {"name": "notifications", "label": "Notifications",
-         "js": "registerPage('notifications', 'Notifications', {loadFn: loadNotif});",
+         "js": "registerPage('notifications', 'Notifications', {loadFn: loadNotif, html: _pageHtml_notifications});",
+         "html": "<div class='sh'><h2>Notification Channels</h2></div>",
          "order": 55},
     ])
 
@@ -118,6 +119,23 @@ def register(registry):
     broadcaster = registry.get_sse_broadcaster()
     if broadcaster:
         broadcaster.broadcast("finding", {"count": 3})
+```
+
+!!! warning "Plugin trust model"
+    The `js` field is injected as a raw `<script>` block and executes in the dashboard origin — it is **trusted code**. Only register pages from pip-installed entry-point plugins. The `html` field is sanitized client-side via `_safeInjectHTML()` which strips `<script>` tags and `on*` event handlers.
+
+### Clearing Dashboard Extensions (SIGHUP)
+
+Pro calls `clear_dashboard_pages()` during SIGHUP config reload to handle license state changes:
+
+```python
+def on_config_reload(pipeline):
+    registry.clear_dashboard_pages()  # reset pages, CSS, API handler
+    if license_still_valid():
+        registry.register_dashboard_pages(get_pro_pages())  # re-register
+        registry.register_dashboard_css(get_pro_css())
+        registry.register_dashboard_api(handle_pro_api)
+    # else: leave empty → community shows locked placeholders
 ```
 
 ### Auth Providers
