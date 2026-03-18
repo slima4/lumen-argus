@@ -143,6 +143,17 @@ class ExtensionRegistry:
         """Return list of plugin-registered pages."""
         return list(self._dashboard_pages)
 
+    def clear_dashboard_pages(self) -> None:
+        """Clear all plugin-registered dashboard pages, CSS, and API handler.
+
+        Called by Pro on SIGHUP when license state changes — allows Pro to
+        re-register (license renewed) or leave empty (license expired,
+        so community shows locked placeholders on next page load).
+        """
+        self._dashboard_pages = []
+        self._dashboard_css = []
+        self._dashboard_api_handler = None
+
     def register_dashboard_css(self, css: str) -> None:
         """Register additional CSS from a plugin (injected after community CSS)."""
         self._dashboard_css.append(css)

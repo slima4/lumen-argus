@@ -59,12 +59,38 @@ function loadSettings(){
     tierRow.appendChild(tierKey);tierRow.appendChild(tierVal);licGrp.appendChild(tierRow);
     /* Pro version */
     if(isProActive&&status.pro_version)_addReadRow(licGrp,'Pro version',status.pro_version);
-    /* Pro license details */
-    if(isProActive&&cfg.license){
-      if(cfg.license.valid!=null)_addReadRow(licGrp,'Status',cfg.license.valid?'Valid':'Invalid');
-      if(cfg.license.expiry)_addReadRow(licGrp,'Expiry',cfg.license.expiry);
-      if(cfg.license.grace_period)_addReadRow(licGrp,'Grace period','Active');
-      if(cfg.license.max_developers)_addReadRow(licGrp,'Max developers',cfg.license.max_developers);
+    /* License details from status API (Pro enriches this) */
+    if(status.license){
+      var lic=status.license;
+      /* Status with color */
+      var statusRow=document.createElement('div');statusRow.className='setting-row';
+      var statusKey=document.createElement('div');statusKey.className='setting-key';statusKey.textContent='Status';
+      var statusVal=document.createElement('div');statusVal.className='setting-val';
+      if(lic.trial){statusVal.textContent='Trial';statusVal.style.color='var(--warning)';}
+      else if(lic.valid){statusVal.textContent='Valid';statusVal.classList.add('enabled');}
+      else{statusVal.textContent='Expired';statusVal.style.color='var(--critical)';}
+      statusRow.appendChild(statusKey);statusRow.appendChild(statusVal);licGrp.appendChild(statusRow);
+      /* Expiry */
+      if(lic.expiry)_addReadRow(licGrp,'Expiry',lic.expiry);
+      /* Days remaining */
+      if(lic.days_remaining!=null){
+        var daysRow=document.createElement('div');daysRow.className='setting-row';
+        var daysKey=document.createElement('div');daysKey.className='setting-key';daysKey.textContent='Days remaining';
+        var daysVal=document.createElement('div');daysVal.className='setting-val';
+        daysVal.textContent=String(lic.days_remaining);
+        daysVal.style.color=lic.days_remaining<=7?'var(--critical)':lic.days_remaining<=30?'var(--warning)':'var(--text-muted)';
+        daysRow.appendChild(daysKey);daysRow.appendChild(daysVal);licGrp.appendChild(daysRow);
+      }
+      /* Grace period warning */
+      if(lic.grace_period){
+        var graceRow=document.createElement('div');graceRow.className='setting-row';
+        var graceKey=document.createElement('div');graceKey.className='setting-key';graceKey.textContent='Grace period';
+        var graceVal=document.createElement('div');graceVal.className='setting-val';
+        var graceText='Active \u2014 renew soon';
+        if(lic.grace_days_remaining!=null)graceText+=(' ('+lic.grace_days_remaining+' days left)');
+        graceVal.textContent=graceText;graceVal.style.color='var(--warning)';
+        graceRow.appendChild(graceKey);graceRow.appendChild(graceVal);licGrp.appendChild(graceRow);
+      }
     }
     /* License key input (always shown) */
     var licRow=document.createElement('div');licRow.className='form-row';licRow.style.marginTop='12px';

@@ -686,6 +686,20 @@ class TestExtensionHooks(unittest.TestCase):
         reg.set_sse_broadcaster(broadcaster)
         self.assertIs(reg.get_sse_broadcaster(), broadcaster)
 
+    def test_clear_dashboard_pages(self):
+        reg = ExtensionRegistry()
+        reg.register_dashboard_pages([{"name": "test"}])
+        reg.register_dashboard_css("body{}")
+        reg.register_dashboard_api(lambda *a: None)
+        self.assertEqual(len(reg.get_dashboard_pages()), 1)
+        self.assertEqual(len(reg.get_dashboard_css()), 1)
+        self.assertIsNotNone(reg.get_dashboard_api_handler())
+
+        reg.clear_dashboard_pages()
+        self.assertEqual(len(reg.get_dashboard_pages()), 0)
+        self.assertEqual(len(reg.get_dashboard_css()), 0)
+        self.assertIsNone(reg.get_dashboard_api_handler())
+
     def test_plugin_css_injection(self):
         """Plugin CSS should appear before </style> in served HTML."""
         tmpdir = tempfile.mkdtemp()
