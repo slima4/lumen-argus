@@ -49,7 +49,7 @@ class CustomDetector(BaseDetector):
                     continue
                 field_idx = _find_field(match.start(), boundaries)
                 findings.append(Finding(
-                    detector="custom",
+                    detector=rule.detector,
                     type=rule.name,
                     severity=rule.severity,
                     location=fields[field_idx].path,

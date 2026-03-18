@@ -287,6 +287,7 @@ class CustomRuleConfig:
     compiled: object = None    # compiled re.Pattern (set during parsing)
     severity: str = "high"     # critical, high, warning, info
     action: str = ""           # empty = use default_action
+    detector: str = "custom"   # detector name reported in findings
 
 
 @dataclass
@@ -321,7 +322,7 @@ _KNOWN_PROXY_KEYS = {"port", "bind", "upstream", "timeout", "retries", "max_body
 _KNOWN_DETECTOR_KEYS = {"enabled", "action", "entropy_threshold", "severity_threshold", "patterns", "types", "keywords", "file_patterns"}
 _KNOWN_AUDIT_KEYS = {"log_dir", "retention_days", "include_request_summary", "redact_findings_in_log"}
 _KNOWN_LOGGING_KEYS = {"log_dir", "file_level", "max_size_mb", "backup_count", "format", "output"}
-_KNOWN_CUSTOM_RULE_KEYS = {"name", "pattern", "severity", "action"}
+_KNOWN_CUSTOM_RULE_KEYS = {"name", "pattern", "severity", "action", "detector"}
 _VALID_SEVERITIES = {"critical", "high", "warning", "info"}
 
 
@@ -810,6 +811,7 @@ def _apply_config(config: Config, data: dict) -> None:
                 compiled=compiled,
                 severity=str(rule.get("severity", "high")).lower(),
                 action=str(rule.get("action", "")),
+                detector=str(rule.get("detector", "custom")),
             ))
 
 
