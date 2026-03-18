@@ -136,6 +136,12 @@ class ExtensionRegistry:
 
         Pages whose name matches a locked community placeholder unlock it.
         New names create entirely new pages.
+
+        Security: "js" is injected as a raw <script> block server-side and
+        executes in the dashboard origin. Only register pages from trusted
+        entry-point plugins (installed via pip). The "html" field is
+        sanitized client-side via _safeInjectHTML (strips scripts and
+        on* handlers), but "js" is not — it is trusted code by design.
         """
         self._dashboard_pages.extend(pages)
 

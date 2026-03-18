@@ -138,8 +138,11 @@ def _handle_findings_list(params: dict, store) -> tuple:
     if not store:
         return _json_response(200, {"findings": [], "total": 0})
 
-    limit = min(int(params.get("limit", 50)), 100)
-    offset = max(int(params.get("offset", 0)), 0)
+    try:
+        limit = min(int(params.get("limit", 50)), 100)
+        offset = max(int(params.get("offset", 0)), 0)
+    except (ValueError, TypeError):
+        return _json_response(400, {"error": "invalid pagination parameters"})
     severity = params.get("severity") or None
     detector = params.get("detector") or None
     provider = params.get("provider") or None
@@ -200,8 +203,11 @@ def _handle_audit(params: dict, audit_reader) -> tuple:
     if not audit_reader:
         return _json_response(200, {"entries": [], "total": 0, "providers": []})
 
-    limit = min(int(params.get("limit", 50)), 100)
-    offset = max(int(params.get("offset", 0)), 0)
+    try:
+        limit = min(int(params.get("limit", 50)), 100)
+        offset = max(int(params.get("offset", 0)), 0)
+    except (ValueError, TypeError):
+        return _json_response(400, {"error": "invalid pagination parameters"})
     action = params.get("action") or None
     provider = params.get("provider") or None
     search = params.get("search") or None
@@ -246,6 +252,8 @@ def _handle_license_activation(body: bytes) -> tuple:
     key = data.get("key", "").strip()
     if not key:
         return _json_response(400, {"error": "license key is required"})
+    if len(key) > 4096 or "\n" in key or "\r" in key:
+        return _json_response(400, {"error": "invalid license key format"})
 
     # Save to ~/.lumen-argus/license.key
     license_path = os.path.expanduser("~/.lumen-argus/license.key")

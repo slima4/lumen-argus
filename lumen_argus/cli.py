@@ -37,7 +37,7 @@ def main(argv=None):
     # --- "serve" command ---
     serve_parser = subparsers.add_parser("serve", help="Run the proxy server")
     serve_parser.add_argument("--port", "-p", type=int, default=None, help="Proxy port (default: 8080)")
-    serve_parser.add_argument("--host", "-H", type=str, default=None, help="Bind address (default: 127.0.0.1, use 0.0.0.0 for Docker)")
+    serve_parser.add_argument("--host", "-H", type=str, default=None, help="Bind address for proxy and dashboard (default: 127.0.0.1, use 0.0.0.0 for Docker)")
     serve_parser.add_argument("--config", "-c", type=str, default=None, help="Config YAML path")
     serve_parser.add_argument("--log-dir", type=str, default=None, help="Audit log directory")
     serve_parser.add_argument("--no-color", action="store_true", help="Disable ANSI colors")

@@ -244,14 +244,16 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
 
         if (not next_url.startswith("/")
                 or next_url.startswith("//")
-                or (len(next_url) > 1 and next_url[1] in "/\\")):
+                or (len(next_url) > 1 and next_url[1] in "/\\")
+                or "\r" in next_url or "\n" in next_url):
             next_url = "/"
 
         if secrets.compare_digest(password, self.server.password):
             session_id = self.server.create_session()
             csrf_token = secrets.token_hex(32)
+            from urllib.parse import quote
             self.send_response(302)
-            self.send_header("Location", next_url)
+            self.send_header("Location", quote(next_url, safe="/"))
             self.send_header(
                 "Set-Cookie",
                 "argus_session=%s; HttpOnly; SameSite=Strict; Path=/" % session_id,

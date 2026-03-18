@@ -9,6 +9,7 @@ import glob
 import json
 import logging
 import os
+import threading
 import time
 from typing import List, Optional, Tuple
 
@@ -25,6 +26,7 @@ class AuditReader:
         self._log_dir = os.path.expanduser(log_dir)
         self._cache = []  # type: List[dict]
         self._cache_time = 0.0
+        self._lock = threading.Lock()
 
     def read_entries(
         self,
@@ -69,15 +71,17 @@ class AuditReader:
         return sorted(providers)
 
     def _get_cached_entries(self) -> List[dict]:
-        """Return all parsed entries, using cache if fresh."""
-        now = time.monotonic()
-        if self._cache_time > 0 and now - self._cache_time < _CACHE_TTL:
-            return list(self._cache)
+        """Return all parsed entries, using cache if fresh. Thread-safe."""
+        with self._lock:
+            now = time.monotonic()
+            if self._cache_time > 0 and now - self._cache_time < _CACHE_TTL:
+                return list(self._cache)
 
         entries = self._parse_all_files()
-        self._cache = entries
-        self._cache_time = now
-        return entries
+        with self._lock:
+            self._cache = entries
+            self._cache_time = time.monotonic()
+            return list(entries)
 
     _MAX_ENTRIES = 10000
 

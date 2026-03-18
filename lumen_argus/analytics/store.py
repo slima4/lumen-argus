@@ -81,11 +81,10 @@ class AnalyticsStore:
                     (_COMMUNITY_SCHEMA_VERSION, "community findings table", now),
                 )
         # Secure file permissions — same 0o600 as audit JSONL files
-        if new_db:
-            try:
-                os.chmod(self._db_path, 0o600)
-            except OSError:
-                pass
+        try:
+            os.chmod(self._db_path, 0o600)
+        except OSError:
+            pass
 
     def _connect(self) -> sqlite3.Connection:
         """Return a thread-local SQLite connection.

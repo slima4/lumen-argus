@@ -69,8 +69,7 @@ class SSEBroadcaster:
         def _heartbeat_loop():
             while True:
                 time.sleep(self._heartbeat_interval)
-                if self._clients:
-                    self.broadcast("heartbeat", {"time": time.time()})
+                self.broadcast("heartbeat", {"time": time.time()})
 
         t = threading.Thread(target=_heartbeat_loop, daemon=True, name="sse-heartbeat")
         t.start()
