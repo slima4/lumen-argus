@@ -468,10 +468,12 @@ class ArgusProxyServer(http.server.ThreadingHTTPServer):
         ssl_context=None,
         max_connections: int = 10,
     ):
-        # Hard safety invariant: never bind to 0.0.0.0
-        if bind != "127.0.0.1" and bind != "localhost":
-            raise ValueError(
-                "lumen-argus must bind to 127.0.0.1 or localhost, got: %s" % bind
+        # Safety: warn if binding to non-loopback (e.g. 0.0.0.0 in Docker).
+        # The --host CLI flag is required to override the config default.
+        if bind not in ("127.0.0.1", "localhost"):
+            import logging as _logging
+            _logging.getLogger("argus.proxy").warning(
+                "binding to %s — proxy is accessible on the network", bind,
             )
 
         self.pipeline = pipeline

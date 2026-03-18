@@ -389,7 +389,7 @@ def _validate_config(data: dict, source: str) -> List[str]:
             bind = str(proxy["bind"])
             if bind not in ("127.0.0.1", "localhost"):
                 warnings.append(
-                    "%s: proxy.bind '%s' is not allowed (must be 127.0.0.1 or localhost)"
+                    "%s: proxy.bind '%s' exposes the proxy on the network (use --host for Docker)"
                     % (source, bind)
                 )
         if "timeout" in proxy:
@@ -581,7 +581,7 @@ def _validate_config(data: dict, source: str) -> List[str]:
             bind = str(dashboard["bind"])
             if bind not in ("127.0.0.1", "localhost"):
                 warnings.append(
-                    "%s: dashboard.bind '%s' is not allowed (must be 127.0.0.1 or localhost)"
+                    "%s: dashboard.bind '%s' exposes the dashboard on the network (use --host for Docker)"
                     % (source, bind)
                 )
 

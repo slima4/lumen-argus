@@ -37,6 +37,7 @@ def main(argv=None):
     # --- "serve" command ---
     serve_parser = subparsers.add_parser("serve", help="Run the proxy server")
     serve_parser.add_argument("--port", "-p", type=int, default=None, help="Proxy port (default: 8080)")
+    serve_parser.add_argument("--host", "-H", type=str, default=None, help="Bind address (default: 127.0.0.1, use 0.0.0.0 for Docker)")
     serve_parser.add_argument("--config", "-c", type=str, default=None, help="Config YAML path")
     serve_parser.add_argument("--log-dir", type=str, default=None, help="Audit log directory")
     serve_parser.add_argument("--no-color", action="store_true", help="Disable ANSI colors")
@@ -103,7 +104,7 @@ def main(argv=None):
 
     # CLI args override config
     port = args.port or config.proxy.port
-    bind = config.proxy.bind
+    bind = args.host or config.proxy.bind
     audit_log_dir = args.log_dir or config.audit.log_dir
 
     # Startup summary — always at INFO regardless of console level
@@ -215,8 +216,10 @@ def main(argv=None):
         # Dashboard password from config or env
         dash_password = config.dashboard.password
 
+        dash_bind = args.host or config.dashboard.bind
+
         dashboard_server = start_dashboard(
-            bind=config.dashboard.bind,
+            bind=dash_bind,
             port=config.dashboard.port,
             analytics_store=analytics_store,
             extensions=extensions,
@@ -226,7 +229,7 @@ def main(argv=None):
             config=config,
         )
         if dashboard_server:
-            log.info("dashboard: http://%s:%d", config.dashboard.bind, config.dashboard.port)
+            log.info("dashboard: http://%s:%d", dash_bind, config.dashboard.port)
 
     # --- Signal-safe shutdown and reload ---
     #

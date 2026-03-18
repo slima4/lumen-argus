@@ -562,9 +562,7 @@ class DashboardServer(http.server.ThreadingHTTPServer):
         config=None,
     ):
         if bind not in ("127.0.0.1", "localhost"):
-            raise ValueError(
-                "dashboard must bind to 127.0.0.1 or localhost, got: %s" % bind
-            )
+            log.warning("binding to %s — dashboard is accessible on the network", bind)
         self.analytics_store = analytics_store
         self.extensions = extensions
         self.password = password or os.environ.get("LUMEN_ARGUS_DASHBOARD_PASSWORD", "")
