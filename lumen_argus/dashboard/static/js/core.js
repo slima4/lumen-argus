@@ -99,6 +99,14 @@ function registerPage(name, label, options) {
       _renderUpgradePrompt(page, label, options.proDescription || '');
     }
   }
+  /* If this page is currently active, call loadFn immediately
+     (handles case where user navigated via URL hash before plugin loaded) */
+  if (options.loadFn) {
+    var activePage = document.getElementById('page-' + name);
+    if (activePage && activePage.classList.contains('active')) {
+      options.loadFn();
+    }
+  }
 }
 
 function _renderUpgradePrompt(container, label, description) {
