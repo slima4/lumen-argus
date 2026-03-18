@@ -202,10 +202,23 @@ tbody tr:nth-child(5){animation-delay:.08s}tbody tr:nth-child(6){animation-delay
 .btn-sm{font-size:.68rem;padding:3px 8px}
 .form-row{display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
 .form-row label{font-size:.72rem;color:var(--text-muted);min-width:70px;text-transform:uppercase;letter-spacing:.06em}
-.form-row input{font-family:var(--font-data);font-size:.78rem;
+.form-row input,.form-row select{font-family:var(--font-data);font-size:.78rem;
   background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius-sm);
   color:var(--text-primary);padding:6px 10px;outline:none;flex:1;min-width:120px}
-.form-row input:focus{border-color:var(--accent)}
+.form-row input:focus,.form-row select:focus{border-color:var(--accent)}
+.form-row input.field-error,.form-row select.field-error{border-color:var(--critical);box-shadow:0 0 0 2px var(--critical-bg)}
+.form-row .field-error-msg{display:none;font-size:.7rem;color:var(--critical);margin-top:2px;width:100%;padding-left:80px}
+.form-row .field-error-msg.visible{display:block}
+@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-4px)}40%,80%{transform:translateX(4px)}}
+.form-row.shake{animation:shake .3s ease}
+.form-actions{display:flex;gap:8px;margin-top:12px}
+.form-error{color:var(--critical);font-size:.75rem;margin-top:6px;display:none}
+/* Add/edit forms */
+.add-form{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;margin-bottom:14px;display:none;animation:fade-up .2s ease}
+.add-form.visible{display:block}
+.add-form h3{font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--text-secondary);margin-bottom:12px}
 /* Upgrade prompt for locked pages */
 .upgrade-prompt{display:flex;align-items:center;justify-content:center;min-height:300px}
 .upgrade-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius);

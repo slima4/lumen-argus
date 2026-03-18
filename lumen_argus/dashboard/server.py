@@ -497,7 +497,14 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
         if extra_pages:
             js_blocks = []
             for page in extra_pages:
-                js_blocks.append('<script>\n%s\n</script>' % page['js'])
+                parts = []
+                if page.get('html'):
+                    # Pass HTML template as a JS variable for registerPage() to use
+                    import json as _json
+                    var_name = '_pageHtml_%s' % page['name']
+                    parts.append('<script>var %s=%s;</script>' % (var_name, _json.dumps(page['html'])))
+                parts.append('<script>\n%s\n</script>' % page['js'])
+                js_blocks.append('\n'.join(parts))
             html = html.replace('</body>', '\n'.join(js_blocks) + '\n</body>')
 
         body = html.encode("utf-8")
