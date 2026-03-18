@@ -108,12 +108,13 @@ Run `python3 benchmark.py` to measure on your machine.
 ### serve — Run the proxy
 
 ```bash
-lumen-argus serve [--port PORT] [--config PATH] [--log-dir DIR] [--format text|json] [--log-level LEVEL] [--no-color]
+lumen-argus serve [--port PORT] [--host HOST] [--config PATH] [--log-dir DIR] [--format text|json] [--log-level LEVEL] [--no-color]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--port`, `-p` | 8080 | Proxy port |
+| `--host`, `-H` | 127.0.0.1 | Bind address (use `0.0.0.0` for Docker) |
 | `--config`, `-c` | `~/.lumen-argus/config.yaml` | Config file path |
 | `--log-dir` | `~/.lumen-argus/audit/` | Audit log directory |
 | `--format`, `-f` | text | Output format: `text` (human) or `json` (machine-readable) |
@@ -231,6 +232,19 @@ allowlists:
     - "test/**"
     - "fixtures/**"
 
+# Web dashboard
+dashboard:
+  enabled: true
+  port: 8081
+  bind: "127.0.0.1"
+  # password: ""  # or LUMEN_ARGUS_DASHBOARD_PASSWORD env var
+
+# Analytics store (SQLite, powers dashboard charts)
+analytics:
+  enabled: true
+  db_path: "~/.lumen-argus/analytics.db"
+  retention_days: 365
+
 # Custom detection patterns (unlimited)
 custom_rules:
   - name: internal_api_token
@@ -333,12 +347,71 @@ def register(registry):
 
 Plugins are automatically discovered and loaded at startup.
 
+## Dashboard
+
+lumen-argus includes a built-in web dashboard on port 8081:
+
+```
+http://localhost:8081
+```
+
+Enable it in config:
+
+```yaml
+dashboard:
+  enabled: true
+  port: 8081
+  # password: "optional-password"  # or set LUMEN_ARGUS_DASHBOARD_PASSWORD env var
+```
+
+**Community pages:** Dashboard (stats, trend charts, recent findings), Findings (paginated table with filters, detail panel, CSV/JSON export), Audit (log viewer with search), Settings (config display, license activation, log download).
+
+**Pro pages (locked):** Rules, Patterns, Allowlists, Notifications — shown with upgrade prompts. Unlocked automatically when a Pro license is active.
+
+The dashboard uses an SQLite analytics store (`~/.lumen-argus/analytics.db`) to persist findings across restarts. Data survives upgrades and license transitions.
+
+### Dashboard API
+
+All community API endpoints are read-only:
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/v1/status` | Health, uptime, version |
+| `GET /api/v1/findings` | Paginated findings (filterable) |
+| `GET /api/v1/findings/:id` | Finding detail |
+| `GET /api/v1/findings/export` | CSV/JSON export |
+| `GET /api/v1/stats` | Aggregated statistics |
+| `GET /api/v1/config` | Sanitized config |
+| `GET /api/v1/audit` | Audit log entries |
+| `GET /api/v1/audit/export` | Audit log export |
+| `GET /api/v1/logs/tail` | Tail log lines |
+| `GET /api/v1/logs/download` | Sanitized log download |
+| `GET /api/v1/live` | SSE real-time feed |
+| `POST /api/v1/license` | Activate license key |
+
+## Docker
+
+```bash
+# Quick start
+docker compose up -d
+
+# Point Claude Code at the proxy
+ANTHROPIC_BASE_URL=http://localhost:8080 claude
+
+# Dashboard
+open http://localhost:8081
+```
+
+The `--host 0.0.0.0` flag (set in the Dockerfile) allows Docker to expose the proxy and dashboard ports. Data (audit logs, analytics DB) persists in a named volume across container rebuilds.
+
+To use a custom config, create `config.yaml` in the project directory and uncomment the volume mount in `docker-compose.yml`.
+
 ## Security
 
-- Proxy binds to `127.0.0.1` only — never `0.0.0.0` (enforced at runtime)
+- Proxy binds to `127.0.0.1` by default. Use `--host 0.0.0.0` only inside Docker containers.
 - Plain HTTP on localhost, HTTPS to upstream — no TLS interception needed
-- Audit logs created with `0600` permissions
-- Matched values kept in memory only, never written to disk
+- Audit logs and analytics DB created with `0600` permissions
+- Matched values kept in memory only, never written to disk or analytics DB
 - Connection pooling scoped per-host — no auth header leakage across providers
 
 ## License

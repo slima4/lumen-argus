@@ -28,6 +28,7 @@ lumen-argus serve [OPTIONS]
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
 | `--port` | `-p` | `int` | `8080` | Port to listen on. Overrides `proxy.port` in config. |
+| `--host` | `-H` | `str` | `127.0.0.1` | Bind address for proxy and dashboard. Use `0.0.0.0` for Docker containers. |
 | `--config` | `-c` | `str` | `~/.lumen-argus/config.yaml` | Path to config YAML file. |
 | `--log-dir` | | `str` | `~/.lumen-argus/audit` | Directory for audit log files. Overrides `audit.log_dir` in config. |
 | `--format` | `-f` | `str` | `text` | Output format for terminal display. Choices: `text`, `json`. |
@@ -51,7 +52,7 @@ lumen-argus serve --log-level debug --no-color
 ```
 
 !!! note "Bind address"
-    The proxy always binds to `127.0.0.1`. This is a hard safety constraint enforced at runtime and cannot be changed via CLI flags. Configure it via `proxy.bind` in the config file (only `127.0.0.1` and `localhost` are accepted).
+    The proxy binds to `127.0.0.1` by default. Use `--host 0.0.0.0` for Docker containers. Non-loopback binds log a warning. The `--host` flag overrides `proxy.bind` and `dashboard.bind` simultaneously.
 
 ---
 

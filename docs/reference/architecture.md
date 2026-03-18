@@ -235,10 +235,21 @@ def register(registry):
 | Hook | Signature | Description |
 |------|-----------|-------------|
 | `pre_request` | `(request_id: int) -> None` | Called at the start of each request. Use for correlation ID setup. |
-| `post_scan` | `(result: ScanResult, body: bytes, provider: str) -> None` | Called after each scan completes. Use for analytics, notifications, or SSE push. |
+| `post_scan` | `(result: ScanResult, body: bytes, provider: str) -> None` | Called after each scan completes. Use for notifications or SSE push. |
 | `evaluate` | `(findings: list[Finding], policy: PolicyEngine) -> ActionDecision` | Replaces the default policy evaluation. Used by Pro to support the `redact` action. Falls back to default on exception. |
 | `redact` | `(body: bytes, findings: list[Finding]) -> bytes` | Transforms the request body to redact matched values before forwarding. Pro only. |
 | `config_reload` | `(pipeline: ScannerPipeline) -> None` | Called after SIGHUP config reload. Use for plugin re-initialization. |
+
+### Dashboard extension hooks
+
+| Hook | Signature | Description |
+|------|-----------|-------------|
+| `register_dashboard_pages(pages)` | `pages: list[dict]` | Register additional dashboard pages. Each page dict has `name`, `label`, `js`, `order`. Pages matching locked placeholders unlock them. |
+| `register_dashboard_css(css)` | `css: str` | Register additional CSS injected after community CSS. |
+| `register_dashboard_api(handler)` | `handler(path, method, body, store, audit_reader) -> (status, body) or None` | Register a plugin API handler. Called before community handler; return `None` to fall through. |
+| `set_analytics_store(store)` | `store: AnalyticsStore` | Override the analytics store (Pro passes its extended store). |
+| `set_sse_broadcaster(broadcaster)` | `broadcaster: SSEBroadcaster` | Store the SSE broadcaster for plugin access. |
+| `register_auth_provider(provider)` | `provider.authenticate(headers) -> dict or None` | Register an auth provider (Enterprise: OAuth, SAML). |
 
 ### Registry methods
 
@@ -246,4 +257,7 @@ Extensions interact with the proxy through the `ExtensionRegistry`:
 
 - `add_detector(detector, priority=False)` -- Register an additional detector (prepend with `priority=True`)
 - `add_notifier(notifier)` -- Register a notification handler
-- `set_proxy_server(server)` / `get_proxy_server()` -- Access the proxy server instance for runtime config updates (e.g., `server.update_timeout()`)
+- `set_proxy_server(server)` / `get_proxy_server()` -- Access the proxy server instance for runtime config updates
+- `get_analytics_store()` / `get_sse_broadcaster()` -- Access shared infrastructure
+- `get_dashboard_pages()` / `get_dashboard_css()` / `get_dashboard_api_handler()` -- Read registered extensions
+- `get_auth_providers()` -- List registered auth providers

@@ -2,16 +2,17 @@
 
 ## Network Security
 
-### Localhost-Only Binding
+### Bind Address
 
-lumen-argus **always** binds to `127.0.0.1` — never `0.0.0.0`. This is enforced by a runtime assertion in `ArgusProxyServer.__init__`:
+lumen-argus binds to `127.0.0.1` by default — both the proxy (port 8080) and dashboard (port 8081). Non-loopback binds log a warning.
 
-```python
-if bind != "127.0.0.1" and bind != "localhost":
-    raise ValueError("lumen-argus must bind to 127.0.0.1 or localhost")
+For Docker containers, use the `--host` CLI flag:
+
+```bash
+lumen-argus serve --host 0.0.0.0
 ```
 
-Setting `proxy.bind` to anything else in config produces a validation warning and the proxy refuses to start.
+This overrides the bind address for both proxy and dashboard. Docker's port mapping (`-p`) then controls what's exposed to the host network.
 
 ### Plain HTTP In, HTTPS Out
 
@@ -61,6 +62,7 @@ This prevents the proxy from becoming a secondary exfiltration vector. If logs a
 | Rotated log files | `0o600` | Secured on rotation via `doRollover()` |
 | Log directory | `0o700` | Created with `os.makedirs(mode=0o700)` |
 | Audit log | `0o600` | Atomic via `os.open()` with `O_CREAT` |
+| Analytics DB | `0o600` | `os.chmod()` after creation |
 
 ### Connection Isolation
 

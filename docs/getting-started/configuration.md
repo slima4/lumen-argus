@@ -56,6 +56,19 @@ custom_rules:
     pattern: "postgres://staging[^\\s]+"
     severity: high
 
+# Web dashboard
+dashboard:
+  enabled: true
+  port: 8081
+  bind: "127.0.0.1"
+  # password: ""  # or LUMEN_ARGUS_DASHBOARD_PASSWORD env var
+
+# Analytics store (SQLite, powers dashboard charts)
+analytics:
+  enabled: true
+  db_path: "~/.lumen-argus/analytics.db"
+  retention_days: 365
+
 # Application logging (file rotation)
 logging:
   log_dir: "~/.lumen-argus/logs"
@@ -102,6 +115,6 @@ kill -HUP $(pgrep -f "lumen_argus")
 Updates allowlists, action overrides, timeout, retries, file log level, SSL context, and custom rules. Changed settings are logged. No proxy downtime.
 
 !!! note
-    `proxy.max_connections` requires a restart to take effect.
+    `proxy.max_connections`, `dashboard.*`, and `analytics.*` require a restart to take effect.
 
 See the [Config Schema Reference](../reference/config.md) for every config key.

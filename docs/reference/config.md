@@ -177,6 +177,52 @@ audit:
 
 ---
 
+## `dashboard`
+
+Web dashboard settings. The dashboard runs on a separate port and provides a browser-based UI for viewing findings, stats, and audit logs.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `dashboard.enabled` | `bool` | `true` | Whether to start the dashboard server. |
+| `dashboard.port` | `int` | `8081` | Port to listen on. Range: 1--65535. |
+| `dashboard.bind` | `str` | `127.0.0.1` | Bind address. Non-loopback requires `--host` CLI flag (for Docker). |
+| `dashboard.password` | `str` | `""` | Optional password for dashboard access. Can also be set via `LUMEN_ARGUS_DASHBOARD_PASSWORD` env var. Empty = open access. |
+
+```yaml title="Example"
+dashboard:
+  enabled: true
+  port: 8081
+  bind: "127.0.0.1"
+  password: ""
+```
+
+!!! note "Authentication"
+    When a password is set, the dashboard uses session-based auth with CSRF double-submit cookies. Sessions expire after 8 hours. Plugin auth providers (OAuth, SAML) can be registered via the extension API for Enterprise use.
+
+---
+
+## `analytics`
+
+SQLite analytics store settings. Powers the dashboard charts and paginated findings.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `analytics.enabled` | `bool` | `true` | Whether to create and populate the analytics store. Only active when dashboard is enabled. |
+| `analytics.db_path` | `str` | `~/.lumen-argus/analytics.db` | Path to the SQLite database file. Created with `0o600` permissions. |
+| `analytics.retention_days` | `int` | `365` | Days to retain findings before automatic cleanup. |
+
+```yaml title="Example"
+analytics:
+  enabled: true
+  db_path: "~/.lumen-argus/analytics.db"
+  retention_days: 365
+```
+
+!!! info "Pro extension"
+    The Pro edition extends the analytics store with additional tables (notification channels, custom rules, allowlist entries, etc.) by subclassing `AnalyticsStore`. Community and Pro share the same SQLite file — data survives license transitions.
+
+---
+
 ## Full config example
 
 ```yaml
@@ -221,6 +267,17 @@ custom_rules:
     pattern: "INTERNAL-[A-Z0-9]{32}"
     severity: critical
     action: block
+
+dashboard:
+  enabled: true
+  port: 8081
+  bind: "127.0.0.1"
+  password: ""
+
+analytics:
+  enabled: true
+  db_path: "~/.lumen-argus/analytics.db"
+  retention_days: 365
 
 logging:
   log_dir: "~/.lumen-argus/logs"

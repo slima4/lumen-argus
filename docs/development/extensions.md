@@ -88,6 +88,47 @@ registry.set_proxy_server(server)  # Called by cli.py after server creation
 server = registry.get_proxy_server()  # Access from plugin code
 ```
 
+### Dashboard Hooks
+
+Extend the community dashboard without replacing it:
+
+```python
+def register(registry):
+    # Add pages (unlock locked placeholders or create new ones)
+    registry.register_dashboard_pages([
+        {"name": "notifications", "label": "Notifications",
+         "js": "registerPage('notifications', 'Notifications', {loadFn: loadNotif});",
+         "order": 55},
+    ])
+
+    # Add CSS (injected after community CSS)
+    registry.register_dashboard_css(".pro-badge { color: gold; }")
+
+    # Add API handler (called before community handler)
+    def my_api(path, method, body, store, audit_reader):
+        if path == "/api/v1/notifications":
+            return 200, json.dumps({"channels": []}).encode()
+        return None  # fall through to community
+    registry.register_dashboard_api(my_api)
+
+    # Override analytics store (Pro extends with more tables)
+    registry.set_analytics_store(my_extended_store)
+
+    # Access SSE broadcaster for real-time events
+    broadcaster = registry.get_sse_broadcaster()
+    if broadcaster:
+        broadcaster.broadcast("finding", {"count": 3})
+```
+
+### Auth Providers
+
+Register additional authentication methods (Enterprise):
+
+```python
+registry.register_auth_provider(my_oauth_provider)
+# provider.authenticate(headers) -> {"user_id": "...", "roles": [...]} or None
+```
+
 ## Data Structures
 
 ### ScanField
