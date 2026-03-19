@@ -623,7 +623,7 @@ class TestPipelineDispatch(unittest.TestCase):
         dispatched = []
 
         class MockDispatcher:
-            def dispatch(self, findings, provider="", model=""):
+            def dispatch(self, findings, provider="", model="", **kwargs):
                 dispatched.append((findings, provider))
 
         ext = ExtensionRegistry()

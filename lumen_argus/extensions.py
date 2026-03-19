@@ -83,7 +83,11 @@ class ExtensionRegistry:
         return self._redact_hook
 
     def set_post_scan_hook(self, hook: Callable) -> None:
-        """Register: hook(scan_result, body, provider) called after each scan."""
+        """Register: hook(scan_result, body, provider, session=ctx) after each scan.
+
+        The session kwarg (SessionContext or None) was added in v0.3.
+        Hooks should accept **kwargs for forward compatibility.
+        """
         self._post_scan_hook = hook
 
     def get_post_scan_hook(self) -> Optional[Callable]:

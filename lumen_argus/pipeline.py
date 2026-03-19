@@ -11,7 +11,7 @@ from lumen_argus.detectors.proprietary import ProprietaryDetector
 from lumen_argus.detectors.secrets import SecretsDetector
 from lumen_argus.extensions import ExtensionRegistry
 from lumen_argus.extractor import RequestExtractor
-from lumen_argus.models import Finding, ScanField, ScanResult
+from lumen_argus.models import Finding, ScanField, ScanResult, SessionContext
 from lumen_argus.policy import PolicyEngine
 
 log = logging.getLogger("argus.pipeline")
@@ -79,13 +79,14 @@ class ScannerPipeline:
         if custom_rules is not None:
             self._custom_detector.update_rules(custom_rules)
 
-    def scan(self, body: bytes, provider: str, model: str = "") -> ScanResult:
+    def scan(self, body: bytes, provider: str, model: str = "", session: SessionContext = None) -> ScanResult:
         """Run the full scan pipeline on a request body.
 
         Args:
             body: Raw request body bytes (JSON).
             provider: Provider name for extraction format.
             model: Model name from request body (for analytics/notifications).
+            session: Session context extracted from request headers/body.
 
         Returns:
             ScanResult with findings, timing, and resolved action.
@@ -178,7 +179,12 @@ class ScannerPipeline:
             store = self._extensions.get_analytics_store()
             if store:
                 try:
-                    store.record_findings(result.findings, provider=provider, model=model)
+                    store.record_findings(
+                        result.findings,
+                        provider=provider,
+                        model=model,
+                        session=session,
+                    )
                 except Exception:
                     log.warning("analytics store record_findings failed", exc_info=False)
 
@@ -187,7 +193,12 @@ class ScannerPipeline:
             dispatcher = self._extensions.get_dispatcher()
             if dispatcher:
                 try:
-                    dispatcher.dispatch(result.findings, provider=provider, model=model)
+                    dispatcher.dispatch(
+                        result.findings,
+                        provider=provider,
+                        model=model,
+                        session_id=session.session_id if session else "",
+                    )
                 except Exception:
                     log.warning("notification dispatch failed", exc_info=False)
 
@@ -196,7 +207,7 @@ class ScannerPipeline:
             hook = self._extensions.get_post_scan_hook()
             if hook:
                 try:
-                    hook(result, body, provider)
+                    hook(result, body, provider, session=session)
                 except Exception:
                     pass  # Never let plugin errors break the proxy
 

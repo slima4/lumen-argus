@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from lumen_argus.models import Finding
+from lumen_argus.models import Finding, SessionContext
 
 log = logging.getLogger("argus.analytics")
 
@@ -32,11 +32,22 @@ CREATE TABLE IF NOT EXISTS findings (
     action_taken TEXT NOT NULL DEFAULT '',
     provider TEXT NOT NULL DEFAULT '',
     model TEXT NOT NULL DEFAULT '',
-    value_preview TEXT NOT NULL DEFAULT ''
+    value_preview TEXT NOT NULL DEFAULT '',
+    account_id TEXT NOT NULL DEFAULT '',
+    session_id TEXT NOT NULL DEFAULT '',
+    device_id TEXT NOT NULL DEFAULT '',
+    source_ip TEXT NOT NULL DEFAULT '',
+    working_directory TEXT NOT NULL DEFAULT '',
+    git_branch TEXT NOT NULL DEFAULT '',
+    os_platform TEXT NOT NULL DEFAULT '',
+    client_name TEXT NOT NULL DEFAULT '',
+    api_key_hash TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_findings_timestamp ON findings(timestamp);
 CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
+CREATE INDEX IF NOT EXISTS idx_findings_session ON findings(session_id);
+CREATE INDEX IF NOT EXISTS idx_findings_account ON findings(account_id);
 
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
@@ -121,6 +132,7 @@ class AnalyticsStore:
         findings: List[Finding],
         provider: str = "",
         model: str = "",
+        session: "SessionContext" = None,
     ) -> None:
         """Insert findings into the store. Thread-safe.
 
@@ -130,9 +142,29 @@ class AnalyticsStore:
             return
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        s = session  # shorthand
 
         rows = [
-            (now, f.detector, f.type, f.severity, f.location, f.action, provider, model, f.value_preview)
+            (
+                now,
+                f.detector,
+                f.type,
+                f.severity,
+                f.location,
+                f.action,
+                provider,
+                model,
+                f.value_preview,
+                s.account_id if s else "",
+                s.session_id if s else "",
+                s.device_id if s else "",
+                s.source_ip if s else "",
+                s.working_directory if s else "",
+                s.git_branch if s else "",
+                s.os_platform if s else "",
+                s.client_name if s else "",
+                s.api_key_hash if s else "",
+            )
             for f in findings
         ]
 
@@ -141,8 +173,11 @@ class AnalyticsStore:
                 conn.executemany(
                     "INSERT INTO findings "
                     "(timestamp, detector, finding_type, severity, location, "
-                    "action_taken, provider, model, value_preview) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "action_taken, provider, model, value_preview, "
+                    "account_id, session_id, device_id, source_ip, "
+                    "working_directory, git_branch, os_platform, "
+                    "client_name, api_key_hash) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
 
@@ -153,6 +188,8 @@ class AnalyticsStore:
         severity: Optional[str] = None,
         detector: Optional[str] = None,
         provider: Optional[str] = None,
+        session_id: Optional[str] = None,
+        account_id: Optional[str] = None,
     ) -> tuple:
         """Return (findings_list, total_count) for consistency."""
         where = ""
@@ -167,6 +204,12 @@ class AnalyticsStore:
         if provider:
             conditions.append("provider = ?")
             params.append(provider)
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+        if account_id:
+            conditions.append("account_id = ?")
+            params.append(account_id)
         if conditions:
             where = " WHERE " + " AND ".join(conditions)
 
@@ -176,9 +219,7 @@ class AnalyticsStore:
                 params,
             ).fetchone()[0]
             rows = conn.execute(
-                "SELECT id, timestamp, detector, finding_type, severity, "
-                "location, action_taken, provider, model, value_preview "
-                "FROM findings" + where + " ORDER BY id DESC LIMIT ? OFFSET ?",
+                "SELECT * FROM findings" + where + " ORDER BY id DESC LIMIT ? OFFSET ?",
                 params + [limit, offset],
             ).fetchall()
         return [dict(r) for r in rows], total
@@ -187,9 +228,7 @@ class AnalyticsStore:
         """Return a single finding by ID."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, timestamp, detector, finding_type, severity, "
-                "location, action_taken, provider, model, value_preview "
-                "FROM findings WHERE id = ?",
+                "SELECT * FROM findings WHERE id = ?",
                 (finding_id,),
             ).fetchone()
         return dict(row) if row else None
@@ -271,6 +310,33 @@ class AnalyticsStore:
             query += " WHERE " + " AND ".join(conditions)
         with self._connect() as conn:
             return conn.execute(query, params).fetchone()[0]
+
+    def get_sessions(self, limit: int = 50) -> list:
+        """Return recent sessions with finding counts and metadata.
+
+        Groups findings by session_id, returns aggregate info per session.
+        Only includes rows where session_id is non-empty.
+
+        Note: MAX() on text fields returns the lexicographically largest value,
+        not the most recent. This is acceptable for display metadata — if a
+        field changes mid-session (e.g., branch switch), the shown value may
+        not be the latest. Exact-latest would require a correlated subquery.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT session_id, MIN(timestamp) as first_seen, "
+                "MAX(timestamp) as last_seen, COUNT(*) as finding_count, "
+                "MAX(provider) as provider, MAX(model) as model, "
+                "MAX(account_id) as account_id, "
+                "MAX(device_id) as device_id, "
+                "MAX(working_directory) as working_directory, "
+                "MAX(git_branch) as git_branch "
+                "FROM findings WHERE session_id != '' "
+                "GROUP BY session_id "
+                "ORDER BY last_seen DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def cleanup(self, retention_days: int = 365) -> int:
         """Delete findings older than retention_days. Returns count deleted."""

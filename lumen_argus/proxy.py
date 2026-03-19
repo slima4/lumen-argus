@@ -9,11 +9,13 @@ Architecture follows the ClaudeTUI sniffer pattern:
 - Session statistics tracking (#14)
 """
 
+import hashlib
 import http.client
 import http.server
 import itertools
 import json
 import logging
+import re
 import socket
 import ssl
 import threading
@@ -23,7 +25,7 @@ from datetime import datetime, timezone
 from lumen_argus.actions import build_block_response, build_sse_block_response, should_forward
 from lumen_argus.audit import AuditLogger
 from lumen_argus.display import TerminalDisplay
-from lumen_argus.models import AuditEntry, Finding, ScanResult
+from lumen_argus.models import AuditEntry, Finding, ScanResult, SessionContext
 from lumen_argus.pipeline import ScannerPipeline
 from lumen_argus.pool import ConnectionPool
 from lumen_argus.provider import ProviderRouter
@@ -48,6 +50,145 @@ _HOP_BY_HOP = frozenset(
         "upgrade",
     }
 )
+
+
+# Patterns for system prompt field extraction.
+_WORKDIR_PATTERNS = [
+    re.compile(r"Primary working directory:\s*(.+?)(?:\n|$)"),  # Claude Code
+    re.compile(r"You are working in:\s*(.+?)(?:\n|$)"),  # Cursor
+    re.compile(r"(?:cwd|working_directory):\s*(.+?)(?:\n|$)", re.IGNORECASE),  # Generic
+]
+_GIT_BRANCH_PATTERNS = [
+    re.compile(r"Current branch:\s*(.+?)(?:\n|$)"),  # Claude Code
+    re.compile(r"(?:git branch|branch):\s*(.+?)(?:\n|$)", re.IGNORECASE),  # Generic
+]
+_OS_PLATFORM_PATTERNS = [
+    re.compile(r"Platform:\s*(.+?)(?:\n|$)"),  # Claude Code
+    re.compile(r"(?:os|operating system):\s*(.+?)(?:\n|$)", re.IGNORECASE),  # Generic
+]
+
+
+def _get_system_text(data: dict, provider: str) -> str:
+    """Extract raw system prompt text from request body."""
+    if provider == "anthropic":
+        system = data.get("system", "")
+        if isinstance(system, str):
+            return system
+        if isinstance(system, list):
+            parts = []
+            for block in system:
+                if isinstance(block, dict):
+                    parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    parts.append(block)
+            return "\n".join(parts)
+    elif provider == "openai":
+        messages = data.get("messages", [])
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("role") == "system":
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    return content
+    elif provider == "gemini":
+        sys_instr = data.get("systemInstruction", {})
+        if isinstance(sys_instr, dict):
+            sys_parts = sys_instr.get("parts", [])
+            if sys_parts and isinstance(sys_parts[0], dict):
+                return sys_parts[0].get("text", "")
+    return ""
+
+
+def _extract_working_directory(data: dict, provider: str) -> str:
+    """Extract working directory from the system prompt."""
+    return _extract_system_field(data, provider, _WORKDIR_PATTERNS, sanitize_path=True)
+
+
+def _extract_system_field(data: dict, provider: str, patterns: list, sanitize_path: bool = False) -> str:
+    """Extract a field from the system prompt using regex patterns."""
+    system_text = _get_system_text(data, provider)
+    if not system_text:
+        return ""
+    for pattern in patterns:
+        match = pattern.search(system_text)
+        if match:
+            val = match.group(1).strip()
+            if sanitize_path:
+                val = val.strip("'\"")
+                return val[:512]
+            return val[:256]
+    return ""
+
+
+def _parse_client_name(user_agent: str) -> str:
+    """Extract client tool name from User-Agent header.
+
+    Returns first token, or "" for browser agents (Mozilla/).
+    """
+    if not user_agent or user_agent.startswith("Mozilla/"):
+        return ""
+    return user_agent.split()[0][:128]
+
+
+def _derive_session_fingerprint(data: dict, provider: str) -> str:
+    """Derive session fingerprint from first 3 conversation fields.
+
+    Uses: system prompt + first user message + first assistant response.
+    Returns 12-char hex hash, or "" if insufficient data.
+    """
+    parts = [provider]
+
+    if provider == "anthropic":
+        system = data.get("system", "")
+        if isinstance(system, str):
+            parts.append(system[:512])
+        elif isinstance(system, list) and system:
+            first = system[0]
+            if isinstance(first, dict):
+                parts.append(first.get("text", "")[:512])
+
+        messages = data.get("messages", [])
+        for msg in messages[:2]:
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                parts.append(content[:512])
+            elif isinstance(content, list) and content:
+                first_block = content[0]
+                if isinstance(first_block, dict):
+                    parts.append(first_block.get("text", "")[:512])
+
+    elif provider == "openai":
+        messages = data.get("messages", [])
+        for msg in messages[:3]:  # system + user + assistant
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                parts.append(content[:512])
+            elif isinstance(content, list) and content:
+                first_part = content[0]
+                if isinstance(first_part, dict):
+                    parts.append(first_part.get("text", "")[:512])
+
+    elif provider == "gemini":
+        sys_instr = data.get("systemInstruction", {})
+        if isinstance(sys_instr, dict):
+            sys_parts = sys_instr.get("parts", [])
+            if sys_parts and isinstance(sys_parts[0], dict):
+                parts.append(sys_parts[0].get("text", "")[:512])
+        contents = data.get("contents", [])
+        for cont in contents[:2]:
+            if isinstance(cont, dict):
+                cont_parts = cont.get("parts", [])
+                if cont_parts and isinstance(cont_parts[0], dict):
+                    parts.append(cont_parts[0].get("text", "")[:512])
+
+    if len(parts) < 2:
+        return ""
+
+    key_str = "\n".join(parts)
+    return hashlib.sha256(key_str.encode()).hexdigest()[:12]
 
 
 class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
@@ -180,6 +321,7 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
         resp_size = 0
         model = ""
         host = ""
+        session = SessionContext()
         scan_result = ScanResult()
 
         try:
@@ -207,7 +349,8 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                 span.set_attribute("provider", provider)
                 span.set_attribute("body.size", len(body))
 
-            # Extract model from request body for display
+            # Parse body once — reused for model extraction and session context
+            req_data = None
             if body:
                 try:
                     req_data = json.loads(body)
@@ -221,9 +364,12 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
             else:
                 is_streaming = False
 
+            # Extract session context (reuses parsed body to avoid re-parsing)
+            session = self._extract_session(req_data, provider, headers_dict)
+
             # Scan request body
             if body and len(body) <= server.max_body_size:
-                scan_result = server.pipeline.scan(body, provider, model=model)
+                scan_result = server.pipeline.scan(body, provider, model=model, session=session)
                 log.debug(
                     "#%d scan: %d findings, action=%s, %.1fms",
                     request_id,
@@ -306,6 +452,7 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                     scan_result,
                     len(body),
                     False,
+                    session,
                 )
                 server.stats.record(provider, len(body), scan_result)
                 return
@@ -420,6 +567,7 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                 scan_result,
                 len(body),
                 True,
+                session,
             )
             server.stats.record(provider, len(body), scan_result)
 
@@ -479,6 +627,98 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+    def _extract_session(self, data, provider: str, headers: dict) -> SessionContext:
+        """Extract session identity from request headers and body metadata.
+
+        Args:
+            data: Pre-parsed request body (dict, non-dict, or None).
+            provider: Provider name for format-specific extraction.
+            headers: Lowercased HTTP headers dict.
+
+        Populates all available fields. Session ID priority:
+        explicit header > provider metadata session_id > derived fingerprint.
+        """
+        ctx = SessionContext()
+
+        # --- From HTTP headers ---
+
+        # Source IP (X-Forwarded-For first, fallback to client address)
+        # Note: XFF is client-supplied and untrusted when not behind a
+        # reverse proxy. Fine for localhost default; in Docker (--host 0.0.0.0)
+        # a trusted_proxies config could be added if audit integrity matters.
+        xff = headers.get("x-forwarded-for", "")
+        if xff:
+            ctx.source_ip = xff.split(",")[0].strip()
+        if not ctx.source_ip:
+            ctx.source_ip = self.client_address[0] if self.client_address else ""
+
+        # API key hash (truncated SHA-256 — 16 hex chars for grouping,
+        # not reversible to the original key)
+        api_key = headers.get("x-api-key", "") or headers.get("authorization", "")
+        if api_key:
+            if api_key.lower().startswith("bearer "):
+                api_key = api_key[7:]
+            ctx.api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:16]
+
+        # Client tool name from User-Agent
+        ctx.client_name = _parse_client_name(headers.get("user-agent", ""))
+
+        # Explicit session header (highest priority)
+        explicit_session = headers.get("x-session-id", "")
+        if explicit_session:
+            ctx.session_id = explicit_session[:256]
+
+        # Normalize: only use data if it's a dict
+        if not isinstance(data, dict):
+            data = None
+
+        if data is None:
+            return ctx
+
+        # --- From request body metadata ---
+
+        if provider == "anthropic":
+            metadata = data.get("metadata", {})
+            if isinstance(metadata, dict):
+                user_id = metadata.get("user_id", "")
+                # Claude Code sends user_id as a JSON string containing a dict:
+                # '{"device_id":"...","account_uuid":"...","session_id":"..."}'
+                if isinstance(user_id, str) and user_id.startswith("{"):
+                    try:
+                        user_id = json.loads(user_id)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                if isinstance(user_id, dict):
+                    ctx.account_id = str(user_id.get("account_uuid", ""))[:256]
+                    ctx.device_id = str(user_id.get("device_id", ""))[:256]
+                    if not ctx.session_id:  # Don't override explicit header
+                        meta_sess = str(user_id.get("session_id", ""))[:256]
+                        if meta_sess:
+                            ctx.session_id = meta_sess
+                elif user_id:
+                    # Simple string user_id (non-Claude Code clients)
+                    ctx.account_id = str(user_id)[:256]
+
+        elif provider == "openai":
+            user = data.get("user", "")
+            if user:
+                ctx.account_id = str(user)[:256]
+
+        # --- From system prompt ---
+
+        ctx.working_directory = _extract_working_directory(data, provider)
+        ctx.git_branch = _extract_system_field(data, provider, _GIT_BRANCH_PATTERNS)
+        ctx.os_platform = _extract_system_field(data, provider, _OS_PLATFORM_PATTERNS)
+
+        # --- Derived fingerprint (fallback when no session_id yet) ---
+
+        if not ctx.session_id:
+            fp = _derive_session_fingerprint(data, provider)
+            if fp:
+                ctx.session_id = "fp:%s" % fp
+
+        return ctx
+
     def _stream_sse(self, resp: http.client.HTTPResponse) -> int:
         """Stream SSE response chunks using read1() for low latency."""
         total = 0
@@ -506,6 +746,7 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
         result: ScanResult,
         body_size: int,
         passed: bool,
+        session: "SessionContext" = None,
     ) -> None:
         """Write audit log entry."""
         entry = AuditEntry(
@@ -519,6 +760,15 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
             scan_duration_ms=result.scan_duration_ms,
             request_size_bytes=body_size,
             passed=passed,
+            account_id=session.account_id if session else "",
+            api_key_hash=session.api_key_hash if session else "",
+            session_id=session.session_id if session else "",
+            device_id=session.device_id if session else "",
+            source_ip=session.source_ip if session else "",
+            working_directory=session.working_directory if session else "",
+            git_branch=session.git_branch if session else "",
+            os_platform=session.os_platform if session else "",
+            client_name=session.client_name if session else "",
         )
         server.audit.log(entry)
 

@@ -89,6 +89,9 @@ def handle_community_api(
         if path == "/api/v1/config":
             return _handle_config(config)
 
+        if path == "/api/v1/sessions":
+            return _handle_sessions(params, store)
+
         if path == "/api/v1/audit":
             return _handle_audit(params, audit_reader)
 
@@ -178,6 +181,8 @@ def _handle_findings_list(params: dict, store) -> tuple:
     severity = params.get("severity") or None
     detector = params.get("detector") or None
     provider = params.get("provider") or None
+    session_id = params.get("session_id") or None
+    account_id = params.get("account_id") or None
 
     findings, total = store.get_findings_page(
         limit=limit,
@@ -185,6 +190,8 @@ def _handle_findings_list(params: dict, store) -> tuple:
         severity=severity,
         detector=detector,
         provider=provider,
+        session_id=session_id,
+        account_id=account_id,
     )
     return _json_response(200, {"findings": findings, "total": total})
 
@@ -197,6 +204,17 @@ def _handle_finding_detail(finding_id: int, store) -> tuple:
     if not finding:
         return _json_response(404, {"error": "finding not found"})
     return _json_response(200, finding)
+
+
+def _handle_sessions(params: dict, store) -> tuple:
+    if not store:
+        return _json_response(200, {"sessions": []})
+    try:
+        limit = min(int(params.get("limit", 50)), 100)
+    except (ValueError, TypeError):
+        return _json_response(400, {"error": "invalid limit"})
+    sessions = store.get_sessions(limit=limit)
+    return _json_response(200, {"sessions": sessions})
 
 
 def _handle_stats(store) -> tuple:

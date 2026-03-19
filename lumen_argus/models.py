@@ -19,6 +19,35 @@ class Finding:
 
 
 @dataclass
+class SessionContext:
+    """Session/conversation identity extracted from a request.
+
+    Populated by the proxy from request headers and body metadata.
+    Passed through the pipeline to audit log and analytics store.
+    Each field is a separate DB column for direct filtering/grouping.
+    """
+
+    # Identity — WHO
+    account_id: str = ""  # Anthropic account UUID, OpenAI user ID
+    api_key_hash: str = ""  # SHA-256[:16] of API key
+
+    # Session — WHICH CONVERSATION
+    session_id: str = ""  # Provider session ID or derived fingerprint (fp:<hash>)
+    device_id: str = ""  # Device/machine identifier (from provider metadata)
+
+    # Network — WHERE
+    source_ip: str = ""  # Client IP (X-Forwarded-For first, fallback client_address)
+
+    # Context — WHAT PROJECT
+    working_directory: str = ""  # Project path from system prompt
+    git_branch: str = ""  # Current git branch from system prompt
+    os_platform: str = ""  # OS from system prompt (darwin, linux, win32)
+
+    # Client — HOW
+    client_name: str = ""  # Client tool name from User-Agent
+
+
+@dataclass
 class ScanField:
     """An extracted text field from a request body to be scanned."""
 
@@ -50,10 +79,20 @@ class AuditEntry:
     scan_duration_ms: float = 0.0
     request_size_bytes: int = 0
     passed: bool = True
+    # Session context fields (all optional, omit empty in JSONL)
+    account_id: str = ""
+    api_key_hash: str = ""
+    session_id: str = ""
+    device_id: str = ""
+    source_ip: str = ""
+    working_directory: str = ""
+    git_branch: str = ""
+    os_platform: str = ""
+    client_name: str = ""
 
     def to_dict(self) -> dict:
         """Serialize for JSONL output. Never includes matched_value."""
-        return {
+        d = {
             "timestamp": self.timestamp,
             "request_id": self.request_id,
             "provider": self.provider,
@@ -76,3 +115,20 @@ class AuditEntry:
             "request_size_bytes": self.request_size_bytes,
             "passed": self.passed,
         }
+        # Include session fields only when populated (keeps JSONL compact)
+        # api_key_hash excluded — stored in analytics DB for grouping,
+        # but not serialized to JSONL audit log to limit credential exposure.
+        for key in (
+            "account_id",
+            "session_id",
+            "device_id",
+            "source_ip",
+            "working_directory",
+            "git_branch",
+            "os_platform",
+            "client_name",
+        ):
+            val = getattr(self, key, "")
+            if val:
+                d[key] = val
+        return d

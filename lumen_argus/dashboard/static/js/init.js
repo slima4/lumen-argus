@@ -22,9 +22,11 @@ function exportFindings(fmt){
   var sevF=document.getElementById('f-sev').value;
   var detF=document.getElementById('f-det').value;
   var provF=document.getElementById('f-prov').value;
+  var sessF=document.getElementById('f-sess').value;
   if(sevF)url+='&severity='+encodeURIComponent(sevF);
   if(detF)url+='&detector='+encodeURIComponent(detF);
   if(provF)url+='&provider='+encodeURIComponent(provF);
+  if(sessF)url+='&session_id='+encodeURIComponent(sessF);
   window.location.href=url;
 }
 document.getElementById('export-csv').addEventListener('click',function(){exportFindings('csv')});

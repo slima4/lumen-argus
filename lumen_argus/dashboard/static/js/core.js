@@ -19,6 +19,9 @@ var ALL_COLS=[
   {key:'finding_type',label:'Type',cls:'col-type',on:true},{key:'severity',label:'Severity',cls:'',on:true},
   {key:'action_taken',label:'Action',cls:'',on:true},{key:'location',label:'Location',cls:'col-loc',on:true},
   {key:'provider',label:'Provider',cls:'',on:false},{key:'model',label:'Model',cls:'',on:false},
+  {key:'session_id',label:'Session',cls:'col-loc',on:false},{key:'account_id',label:'Account',cls:'col-loc',on:false},
+  {key:'device_id',label:'Device',cls:'col-loc',on:false},{key:'working_directory',label:'Directory',cls:'col-loc',on:false},
+  {key:'git_branch',label:'Branch',cls:'',on:false},{key:'client_name',label:'Client',cls:'',on:false},
   {key:'id',label:'ID',cls:'col-time',on:false}
 ];
 
