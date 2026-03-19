@@ -1,6 +1,6 @@
 site_name: lumen-argus
 site_description: AI coding tool DLP proxy — scan outbound requests for secrets, PII, and proprietary data
-site_url: https://slima4.github.io/lumen-argus
+site_url: https://slima4.github.io/lumen-argus/docs
 repo_url: https://github.com/slima4/lumen-argus
 repo_name: slima4/lumen-argus
 edit_uri: edit/main/docs/

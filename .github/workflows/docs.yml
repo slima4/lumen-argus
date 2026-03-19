@@ -35,15 +35,15 @@ jobs:
       - name: Build docs
         run: mkdocs build --strict
 
-      - name: Copy landing page
+      - name: Assemble site (landing at /, docs at /docs/)
         run: |
-          if [ -f landing.html ]; then
-            cp landing.html site/landing.html
-          fi
+          mkdir -p _site/docs
+          mv site/* _site/docs/
+          cp landing.html _site/index.html
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: _site
 
   deploy:
     needs: build

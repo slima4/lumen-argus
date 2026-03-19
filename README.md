@@ -3,7 +3,7 @@
   <a href="https://github.com/slima4/lumen-argus/actions/workflows/test.yml"><img src="https://github.com/slima4/lumen-argus/actions/workflows/test.yml/badge.svg" alt="tests"></a>
   <img src="https://img.shields.io/badge/dependencies-zero-brightgreen" alt="Zero dependencies">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
-  <a href="https://slima4.github.io/lumen-argus/"><img src="https://img.shields.io/badge/docs-mkdocs-blue" alt="Documentation"></a>
+  <a href="https://slima4.github.io/lumen-argus/docs/"><img src="https://img.shields.io/badge/docs-mkdocs-blue" alt="Documentation"></a>
 </p>
 
 # lumen-argus
@@ -145,7 +145,7 @@ Built-in web dashboard at `http://localhost:8081`:
 | `GET /api/v1/notifications/channels` | List notification channels |
 | `POST /api/v1/notifications/channels` | Create channel (limit enforced) |
 
-[Full API reference](https://slima4.github.io/lumen-argus/reference/api-endpoints/)
+[Full API reference](https://slima4.github.io/lumen-argus/docs/reference/api-endpoints/)
 
 ## Notification Channels
 
