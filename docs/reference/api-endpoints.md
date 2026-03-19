@@ -210,7 +210,8 @@ The dashboard runs on a separate port (default `8081`) and provides a REST API f
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/v1/status` | GET | Health, uptime, version, tier (community/pro) |
-| `/api/v1/findings` | GET | Paginated findings with severity/detector/provider filters |
+| `/api/v1/findings` | GET | Paginated findings with severity/detector/provider/session/account filters |
+| `/api/v1/sessions` | GET | Sessions grouped by session_id with finding counts and metadata |
 | `/api/v1/findings/:id` | GET | Single finding detail |
 | `/api/v1/findings/export` | GET | CSV or JSON export (via `?format=csv` or `?format=json`) |
 | `/api/v1/stats` | GET | Aggregated statistics for dashboard charts |
@@ -253,6 +254,38 @@ These return `402 pro_required` when Pro is not active:
 ### Authentication
 
 When `dashboard.password` is set (or `LUMEN_ARGUS_DASHBOARD_PASSWORD` env var), all mutation endpoints (POST, PUT, DELETE) require session auth + CSRF token. GET endpoints also require authentication except for `/api/v1/live` (SSE) and export endpoints.
+
+### Session tracking
+
+`GET /api/v1/findings` supports session-based filtering:
+
+| Parameter | Description |
+|-----------|-------------|
+| `session_id` | Filter findings by session/conversation ID |
+| `account_id` | Filter findings by account (Anthropic UUID or OpenAI user) |
+
+`GET /api/v1/sessions` returns sessions grouped by `session_id`:
+
+```json
+{
+  "sessions": [
+    {
+      "session_id": "7ef7b337-2fed-492f-9a81-7c9d091eccd6",
+      "first_seen": "2026-03-19T15:09:47Z",
+      "last_seen": "2026-03-19T15:24:12Z",
+      "finding_count": 12,
+      "provider": "anthropic",
+      "model": "claude-opus-4-6",
+      "account_id": "dbd6eafd-726c-4e2c-93ae-9132dae86705",
+      "device_id": "dd7554a9...",
+      "working_directory": "/Users/dev/myproject",
+      "git_branch": "main"
+    }
+  ]
+}
+```
+
+Supports `?limit=N` (default 50, max 100).
 
 ### Channel limit enforcement
 

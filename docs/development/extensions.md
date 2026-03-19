@@ -76,7 +76,7 @@ class MyDetector(BaseDetector):
 | Hook | Signature | When Called |
 |------|-----------|------------|
 | `set_pre_request_hook(hook)` | `hook(request_id)` | Start of each request, before any logging |
-| `set_post_scan_hook(hook)` | `hook(scan_result, body, provider)` | After scan completes |
+| `set_post_scan_hook(hook)` | `hook(scan_result, body, provider, session=ctx)` | After scan completes. Accept `**kwargs` for forward compat. |
 | `set_evaluate_hook(hook)` | `hook(findings, policy) -> ActionDecision` | Replaces default policy evaluation |
 | `set_config_reload_hook(hook)` | `hook(pipeline)` | After SIGHUP config reload |
 | `set_redact_hook(hook)` | `hook(body, findings) -> bytes` | When action is "redact" |

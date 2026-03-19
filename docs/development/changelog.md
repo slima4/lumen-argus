@@ -2,6 +2,25 @@
 
 All notable changes to lumen-argus are documented here.
 
+## 0.3.0 (2026-03-19)
+
+### Session Tracking
+
+- Per-request session context extraction: account_id, session_id, device_id, source_ip, working_directory, git_branch, os_platform, client_name, api_key_hash
+- Claude Code metadata.user_id JSON string parsing (account_uuid, device_id, session_id)
+- System prompt field extraction for working directory, git branch, and OS platform
+- User-Agent parsing for client tool identification
+- Derived fingerprint (`fp:<hash>`) fallback when no provider session ID
+- 9 session columns in findings DB (no migration — direct schema update)
+- `GET /api/v1/sessions` endpoint with grouped finding counts
+- `GET /api/v1/findings` supports `session_id` and `account_id` filters
+- Dashboard: Session, Account, Device, Branch, Client columns in findings table
+- Session filter dropdown with clickable session IDs
+- `api_key_hash` excluded from JSONL audit log (stored in analytics DB only)
+- `post_scan` hook signature updated with `session=` kwarg (backward-compatible)
+
+---
+
 ## 0.2.0 (2026-03-19)
 
 ### Notification Channels

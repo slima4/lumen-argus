@@ -36,6 +36,7 @@ The proxy is built on Python's `http.server.ThreadingHTTPServer` with daemon thr
 | **Threading** | One thread per request (daemon threads) |
 | **SSE streaming** | Passthrough via `read1()` for low-latency chunk forwarding |
 | **Body buffering** | Full request body buffered in memory before scanning |
+| **Session extraction** | `SessionContext` populated from headers, body metadata, and system prompt before each scan |
 | **Local endpoints** | `/health` and `/metrics` handled directly, not forwarded |
 
 !!! info "Backpressure"
@@ -192,9 +193,28 @@ Aggregated result of scanning a request.
 | `scan_duration_ms` | `float` | Time spent scanning in milliseconds |
 | `action` | `str` | Highest-priority resolved action: `pass`, `log`, `alert`, or `block` |
 
+### `SessionContext`
+
+Session/conversation identity extracted from each request. Populated by the proxy before scanning, passed through the pipeline to audit log and analytics store. Each field is a separate DB column for direct filtering.
+
+| Field | Type | Source | Description |
+|-------|------|--------|-------------|
+| `account_id` | `str` | Anthropic `metadata.user_id.account_uuid`, OpenAI `user` | Account identifier (WHO) |
+| `api_key_hash` | `str` | SHA-256[:16] of `x-api-key` or `Authorization` header | Truncated key hash (not in audit JSONL) |
+| `session_id` | `str` | Provider metadata or derived `fp:<hash>` | Conversation identifier (WHICH CHAT) |
+| `device_id` | `str` | Anthropic `metadata.user_id.device_id` | Machine identifier (WHICH MACHINE) |
+| `source_ip` | `str` | `X-Forwarded-For` or `client_address` | Client IP (WHERE) |
+| `working_directory` | `str` | System prompt: `Primary working directory:` | Project path (WHAT PROJECT) |
+| `git_branch` | `str` | System prompt: `Current branch:` | Git branch |
+| `os_platform` | `str` | System prompt: `Platform:` | OS (darwin, linux, win32) |
+| `client_name` | `str` | `User-Agent` header first token | Client tool (HOW) |
+
+!!! note "Claude Code metadata parsing"
+    Claude Code sends `metadata.user_id` as a JSON-encoded string: `'{"device_id":"...","account_uuid":"...","session_id":"..."}'`. The proxy detects strings starting with `{`, parses with `json.loads()`, and extracts individual fields.
+
 ### `AuditEntry`
 
-A single audit log record. Serialized to JSONL via `to_dict()`, which explicitly excludes `matched_value` from all findings.
+A single audit log record. Serialized to JSONL via `to_dict()`, which explicitly excludes `matched_value` from all findings and `api_key_hash` from session context.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -208,6 +228,7 @@ A single audit log record. Serialized to JSONL via `to_dict()`, which explicitly
 | `scan_duration_ms` | `float` | Scan time |
 | `request_size_bytes` | `int` | Request body size |
 | `passed` | `bool` | Whether the request was forwarded to upstream |
+| Session fields | `str` | All `SessionContext` fields except `api_key_hash` (omitted when empty) |
 
 ---
 
@@ -235,7 +256,7 @@ def register(registry):
 | Hook | Signature | Description |
 |------|-----------|-------------|
 | `pre_request` | `(request_id: int) -> None` | Called at the start of each request. Use for correlation ID setup. |
-| `post_scan` | `(result: ScanResult, body: bytes, provider: str) -> None` | Called after each scan completes. Use for notifications or SSE push. |
+| `post_scan` | `(result: ScanResult, body: bytes, provider: str, session=ctx) -> None` | Called after each scan completes. Use for notifications or SSE push. Accept `**kwargs` for forward compat. |
 | `evaluate` | `(findings: list[Finding], policy: PolicyEngine) -> ActionDecision` | Replaces the default policy evaluation. Used by Pro to support the `redact` action. Falls back to default on exception. |
 | `redact` | `(body: bytes, findings: list[Finding]) -> bytes` | Transforms the request body to redact matched values before forwarding. Pro only. |
 | `config_reload` | `(pipeline: ScannerPipeline) -> None` | Called after SIGHUP config reload. Use for plugin re-initialization. |

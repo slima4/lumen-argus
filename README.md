@@ -39,7 +39,8 @@ lumen-argus sits between your AI tool and the provider, scanning every outbound 
 - **Proprietary code** detection (file patterns + keyword matching)
 - **< 50ms scanning overhead** for typical payloads
 - **Zero external dependencies** — Python stdlib only
-- **Web dashboard** with real-time findings, charts, and audit log
+- **Session tracking** — identify WHO, WHICH project, WHICH conversation per finding
+- **Web dashboard** with real-time findings, charts, session filtering, and audit log
 - **Notification channels** — webhook, email, Slack, Teams, PagerDuty, OpsGenie, Jira
 - **Pre-commit scanner** — catch secrets before they enter conversation history
 - **Hot-reload** — update config via SIGHUP, no downtime
@@ -75,7 +76,7 @@ ANTHROPIC_BASE_URL=http://localhost:8080 claude
 open http://localhost:8081   # dashboard
 ```
 
-Multiple sessions (including mixed providers) can share the same proxy instance.
+Multiple sessions (including mixed providers) can share the same proxy instance. Each session is automatically tracked — the proxy extracts account, device, project, and conversation identifiers from every request.
 
 ## CLI Output
 
@@ -113,6 +114,21 @@ AWS keys, GitHub tokens, Anthropic/OpenAI/Google API keys, Stripe keys, Slack to
 - **File pattern blocklist** — `.pem`, `.key`, `.env`, `credentials.json`, etc.
 - **Keyword detection** — `CONFIDENTIAL`, `TRADE SECRET`, `INTERNAL ONLY`, etc.
 
+## Session Tracking
+
+Every proxied request is enriched with session context — no configuration needed. Security teams can filter findings by:
+
+| Field | Source | Answers |
+|---|---|---|
+| `account_id` | Provider metadata | WHO leaked? |
+| `session_id` | Provider metadata or derived fingerprint | WHICH conversation? |
+| `device_id` | Claude Code metadata | WHICH machine? |
+| `working_directory` | System prompt | WHICH project? |
+| `git_branch` | System prompt | WHICH branch? |
+| `client_name` | User-Agent header | WHICH tool? |
+
+Claude Code, Cursor, and OpenAI-compatible clients are auto-detected. Dashboard findings are filterable by session and account.
+
 ## Performance
 
 Scanning overhead stays under 50ms for typical payloads. Connection pooling eliminates redundant TLS handshakes.
@@ -138,7 +154,8 @@ Built-in web dashboard at `http://localhost:8081`:
 | Endpoint | Description |
 |---|---|
 | `GET /api/v1/status` | Health, uptime, version |
-| `GET /api/v1/findings` | Paginated findings (filterable) |
+| `GET /api/v1/findings` | Paginated findings (filter by session, account, severity) |
+| `GET /api/v1/sessions` | Sessions with finding counts and metadata |
 | `GET /api/v1/stats` | Aggregated statistics |
 | `GET /api/v1/audit` | Audit log entries |
 | `GET /api/v1/live` | SSE real-time feed |
