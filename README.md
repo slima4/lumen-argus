@@ -1,22 +1,27 @@
-# lumen-argus
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.9+-blue?logo=python&logoColor=white" alt="Python 3.9+">
+  <a href="https://github.com/slima4/lumen-argus/actions/workflows/test.yml"><img src="https://github.com/slima4/lumen-argus/actions/workflows/test.yml/badge.svg" alt="tests"></a>
+  <img src="https://img.shields.io/badge/dependencies-zero-brightgreen" alt="Zero dependencies">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
+</p>
 
-[![tests](https://github.com/slima4/lumen-argus/actions/workflows/test.yml/badge.svg)](https://github.com/slima4/lumen-argus/actions/workflows/test.yml)
+# lumen-argus
 
 **AI coding tool DLP proxy** — scan outbound requests for secrets, PII, and proprietary data before they reach AI providers.
 
 ```
-Developer's AI Tool  ──HTTP──▶  lumen-argus (localhost)  ──HTTPS──▶  AI Provider API
-                                       │
-                              ┌────────┴────────┐
-                              │ Detection Engine │
-                              │  • Secrets       │
-                              │  • PII           │
-                              │  • Proprietary   │
-                              └────────┬────────┘
-                              Actions: block │ alert │ log
+Developer's AI Tool  ──HTTP──>  lumen-argus (localhost)  ──HTTPS──>  AI Provider API
+                                       |
+                              +--------+--------+
+                              | Detection Engine |
+                              |  * Secrets       |
+                              |  * PII           |
+                              |  * Proprietary   |
+                              +--------+--------+
+                              Actions: block | alert | log
 ```
 
-## Why
+## The Problem
 
 AI coding assistants send your code to external APIs on every request. This creates data leak risks:
 
@@ -24,20 +29,28 @@ AI coding assistants send your code to external APIs on every request. This crea
 - **PII** — Customer data, SSNs, credit card numbers in source code, test fixtures, or logs
 - **Proprietary code** — Trade secrets, unreleased features sent to third-party AI providers
 
-lumen-argus sits between your AI tool and the provider, scanning every outbound request and taking action.
+lumen-argus sits between your AI tool and the provider, scanning every outbound request and taking action — **before anything leaves your machine**.
+
+## Key Features
+
+- **34+ secret patterns** with Shannon entropy analysis
+- **8 PII detectors** with validation (Luhn, SSN ranges, IBAN checksums)
+- **Proprietary code** detection (file patterns + keyword matching)
+- **< 50ms scanning overhead** for typical payloads
+- **Zero external dependencies** — Python stdlib only
+- **Web dashboard** with real-time findings, charts, and audit log
+- **Notification channels** — webhook, email, Slack, Teams, PagerDuty, OpsGenie, Jira
+- **Pre-commit scanner** — catch secrets before they enter conversation history
+- **Hot-reload** — update config via SIGHUP, no downtime
+- **Docker ready** — single command, data persists across upgrades
 
 ## Quick Start
 
-**Requirements:** Python 3.9+ (zero external dependencies)
+**Requirements:** Python 3.9+
 
 ```bash
-# Clone and install
-git clone https://github.com/slima4/lumen-argus.git
-cd lumen-argus
-pip install -e .
-
-# Start the proxy — creates default config on first launch
-lumen-argus serve --port 8080
+pip install lumen-argus
+lumen-argus serve
 ```
 
 Then point your AI tool at the proxy:
@@ -53,13 +66,34 @@ OPENAI_BASE_URL=http://localhost:8080 your-tool
 GEMINI_BASE_URL=http://localhost:8080 your-tool
 ```
 
+**Docker:**
+
+```bash
+docker compose up -d
+ANTHROPIC_BASE_URL=http://localhost:8080 claude
+open http://localhost:8081   # dashboard
+```
+
 Multiple sessions (including mixed providers) can share the same proxy instance.
+
+## CLI Output
+
+```
+  lumen-argus — listening on http://127.0.0.1:8080
+
+  #1   POST /v1/messages  opus-4-6  88.3k->1.5k  2312ms  PASS
+  #2   POST /v1/messages  opus-4-6  90.1k->0.8k  1134ms  ALERT  aws_access_key (messages[4])
+  #3   POST /v1/messages  opus-4-6  91.2k->2.1k  3412ms  BLOCK  private_key*3
+
+  shutdown — 3 requests | 1 blocked | 1 alerts | avg scan 12.3ms
+  findings: aws_access_key, private_key*3
+```
 
 ## What It Detects
 
 ### Secrets (34 patterns + entropy analysis)
 
-AWS keys, GitHub tokens, Anthropic/OpenAI/Google API keys, Stripe keys, Slack tokens, JWTs, database URLs, PEM private keys, generic passwords, and more. High-entropy strings near secret-related keywords are also flagged via Shannon entropy analysis. Duplicate findings are automatically collapsed (e.g. `aws_access_key×47` instead of 47 separate lines).
+AWS keys, GitHub tokens, Anthropic/OpenAI/Google API keys, Stripe keys, Slack tokens, JWTs, database URLs, PEM private keys, generic passwords, and more. High-entropy strings near secret-related keywords are also flagged via Shannon entropy analysis. Duplicate findings are automatically collapsed.
 
 ### PII (8 patterns with validation)
 
@@ -80,7 +114,7 @@ AWS keys, GitHub tokens, Anthropic/OpenAI/Google API keys, Stripe keys, Slack to
 
 ## Performance
 
-Scanning overhead stays under 50ms for typical payloads (up to 100KB). Larger payloads are handled via a scan budget that prioritizes the most recent messages — where fresh file reads with potential secrets live. Connection pooling eliminates redundant TLS handshakes for consecutive requests.
+Scanning overhead stays under 50ms for typical payloads. Connection pooling eliminates redundant TLS handshakes.
 
 | Payload Size | Median Scan Time | P95 |
 |---|---|---|
@@ -90,185 +124,43 @@ Scanning overhead stays under 50ms for typical payloads (up to 100KB). Larger pa
 | 500 KB | 51.5ms | 53.7ms |
 | 1 MB | 52.3ms | 54.0ms |
 
-Run `python3 benchmark.py` to measure on your machine.
+## Dashboard
 
-## CLI Output
+Built-in web dashboard at `http://localhost:8081`:
 
-```
-  lumen-argus — listening on http://127.0.0.1:8080
+**Community pages:** Dashboard (stats, trend charts, recent findings), Findings (paginated table with filters, CSV/JSON export), Audit (log viewer with search), Settings (config, license activation), Notifications (channel management).
 
-  #1   POST /v1/messages  opus-4-6  88.3k->1.5k  2312ms  PASS
-  #2   POST /v1/messages  opus-4-6  90.1k->0.8k  1134ms  ALERT  aws_access_key (messages[4])
-  #3   POST /v1/messages  opus-4-6  91.2k->2.1k  3412ms  BLOCK  private_key×3
+**Pro pages:** Rules, Patterns, Allowlists — unlocked with a Pro license.
 
-  shutdown — 3 requests | 1 blocked | 1 alerts | avg scan 12.3ms
-  findings: aws_access_key, private_key×3
-```
+### Dashboard API
 
-## Commands
-
-### serve — Run the proxy
-
-```bash
-lumen-argus serve [--port PORT] [--host HOST] [--config PATH] [--log-dir DIR] [--format text|json] [--log-level LEVEL] [--no-color]
-```
-
-| Flag | Default | Description |
-|---|---|---|
-| `--port`, `-p` | 8080 | Proxy port |
-| `--host`, `-H` | 127.0.0.1 | Bind address for proxy and dashboard (use `0.0.0.0` for Docker) |
-| `--config`, `-c` | `~/.lumen-argus/config.yaml` | Config file path |
-| `--log-dir` | `~/.lumen-argus/audit/` | Audit log directory |
-| `--format`, `-f` | text | Output format: `text` (human) or `json` (machine-readable) |
-| `--log-level` | warning | Logging verbosity: debug, info, warning, error |
-| `--no-color` | false | Disable ANSI colors |
-
-JSON format outputs one JSON line per request — useful for piping to `jq`, scripts, or log aggregation.
-
-### scan — Catch secrets before they reach AI tools
-
-The proxy catches secrets at request time — but by then the AI tool already read the file and the secret is stuck in conversation history. `scan` catches them earlier, at commit time:
-
-```bash
-$ lumen-argus scan .env config/database.yml
-lumen-argus: .env — 3 finding(s)
-  [CRITICAL] secrets: aws_secret_key
-  [CRITICAL] secrets: database_url
-  [HIGH] secrets: generic_password
-lumen-argus: config/database.yml — 1 finding(s)
-  [CRITICAL] secrets: database_url
-
-$ echo $?
-1
-```
-
-```bash
-# Scan stdin (e.g. from a pipe)
-cat deployment.yaml | lumen-argus scan
-
-# JSON output for CI pipelines
-lumen-argus scan --format json .env
-{"file":".env","count":3,"findings":[{"detector":"secrets","type":"aws_secret_key","severity":"critical","count":1},...]}
-
-# Scan only staged changes (fast pre-commit hook)
-lumen-argus scan --diff
-
-# Scan diff against a branch (PR check)
-lumen-argus scan --diff main
-
-# Ignore known findings from a baseline
-lumen-argus scan --baseline .lumen-argus-baseline.json src/
-
-# Generate a baseline from current state
-lumen-argus scan --create-baseline .lumen-argus-baseline.json src/
-
-# As a git pre-commit hook — blocks commits with secrets
-echo 'lumen-argus scan --diff' > .git/hooks/pre-commit
-chmod +x .git/hooks/pre-commit
-```
-
-Same detection engine as the proxy, same config, same allowlists.
-
-**Exit codes:**
-
-| Code | Meaning | CI action |
-|------|---------|-----------|
-| 0 | No findings | Pass |
-| 1 | Findings with action `block` | Fail build |
-| 2 | Findings with action `alert`/`redact` | Warn (optional fail) |
-| 3 | Findings with action `log` | Informational |
-
-### logs export — Share logs safely with support
-
-```bash
-lumen-argus logs export [--sanitize] [--config PATH]
-```
-
-| Flag | Description |
+| Endpoint | Description |
 |---|---|
-| `--sanitize` | Strip IP addresses, hostnames (except AI provider domains), and file paths |
-| `--config`, `-c` | Config file path |
+| `GET /api/v1/status` | Health, uptime, version |
+| `GET /api/v1/findings` | Paginated findings (filterable) |
+| `GET /api/v1/stats` | Aggregated statistics |
+| `GET /api/v1/audit` | Audit log entries |
+| `GET /api/v1/live` | SSE real-time feed |
+| `GET /api/v1/notifications/channels` | List notification channels |
+| `POST /api/v1/notifications/channels` | Create channel (limit enforced) |
 
-Reads all rotated log files in chronological order and writes to stdout. Pipe to a file for sharing.
+[Full API reference](docs/)
 
-## Configuration
+## Notification Channels
 
-A default config is created at `~/.lumen-argus/config.yaml` on first run. Edit it to customize:
+Configure alerting via YAML (IaC-managed) or the dashboard. 7 channel types available:
 
-```yaml
-proxy:
-  port: 8080
-  bind: "127.0.0.1"
-  timeout: 120          # upstream connection timeout (seconds)
-  retries: 1            # retry count on connection failure
-  max_connections: 10   # max concurrent upstream connections
-  drain_timeout: 30     # seconds to wait for in-flight requests on shutdown
-  # ca_bundle: "/path/to/ca-certs.pem"  # custom CA for corporate proxies
-  # verify_ssl: false   # disable TLS verification (dev only)
+| Channel | Config |
+|---------|--------|
+| **Webhook** | Any URL — covers Slack webhooks, Discord, custom endpoints |
+| **Email** | SMTP with TLS, authentication |
+| **Slack** | Native integration (Pro) |
+| **Teams** | Adaptive cards (Pro) |
+| **PagerDuty** | Incident routing (Pro) |
+| **OpsGenie** | Team routing (Pro) |
+| **Jira** | Auto-create tickets (Pro) |
 
-# Global default action: log | alert | block
-default_action: alert
-
-detectors:
-  secrets:
-    enabled: true
-    action: alert
-    entropy_threshold: 4.5
-
-  pii:
-    enabled: true
-    action: alert
-
-  proprietary:
-    enabled: true
-    action: alert
-
-# Never flag these
-allowlists:
-  secrets:
-    - "[REDACTED:aws_access_key_id_value]IOSFODNN7EXAMPLE"
-  pii:
-    - "*@example.com"
-    - "*@test.local"
-  paths:
-    - "test/**"
-    - "fixtures/**"
-
-# Web dashboard
-dashboard:
-  enabled: true
-  port: 8081
-  bind: "127.0.0.1"
-  # password: ""  # or LUMEN_ARGUS_DASHBOARD_PASSWORD env var
-
-# Analytics store (SQLite, powers dashboard charts)
-analytics:
-  enabled: true
-  db_path: "~/.lumen-argus/analytics.db"
-  retention_days: 365
-
-# Notification channels (IaC-managed, reconciled to DB on startup/SIGHUP)
-# notifications:
-#   - name: production-alerts
-#     type: webhook
-#     url: "https://hooks.slack.com/services/T00/B00/xxx"
-#     events: [block, alert]
-#     min_severity: high
-
-# Custom detection patterns (unlimited)
-custom_rules:
-  - name: internal_api_token
-    pattern: "itk_[a-zA-Z0-9]{32}"
-    severity: critical
-    action: block
-  - name: staging_db_url
-    pattern: "postgres://staging[^\\s]+"
-    severity: high
-```
-
-### Notification Channels
-
-Configure alerting via YAML (IaC-managed) or the dashboard (interactive). YAML channels are reconciled to SQLite on startup and SIGHUP using Kubernetes-style declarative reconciliation — YAML is fully authoritative.
+**Freemium:** 1 channel of any type for free, unlimited with Pro.
 
 ```yaml
 notifications:
@@ -277,184 +169,163 @@ notifications:
     url: "https://hooks.slack.com/services/T00/B00/xxx"
     events: [block, alert]
     min_severity: high
-  - name: security-team
-    type: email
-    smtp_host: "smtp.company.com"
-    from_addr: "argus@company.com"
-    to_addrs: "security@company.com"
-    events: [block]
-    min_severity: critical
 ```
 
-**Freemium model:** 1 channel of any type without a Pro license, unlimited with Pro. All 7 channel types (webhook, email, Slack, Teams, PagerDuty, OpsGenie, Jira) are available — Pro provides the dispatch implementations.
+YAML channels are reconciled to SQLite on startup/SIGHUP (Kubernetes-style declarative).
 
-YAML channels appear as read-only cards in the dashboard with a `YAML` badge. Dashboard-managed channels support full CRUD (add, edit, test, toggle, delete).
+## Pre-Commit Scanner
 
-### Custom Rules
-
-Define custom regex patterns without writing a plugin. Each rule has `name` (required), `pattern` (regex, required), `severity` (default: high), and `action` (optional per-rule override). Rules reload on SIGHUP. Findings appear as `detector=custom, type={name}`.
-
-### Hot-Reload
-
-Send `SIGHUP` to reload config without restarting:
+Catch secrets before they enter AI conversation history:
 
 ```bash
-kill -HUP $(pgrep -f "lumen_argus")
+$ lumen-argus scan .env config/database.yml
+lumen-argus: .env — 3 finding(s)
+  [CRITICAL] secrets: aws_secret_key
+  [CRITICAL] secrets: database_url
+  [HIGH] secrets: generic_password
+
+$ echo $?
+1
 ```
 
-Updates allowlists, action overrides, timeout, retries, and file log level. Changed settings are logged. No proxy downtime.
+```bash
+# Git pre-commit hook
+echo 'lumen-argus scan --diff' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
 
-### Project-Level Overrides
+# Scan diff against a branch (CI/PR check)
+lumen-argus scan --diff main
 
-Commit `.lumen-argus.yaml` to your repo root to enforce project-specific rules. Project config merges with global config and can only be **more restrictive** (cannot downgrade `block` to `log`).
+# Baseline management
+lumen-argus scan --create-baseline .lumen-argus-baseline.json src/
+lumen-argus scan --baseline .lumen-argus-baseline.json src/
+```
+
+| Exit Code | Meaning | CI Action |
+|-----------|---------|-----------|
+| 0 | No findings | Pass |
+| 1 | `block` findings | Fail build |
+| 2 | `alert`/`redact` findings | Warn |
+| 3 | `log` findings | Informational |
+
+## Configuration
+
+Default config created at `~/.lumen-argus/config.yaml` on first run:
+
+```yaml
+proxy:
+  port: 8080
+  bind: "127.0.0.1"
+  timeout: 120
+  max_connections: 10
+
+default_action: alert     # log | alert | block
+
+detectors:
+  secrets:
+    enabled: true
+    action: alert
+    entropy_threshold: 4.5
+  pii:
+    enabled: true
+    action: alert
+  proprietary:
+    enabled: true
+    action: alert
+
+allowlists:
+  secrets:
+    - "AKIAIOSFODNN7EXAMPLE"
+  pii:
+    - "*@example.com"
+  paths:
+    - "test/**"
+
+custom_rules:
+  - name: internal_api_token
+    pattern: "itk_[a-zA-Z0-9]{32}"
+    severity: critical
+    action: block
+```
+
+**Hot-reload:** `kill -HUP $(pgrep -f lumen_argus)` — updates allowlists, actions, timeouts. No downtime.
+
+**Project overrides:** Commit `.lumen-argus.yaml` to your repo root. Project config can only be **more restrictive** than global.
 
 ## Actions
 
 | Action | Behavior |
 |---|---|
-| **log** | Record finding in audit log, allow request |
+| **log** | Record in audit log, allow request |
 | **alert** | Log + print to terminal, allow request |
-| **block** | Reject request with HTTP 403 (or SSE error event for streaming) |
+| **block** | Reject with HTTP 403 (or SSE error for streaming) |
+| **redact** | Replace sensitive values in request body (Pro) |
 
-When multiple detectors flag the same request, the highest-severity action wins: `block > alert > log`.
-
-## Logging
-
-### Application Log
-
-lumen-argus writes a rotating application log for diagnostics and support:
-
-```
-~/.lumen-argus/logs/lumen-argus.log
-```
-
-The log captures startup info, blocked/redacted requests, slow scans, errors, and config reloads. Sensitive values are never written to the log — safe to share with support.
-
-Configure in `config.yaml`:
-
-```yaml
-logging:
-  log_dir: "~/.lumen-argus/logs"
-  file_level: info          # debug | info | warning | error
-  max_size_mb: 10           # max size before rotation
-  backup_count: 5           # rotated files to keep
-```
-
-The `--log-level` CLI flag controls **console** output only. The file always logs at `file_level` (default: `info`). SIGHUP reload updates the file level if changed in config.
-
-Log files are created with `0600` permissions.
-
-### Export Logs for Support
-
-```bash
-# Export with IPs, hostnames, and file paths stripped
-lumen-argus logs export --sanitize > support-logs.txt
-```
-
-### Audit Log
-
-Every request produces a JSONL audit entry at `~/.lumen-argus/audit/guard-{timestamp}.jsonl` with `0600` permissions. Matched secret values are never written to disk — only masked previews (e.g., `[REDACTED:aws_access_key_id_value]****`). Old logs are automatically cleaned up based on `retention_days` (default: 90).
+Highest-severity action wins: `block > redact > alert > log`.
 
 ## Monitoring
 
-- **`/health`** — returns JSON with proxy status, version, and request count
-- **`/metrics`** — Prometheus exposition format (requests by action, findings by type, scan duration, active requests, bytes scanned)
-- **`--format json`** — structured JSON output for log aggregation
-- **Session stats** — on shutdown, shows request counts, action breakdown, finding types, avg scan time
+| Endpoint | Format | Description |
+|----------|--------|-------------|
+| `/health` | JSON | Proxy status, uptime, request count |
+| `/metrics` | Prometheus | Requests by action, findings by type, scan duration |
+| `--format json` | JSONL | Structured output for log aggregation |
+
+## Docker
+
+```bash
+docker compose up -d                                    # start
+ANTHROPIC_BASE_URL=http://localhost:8080 claude          # connect
+open http://localhost:8081                               # dashboard
+```
+
+Data persists in a named volume across container rebuilds. Custom config via volume mount.
 
 ## Extensions
 
-lumen-argus supports plugins via Python entry points. Any pip package can register custom detectors:
+Plugin system via Python entry points:
 
 ```toml
-# In your plugin's pyproject.toml
 [project.entry-points."lumen_argus.extensions"]
 my_plugin = "my_package:register"
 ```
 
 ```python
-# In my_package/__init__.py
 def register(registry):
     from my_package.detectors import MyDetector
     registry.add_detector(MyDetector())
 ```
 
-Plugins are automatically discovered and loaded at startup.
-
-## Dashboard
-
-lumen-argus includes a built-in web dashboard on port 8081:
-
-```
-http://localhost:8081
-```
-
-Enable it in config:
-
-```yaml
-dashboard:
-  enabled: true
-  port: 8081
-  # password: "optional-password"  # or set LUMEN_ARGUS_DASHBOARD_PASSWORD env var
-```
-
-**Community pages:** Dashboard (stats, trend charts, recent findings), Findings (paginated table with filters, detail panel, CSV/JSON export), Audit (log viewer with search), Settings (config display, license activation, log download), Notifications (channel management with freemium model).
-
-**Pro pages (locked):** Rules, Patterns, Allowlists — shown with upgrade prompts. Unlocked automatically when a Pro license is active.
-
-The dashboard uses an SQLite analytics store (`~/.lumen-argus/analytics.db`) to persist findings across restarts. Data survives upgrades and license transitions.
-
-### Dashboard API
-
-| Endpoint | Description |
-|---|---|
-| `GET /api/v1/status` | Health, uptime, version |
-| `GET /api/v1/findings` | Paginated findings (filterable) |
-| `GET /api/v1/findings/:id` | Finding detail |
-| `GET /api/v1/findings/export` | CSV/JSON export |
-| `GET /api/v1/stats` | Aggregated statistics |
-| `GET /api/v1/config` | Sanitized config |
-| `GET /api/v1/audit` | Audit log entries |
-| `GET /api/v1/audit/export` | Audit log export |
-| `GET /api/v1/logs/tail` | Tail log lines |
-| `GET /api/v1/logs/download` | Sanitized log download |
-| `GET /api/v1/live` | SSE real-time feed |
-| `POST /api/v1/license` | Activate license key |
-| `GET /api/v1/notifications/types` | Available channel types + limit |
-| `GET /api/v1/notifications/channels` | List channels (masked config) |
-| `POST /api/v1/notifications/channels` | Create channel (limit enforced) |
-| `PUT /api/v1/notifications/channels/:id` | Update channel |
-| `DELETE /api/v1/notifications/channels/:id` | Delete channel |
-| `POST /api/v1/notifications/channels/:id/test` | Send test notification |
-
-## Docker
-
-```bash
-# Quick start
-docker compose up -d
-
-# Point Claude Code at the proxy
-ANTHROPIC_BASE_URL=http://localhost:8080 claude
-
-# Dashboard
-open http://localhost:8081
-```
-
-The `--host 0.0.0.0` flag (set in the Dockerfile) allows Docker to expose the proxy and dashboard ports. Data (audit logs, analytics DB) persists in a named volume across container rebuilds.
-
-To use a custom config, create `config.yaml` in the project directory and uncomment the volume mount in `docker-compose.yml`.
-
 ## Security
 
-- Proxy and dashboard bind to `127.0.0.1` by default. `--host 0.0.0.0` binds both (for Docker only)
-- Plain HTTP on localhost, HTTPS to upstream — no TLS interception needed
-- Audit logs and analytics DB created with `0600` permissions
-- Matched values kept in memory only, never written to disk or analytics DB
+- Binds to `127.0.0.1` by default (use `--host 0.0.0.0` for Docker only)
+- Plain HTTP on localhost, HTTPS to upstream — no TLS interception
+- All sensitive files created with `0600` permissions
+- Matched values kept in memory only — never written to disk, logs, or DB
 - Connection pooling scoped per-host — no auth header leakage across providers
-- Dashboard auth: session cookies (HttpOnly, SameSite=Strict), CSRF double-submit, CRLF-safe login redirects
-- License keys validated for length and format before writing to disk
-- Plugin `html` templates sanitized client-side (scripts and event handlers stripped); plugin `js` is trusted code from pip entry points only
+- Dashboard: session auth (HttpOnly, SameSite=Strict), CSRF double-submit, CRLF-safe redirects
+- Plugin HTML sanitized client-side; plugin JS is trusted (entry-point only)
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+
+## Pro
+
+Upgrade to Pro for advanced features:
+
+- **Redaction** — replace secrets in request bodies instead of blocking
+- **1,600+ detection patterns** — AI-generated, curated, and validated
+- **NLP-based PII detection** — beyond regex
+- **Advanced notifications** — circuit breakers, retry, deduplication, dispatch history
+- **Unlimited channels** — free tier allows 1 channel of any type
+- **Dashboard CRUD** — Rules, Patterns, Allowlists pages
+- **Compliance reporting** — audit exports, analytics
+
+```bash
+# Activate Pro — same package, just add a license key
+export LUMEN_ARGUS_LICENSE_KEY=eyJ...
+lumen-argus serve
+```
 
 ## License
 
-MIT — Community Edition.
+MIT — [Artem Senenko](https://github.com/slima4)
