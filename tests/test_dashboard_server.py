@@ -8,13 +8,11 @@ import http.client
 import io
 import json
 import os
-import secrets
 import shutil
 import tempfile
 import threading
 import time
 import unittest
-import urllib.request
 
 from lumen_argus.analytics.store import AnalyticsStore
 from lumen_argus.config import Config, LoggingConfig
@@ -25,7 +23,6 @@ from lumen_argus.dashboard.html import (
     _build_dashboard_html,
 )
 from lumen_argus.dashboard.server import (
-    DashboardHandler,
     DashboardServer,
     _SESSION_TIMEOUT,
 )

@@ -1,6 +1,5 @@
 """Tests for notification channel DB CRUD, reconciliation, and limit enforcement."""
 
-import json
 import os
 import sqlite3
 import tempfile
@@ -484,7 +483,6 @@ class TestPipelineDispatch(unittest.TestCase):
     def test_dispatch_called_with_findings(self):
         from lumen_argus.extensions import ExtensionRegistry
         from lumen_argus.pipeline import ScannerPipeline
-        from lumen_argus.models import Finding
 
         dispatched = []
 

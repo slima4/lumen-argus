@@ -2,14 +2,11 @@
 
 import os
 import shutil
-import sqlite3
 import tempfile
 import threading
 import time
 import unittest
 from datetime import datetime, timezone
-from pathlib import Path
-from unittest import mock
 
 from lumen_argus.analytics.store import AnalyticsStore
 from lumen_argus.models import Finding
@@ -501,7 +498,7 @@ class TestAnalyticsStore(unittest.TestCase):
     def test_creates_parent_directories(self):
         """Store should create parent directories for the DB file."""
         nested = os.path.join(self.tmpdir, "a", "b", "c", "analytics.db")
-        store = AnalyticsStore(db_path=nested)
+        _store = AnalyticsStore(db_path=nested)  # side effect: creates dirs
         self.assertTrue(os.path.exists(nested))
 
 

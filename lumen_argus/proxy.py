@@ -19,7 +19,6 @@ import ssl
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Optional
 
 from lumen_argus.actions import build_block_response, build_sse_block_response, should_forward
 from lumen_argus.audit import AuditLogger

@@ -251,7 +251,7 @@ def _handle_logs_tail(config) -> tuple:
     try:
         with open(log_file, "r", encoding="utf-8", errors="replace") as f:
             all_lines = f.readlines()
-            lines = [l.rstrip("\n") for l in all_lines[-100:]]
+            lines = [line.rstrip("\n") for line in all_lines[-100:]]
     except OSError:
         pass
 

@@ -293,7 +293,7 @@ class TestExportLogs(unittest.TestCase):
             from unittest.mock import patch
             buf = io.StringIO()
             with patch("sys.stdout", buf):
-                result = export_logs(config)
+                export_logs(config)
 
             output = buf.getvalue()
             # Oldest first, then previous, then current
@@ -315,7 +315,7 @@ class TestExportLogs(unittest.TestCase):
             from unittest.mock import patch
             buf = io.StringIO()
             with patch("sys.stdout", buf):
-                result = export_logs(config, sanitize=True)
+                export_logs(config, sanitize=True)
 
             output = buf.getvalue()
             self.assertNotIn("192.168.1.1", output)

@@ -4,10 +4,7 @@ import logging
 import time
 from typing import List
 
-log = logging.getLogger("argus.pipeline")
-
 from lumen_argus.allowlist import AllowlistMatcher
-from lumen_argus.detectors import BaseDetector
 from lumen_argus.detectors.custom import CustomDetector
 from lumen_argus.detectors.pii import PIIDetector
 from lumen_argus.detectors.proprietary import ProprietaryDetector
@@ -16,6 +13,8 @@ from lumen_argus.extensions import ExtensionRegistry
 from lumen_argus.extractor import RequestExtractor
 from lumen_argus.models import Finding, ScanField, ScanResult
 from lumen_argus.policy import PolicyEngine
+
+log = logging.getLogger("argus.pipeline")
 
 
 # Maximum total text bytes to scan per request. Fields beyond this are

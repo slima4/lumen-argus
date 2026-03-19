@@ -38,7 +38,7 @@ class TestCommunityOnly(unittest.TestCase):
         self.db_path = os.path.join(self.tmpdir, "analytics.db")
 
     def test_community_store_creates_tables(self):
-        store = AnalyticsStore(db_path=self.db_path)
+        _store = AnalyticsStore(db_path=self.db_path)  # side effect: creates tables
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         tables = {r["name"] for r in conn.execute(
@@ -67,7 +67,7 @@ class TestCommunityOnly(unittest.TestCase):
         self.assertIn("secrets", stats["by_detector"])
 
     def test_community_store_file_permissions(self):
-        store = AnalyticsStore(db_path=self.db_path)
+        _store = AnalyticsStore(db_path=self.db_path)  # side effect: creates DB file
         mode = os.stat(self.db_path).st_mode & 0o777
         self.assertEqual(mode, 0o600)
 
@@ -92,7 +92,7 @@ class TestCommunityOnly(unittest.TestCase):
 
     def test_pro_tables_on_disk_are_harmless(self):
         """Community store ignores unknown tables (e.g. leftover Pro tables)."""
-        store = AnalyticsStore(db_path=self.db_path)
+        _store = AnalyticsStore(db_path=self.db_path)  # side effect: creates tables
         # Simulate Pro tables left on disk after downgrade
         conn = sqlite3.connect(self.db_path)
         conn.execute("CREATE TABLE IF NOT EXISTS custom_rules (name TEXT PRIMARY KEY)")
