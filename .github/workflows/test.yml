@@ -49,3 +49,24 @@ jobs:
 
       - name: Run benchmark (smoke test)
         run: python benchmark.py -n 10 -p medium
+
+  docker:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t lumen-argus:test .
+
+      - name: Verify proxy and dashboard start
+        run: |
+          docker run -d --name argus-test -p 18080:8080 -p 18081:8081 lumen-argus:test
+          sleep 3
+          curl -sf http://localhost:18081/api/v1/status | python3 -c "
+          import sys, json; d = json.load(sys.stdin)
+          assert d['status'] == 'operational'
+          assert d['tier'] == 'community'
+          print('OK: status=%s tier=%s version=%s' % (d['status'], d['tier'], d['version']))
+          "
+          docker stop argus-test
