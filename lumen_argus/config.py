@@ -718,6 +718,15 @@ allowlists:
     - "tests/**"
     - "fixtures/**"
 
+# Notification channels (reconciled to DB on startup/SIGHUP)
+# Manage via dashboard or define here for IaC. Requires published package.
+# notifications:
+#   - name: production-alerts
+#     type: webhook
+#     url: "https://hooks.slack.com/services/T00/B00/xxx"
+#     events: [block, alert]
+#     min_severity: high
+
 audit:
   log_dir: "~/.lumen-argus/audit"
   retention_days: 90

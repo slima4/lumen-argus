@@ -316,11 +316,22 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+        # Resolve request user for audit trail
+        request_user = "dashboard"
+        user_info = getattr(self, "_user", None)
+        if user_info and isinstance(user_info, dict):
+            # Auth provider (Enterprise): "dashboard:<user_id>"
+            request_user = "dashboard:%s" % user_info.get("user_id", "unknown")
+        elif self.server.password:
+            # Password auth active: shared admin user
+            request_user = "dashboard:admin"
+
         # Fall through to community handler
         status, response_body = handle_community_api(
             self.path, method, body, store,
             audit_reader=audit_reader, config=self.server.config,
             extensions=self.server.extensions,
+            request_user=request_user,
         )
         self._send_raw(status, "application/json", response_body)
 

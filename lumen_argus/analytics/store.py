@@ -56,7 +56,9 @@ CREATE TABLE IF NOT EXISTS notification_channels (
     events TEXT NOT NULL DEFAULT '["block","alert"]',
     min_severity TEXT NOT NULL DEFAULT 'warning',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT '',
+    updated_by TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -407,12 +409,13 @@ class AnalyticsStore:
                     ).fetchone()[0]
                     if current >= channel_limit:
                         raise ValueError("channel_limit_reached")
+                created_by = data.get("created_by", "")
                 try:
                     conn.execute(
                         "INSERT INTO notification_channels "
                         "(name, type, config, enabled, source, events, "
-                        "min_severity, created_at, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "min_severity, created_at, updated_at, created_by, updated_by) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             name,
                             ch_type,
@@ -423,6 +426,8 @@ class AnalyticsStore:
                             data.get("min_severity", "warning"),
                             now,
                             now,
+                            created_by,
+                            created_by,
                         ),
                     )
                     channel_id = conn.execute(
@@ -464,6 +469,9 @@ class AnalyticsStore:
 
         updates.append("updated_at = ?")
         params.append(self._now())
+        if "updated_by" in data:
+            updates.append("updated_by = ?")
+            params.append(data["updated_by"])
         params.append(channel_id)
 
         with self._lock:
@@ -572,6 +580,11 @@ class AnalyticsStore:
             # Build config from all keys except top-level ones
             _top_keys = {"name", "type", "events", "min_severity", "enabled"}
             config = {k: v for k, v in yaml_ch.items() if k not in _top_keys}
+            # Normalize to_addrs: comma-separated string → list
+            if "to_addrs" in config and isinstance(config["to_addrs"], str):
+                config["to_addrs"] = [
+                    a.strip() for a in config["to_addrs"].split(",") if a.strip()
+                ]
 
             channel_data = {
                 "name": name,
@@ -581,6 +594,8 @@ class AnalyticsStore:
                 "events": yaml_ch.get("events", ["block", "alert"]),
                 "min_severity": yaml_ch.get("min_severity", "warning"),
                 "enabled": yaml_ch.get("enabled", True),
+                "created_by": "config",
+                "updated_by": "config",
             }
 
             if name in db_yaml:

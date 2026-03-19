@@ -53,8 +53,13 @@ def _json_response(status: int, data) -> tuple:
 
 def handle_community_api(path: str, method: str, body: bytes,
                          store, audit_reader=None, config=None,
-                         extensions=None) -> tuple:
+                         extensions=None, request_user: str = "") -> tuple:
     """Handle a community API request.
+
+    Args:
+        request_user: Authenticated user identity for audit trail.
+            "dashboard:admin" when password auth is active,
+            "dashboard" when no auth, or "dashboard:<user_id>" from auth providers.
 
     Returns (status_code, response_body_bytes).
     """
@@ -99,7 +104,7 @@ def handle_community_api(path: str, method: str, body: bytes,
     # --- Notification endpoints (community-handled) ---
 
     if path.startswith("/api/v1/notifications"):
-        result = _handle_notifications(path, method, body, store, extensions)
+        result = _handle_notifications(path, method, body, store, extensions, request_user)
         if result is not None:
             return result
 
@@ -311,7 +316,7 @@ def _rebuild_dispatcher(extensions):
             log.warning("dispatcher rebuild failed: %s", e)
 
 
-def _handle_notifications(path, method, body, store, extensions):
+def _handle_notifications(path, method, body, store, extensions, request_user=""):
     """Community notification API — CRUD, types, test, batch."""
 
     # GET /api/v1/notifications/types
@@ -372,6 +377,7 @@ def _handle_notifications(path, method, body, store, extensions):
             return _json_response(400, {"error": "unknown channel type"})
         # Create with atomic limit check (count + insert under same lock)
         limit = extensions.get_channel_limit()
+        data["created_by"] = request_user or "dashboard"
         try:
             channel = store.create_notification_channel(
                 data, channel_limit=limit,
@@ -389,6 +395,8 @@ def _handle_notifications(path, method, body, store, extensions):
                 })
             return _json_response(400, {"error": err})
         _rebuild_dispatcher(extensions)
+        log.info("notification channel created: %s (type=%s)",
+                 channel.get("name"), channel.get("type"))
         return _json_response(201, _mask_channel(channel))
 
     # POST /api/v1/notifications/channels/batch
@@ -442,6 +450,7 @@ def _handle_notifications(path, method, body, store, extensions):
                 return _json_response(400, {"error": "invalid JSON"})
             if not isinstance(data, dict):
                 return _json_response(400, {"error": "invalid JSON"})
+            data["updated_by"] = request_user or "dashboard"
             try:
                 result = store.update_notification_channel(channel_id, data)
             except ValueError as e:
@@ -449,12 +458,18 @@ def _handle_notifications(path, method, body, store, extensions):
             if result is None:
                 return _json_response(404, {"error": "not found"})
             _rebuild_dispatcher(extensions)
+            log.info("notification channel updated: id=%d name=%s",
+                     channel_id, result.get("name"))
             return _json_response(200, _mask_channel(result))
 
         # DELETE /api/v1/notifications/channels/:id
         if method == "DELETE" and sub is None:
+            # Get name before deleting for the log
+            ch = store.get_notification_channel(channel_id)
             if store.delete_notification_channel(channel_id):
                 _rebuild_dispatcher(extensions)
+                log.info("notification channel deleted: id=%d name=%s",
+                         channel_id, ch["name"] if ch else "?")
                 return _json_response(200, {"deleted": channel_id})
             return _json_response(404, {"error": "not found"})
 
