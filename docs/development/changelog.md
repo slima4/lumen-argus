@@ -2,6 +2,51 @@
 
 All notable changes to lumen-argus are documented here.
 
+## 0.2.0 (2026-03-19)
+
+### Notification Channels
+
+- Notifications page unlocked in community dashboard (freemium: 1 channel any type, unlimited with Pro)
+- 7 channel types available: webhook, email, Slack, Teams, PagerDuty, OpsGenie, Jira
+- Kubernetes-style YAML reconciliation — YAML is fully authoritative
+- Dashboard: CRUD for dashboard-managed channels, read-only for YAML channels with badge
+- Source-aware buttons: YAML channels get Toggle + Test, dashboard channels get full CRUD
+- Audit trail: `created_by` / `updated_by` fields on all channel operations
+- Channel limit enforcement with atomic count + insert under same lock
+- Sensitive field masking in API responses (webhook URLs, passwords, API keys)
+
+### Observability
+
+- `/health` endpoint: added `uptime` field, extension hook for Pro enrichment
+- `/metrics` endpoint: extension hook for Pro to append Prometheus metrics
+- OpenTelemetry tracing hook: `set_trace_request_hook()` wraps full request lifecycle
+- Span attributes: `provider`, `body.size`, `findings.count`, `action`, `scan.duration_ms`
+- All hooks fully guarded — exceptions never break requests
+
+### CI/CD
+
+- Docker smoke test in GitHub Actions (build image, verify `/health`)
+- Workflow permissions hardened (`contents: read`)
+- Concurrency: cancel in-progress runs on new push
+- README: CI status badge
+
+### Documentation
+
+- MkDocs Material site at slima4.github.io/lumen-argus/docs/
+- Landing page at slima4.github.io/lumen-argus/ with comparison table
+- GitHub Pages auto-deploy via Actions
+
+### Open Source
+
+- LICENSE (MIT, Artem Senenko)
+- SECURITY.md (responsible disclosure policy)
+- CONTRIBUTING.md (setup, constraints, commit format)
+- Issue templates (bug report, feature request, security link)
+- PR template (stdlib-only, security checklist)
+- Repo topics, description, homepage
+
+---
+
 ## 0.1.0 (2026-03-17)
 
 Initial release of the lumen-argus Community Edition.

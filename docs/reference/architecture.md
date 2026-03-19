@@ -31,7 +31,7 @@ The proxy is built on Python's `http.server.ThreadingHTTPServer` with daemon thr
 
 | Property | Detail |
 |----------|--------|
-| **Bind address** | `127.0.0.1` only (enforced by runtime assertion; `0.0.0.0` raises `ValueError`) |
+| **Bind address** | `127.0.0.1` by default. Use `--host 0.0.0.0` for Docker (logs a warning for non-loopback). |
 | **Protocol** | Plain HTTP in, HTTPS out |
 | **Threading** | One thread per request (daemon threads) |
 | **SSE streaming** | Passthrough via `read1()` for low-latency chunk forwarding |
@@ -251,6 +251,25 @@ def register(registry):
 | `set_sse_broadcaster(broadcaster)` | `broadcaster: SSEBroadcaster` | Store the SSE broadcaster for plugin access. |
 | `register_auth_provider(provider)` | `provider.authenticate(headers) -> dict or None` | Register an auth provider (Enterprise: OAuth, SAML). |
 
+### Notification hooks
+
+| Hook | Signature | Description |
+|------|-----------|-------------|
+| `register_channel_types(types)` | `types: dict` | Register channel type definitions for the dashboard dropdown. |
+| `set_notifier_builder(builder)` | `builder(channel_dict) -> notifier or None` | Factory that builds notifier instances from DB channel rows. |
+| `set_dispatcher(dispatcher)` | `dispatcher.dispatch(findings, provider)` | Set the notification dispatcher. Community calls this from pipeline. |
+| `set_channel_limit(limit)` | `limit: int or None` | Set max channels (`None` = unlimited, `1` = freemium default). |
+
+### Observability hooks
+
+| Hook | Signature | Description |
+|------|-----------|-------------|
+| `set_health_hook(hook)` | `hook() -> dict` | Merged into `/health` JSON response. |
+| `set_metrics_hook(hook)` | `hook() -> str` | Prometheus text lines appended to `/metrics`. |
+| `set_trace_request_hook(hook)` | `hook(method, path) -> context manager` | Wraps full request lifecycle for OpenTelemetry tracing. |
+
+All observability hooks are fully guarded — exceptions never break requests.
+
 ### Registry methods
 
 Extensions interact with the proxy through the `ExtensionRegistry`:
@@ -261,3 +280,5 @@ Extensions interact with the proxy through the `ExtensionRegistry`:
 - `get_analytics_store()` / `get_sse_broadcaster()` -- Access shared infrastructure
 - `get_dashboard_pages()` / `get_dashboard_css()` / `get_dashboard_api_handler()` -- Read registered extensions
 - `get_auth_providers()` -- List registered auth providers
+- `get_channel_types()` / `get_notifier_builder()` / `get_dispatcher()` / `get_channel_limit()` -- Notification infrastructure
+- `get_health_hook()` / `get_metrics_hook()` / `get_trace_request_hook()` -- Observability hooks

@@ -223,6 +223,47 @@ analytics:
 
 ---
 
+## `notifications`
+
+Notification channels managed via IaC. Reconciled to SQLite on startup and SIGHUP using Kubernetes-style declarative reconciliation — YAML is fully authoritative.
+
+Each entry is a channel definition:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | `str` | *(required)* | Unique channel name. |
+| `type` | `str` | *(required)* | Channel type: `webhook`, `email`, `slack`, `teams`, `pagerduty`, `opsgenie`, `jira`. |
+| `events` | `list[str]` | `[block, alert]` | Which finding actions trigger this channel. |
+| `min_severity` | `str` | `warning` | Minimum severity to dispatch. |
+| `enabled` | `bool` | `true` | Whether the channel is active. |
+
+Additional keys are type-specific (e.g., `url`, `smtp_host`, `webhook_url`) and stored in the channel config.
+
+```yaml title="Example"
+notifications:
+  - name: production-alerts
+    type: webhook
+    url: "https://hooks.slack.com/services/T00/B00/xxx"
+    events: [block, alert]
+    min_severity: high
+
+  - name: security-team
+    type: email
+    smtp_host: "smtp.company.com"
+    from_addr: "argus@company.com"
+    to_addrs: "security@company.com, sre@company.com"
+    events: [block]
+    min_severity: critical
+```
+
+!!! note "Freemium model"
+    Without a Pro license, 1 channel of any type is allowed. With Pro, unlimited. All 7 channel types are available in both tiers — Pro provides the dispatch implementations.
+
+!!! info "YAML reconciliation"
+    YAML channels appear as read-only cards in the dashboard with a `YAML` badge. All fields (including `enabled`) are overwritten from YAML on every startup/SIGHUP. Dashboard-managed channels are never touched by the reconciler.
+
+---
+
 ## Full config example
 
 ```yaml
@@ -273,6 +314,13 @@ dashboard:
   port: 8081
   bind: "127.0.0.1"
   password: ""
+
+# notifications:
+#   - name: production-alerts
+#     type: webhook
+#     url: "https://hooks.slack.com/services/T00/B00/xxx"
+#     events: [block, alert]
+#     min_severity: high
 
 analytics:
   enabled: true
