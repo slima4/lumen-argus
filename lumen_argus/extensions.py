@@ -274,9 +274,11 @@ class ExtensionRegistry:
         return self._metrics_hook
 
     def set_trace_request_hook(self, hook: Callable) -> None:
-        """Register: hook(provider, method, path) -> context manager.
+        """Register: hook(method, path) -> context manager.
         Wraps the full request lifecycle. Pro uses this to create an OTel
-        root span that parents detector/redaction/notification spans."""
+        root span that parents detector/redaction/notification spans.
+        Provider is set as a span attribute after routing (inside _do_forward).
+        __enter__/__exit__ always called on the same thread."""
         self._trace_request_hook = hook
 
     def get_trace_request_hook(self) -> Optional[Callable]:

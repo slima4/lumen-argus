@@ -136,14 +136,22 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
 
         # OTel trace span wraps the full request lifecycle
         trace_hook = server.extensions.get_trace_request_hook() if server.extensions else None
-        trace_ctx = trace_hook(self.command, self.path) if trace_hook else None
+        trace_ctx = None
+        if trace_hook:
+            try:
+                trace_ctx = trace_hook(self.command, self.path)
+            except Exception:
+                trace_ctx = None
 
         with server._active_lock:
             server._active_requests += 1
         try:
             if trace_ctx:
-                with trace_ctx as span:
-                    self._do_forward(request_id, server, span)
+                try:
+                    with trace_ctx as span:
+                        self._do_forward(request_id, server, span)
+                except Exception:
+                    pass  # trace failure must never break the request
             else:
                 self._do_forward(request_id, server, None)
         finally:
@@ -180,6 +188,10 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                 "#%d %s %s -> %s:%d (ssl=%s, provider=%s, %d bytes)",
                 request_id, self.command, self.path, host, port, use_ssl, provider, len(body),
             )
+            # Set provider on trace span (available after routing)
+            if span and hasattr(span, "set_attribute"):
+                span.set_attribute("provider", provider)
+                span.set_attribute("body.size", len(body))
 
             # Extract model from request body for display
             if body:
@@ -204,7 +216,6 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                 )
                 # Enrich trace span with scan results
                 if span and hasattr(span, "set_attribute"):
-                    span.set_attribute("provider", provider)
                     span.set_attribute("findings.count", len(scan_result.findings))
                     span.set_attribute("action", scan_result.action)
                     span.set_attribute("scan.duration_ms", scan_result.scan_duration_ms)
