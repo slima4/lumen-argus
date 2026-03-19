@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a0e14"/>
+      <stop offset="100%" stop-color="#0f1922"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="40%" r="45%">
+      <stop offset="0%" stop-color="#00d4aa" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#00d4aa" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="accent-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#00d4aa"/>
+      <stop offset="100%" stop-color="#00a884"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+
+  <!-- Grid -->
+  <g opacity="0.05" stroke="#1e2a3a" stroke-width="1">
+    <line x1="0" y1="80" x2="1280" y2="80"/><line x1="0" y1="160" x2="1280" y2="160"/>
+    <line x1="0" y1="240" x2="1280" y2="240"/><line x1="0" y1="320" x2="1280" y2="320"/>
+    <line x1="0" y1="400" x2="1280" y2="400"/><line x1="0" y1="480" x2="1280" y2="480"/>
+    <line x1="0" y1="560" x2="1280" y2="560"/>
+    <line x1="160" y1="0" x2="160" y2="640"/><line x1="320" y1="0" x2="320" y2="640"/>
+    <line x1="480" y1="0" x2="480" y2="640"/><line x1="640" y1="0" x2="640" y2="640"/>
+    <line x1="800" y1="0" x2="800" y2="640"/><line x1="960" y1="0" x2="960" y2="640"/>
+    <line x1="1120" y1="0" x2="1120" y2="640"/>
+  </g>
+
+  <!-- Top accent line -->
+  <rect x="0" y="0" width="1280" height="3" fill="url(#accent-grad)"/>
+
+  <!-- Shield + name row -->
+  <g transform="translate(640, 100)">
+    <rect x="-208" y="-28" width="48" height="48" rx="9" fill="none" stroke="#00d4aa" stroke-width="2.5"/>
+    <circle cx="-184" cy="-4" r="9" fill="#00d4aa"/>
+    <circle cx="-184" cy="-4" r="3.5" fill="#0a0e14"/>
+    <text x="-145" y="10" text-anchor="start" fill="#e0e6ed" font-family="system-ui,sans-serif" font-size="46" font-weight="700" letter-spacing="-1">lumen</text>
+    <text x="62" y="10" text-anchor="start" fill="#00d4aa" font-family="system-ui,sans-serif" font-size="46" font-weight="700" letter-spacing="-1">-argus</text>
+  </g>
+
+  <!-- Tagline -->
+  <text x="640" y="185" text-anchor="middle" fill="#e0e6ed" font-family="system-ui,sans-serif" font-size="30" font-weight="600">AI Coding Tool DLP Proxy</text>
+
+  <!-- Subtitle -->
+  <text x="640" y="230" text-anchor="middle" fill="#6b7d93" font-family="system-ui,sans-serif" font-size="18">Scan outbound requests for secrets, PII, and proprietary data</text>
+  <text x="640" y="256" text-anchor="middle" fill="#6b7d93" font-family="system-ui,sans-serif" font-size="18">before they reach AI providers</text>
+
+  <!-- Feature pills -->
+  <g transform="translate(640, 315)" text-anchor="middle">
+    <rect x="-370" y="-16" width="130" height="32" rx="16" fill="#111820" stroke="#1e2a3a" stroke-width="1"/>
+    <text x="-305" y="6" fill="#00d4aa" font-family="monospace" font-size="12" font-weight="500">34+ Secrets</text>
+
+    <rect x="-220" y="-16" width="100" height="32" rx="16" fill="#111820" stroke="#1e2a3a" stroke-width="1"/>
+    <text x="-170" y="6" fill="#00d4aa" font-family="monospace" font-size="12" font-weight="500">8 PII</text>
+
+    <rect x="-100" y="-16" width="110" height="32" rx="16" fill="#111820" stroke="#1e2a3a" stroke-width="1"/>
+    <text x="-45" y="6" fill="#00d4aa" font-family="monospace" font-size="12" font-weight="500">Zero Deps</text>
+
+    <rect x="30" y="-16" width="110" height="32" rx="16" fill="#111820" stroke="#1e2a3a" stroke-width="1"/>
+    <text x="85" y="6" fill="#00d4aa" font-family="monospace" font-size="12" font-weight="500">&lt; 50ms</text>
+
+    <rect x="160" y="-16" width="100" height="32" rx="16" fill="#111820" stroke="#1e2a3a" stroke-width="1"/>
+    <text x="210" y="6" fill="#00d4aa" font-family="monospace" font-size="12" font-weight="500">Docker</text>
+
+    <rect x="280" y="-16" width="90" height="32" rx="16" fill="#111820" stroke="#1e2a3a" stroke-width="1"/>
+    <text x="325" y="6" fill="#00d4aa" font-family="monospace" font-size="12" font-weight="500">MIT</text>
+  </g>
+
+  <!-- Architecture diagram -->
+  <g transform="translate(640, 420)">
+    <rect x="-310" y="-22" width="150" height="44" rx="6" fill="#161e29" stroke="#1e2a3a" stroke-width="1"/>
+    <text x="-235" y="5" fill="#6b7d93" font-family="monospace" font-size="13" text-anchor="middle">AI Tool</text>
+
+    <rect x="-90" y="-22" width="180" height="44" rx="6" fill="#111820" stroke="#00d4aa" stroke-width="1.5"/>
+    <text x="0" y="5" fill="#00d4aa" font-family="monospace" font-size="14" font-weight="600" text-anchor="middle">lumen-argus</text>
+
+    <rect x="160" y="-22" width="150" height="44" rx="6" fill="#161e29" stroke="#1e2a3a" stroke-width="1"/>
+    <text x="235" y="5" fill="#6b7d93" font-family="monospace" font-size="13" text-anchor="middle">Provider</text>
+
+    <line x1="-155" y1="0" x2="-95" y2="0" stroke="#3d4f63" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <polygon points="-98,-4 -88,0 -98,4" fill="#3d4f63"/>
+    <line x1="95" y1="0" x2="155" y2="0" stroke="#3d4f63" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <polygon points="152,-4 162,0 152,4" fill="#3d4f63"/>
+
+    <text x="-125" y="-28" fill="#3d4f63" font-family="monospace" font-size="10" text-anchor="middle">HTTP</text>
+    <text x="125" y="-28" fill="#3d4f63" font-family="monospace" font-size="10" text-anchor="middle">HTTPS</text>
+  </g>
+
+  <!-- Actions row -->
+  <text x="640" y="492" text-anchor="middle" font-family="monospace" font-size="13">
+    <tspan fill="#ff4757">block</tspan>
+    <tspan fill="#3d4f63"> | </tspan>
+    <tspan fill="#ffa502">alert</tspan>
+    <tspan fill="#3d4f63"> | </tspan>
+    <tspan fill="#00d4aa">log</tspan>
+    <tspan fill="#3d4f63"> | </tspan>
+    <tspan fill="#6b7d93">redact</tspan>
+  </text>
+
+  <!-- Bottom -->
+  <rect x="0" y="570" width="1280" height="70" fill="#0a0e14" opacity="0.6"/>
+  <text x="640" y="612" text-anchor="middle" fill="#3d4f63" font-family="monospace" font-size="14">github.com/slima4/lumen-argus</text>
+
+  <!-- Open source badge -->
+  <rect x="530" y="530" width="220" height="28" rx="14" fill="#111820" stroke="#1e2a3a" stroke-width="1"/>
+  <text x="640" y="549" text-anchor="middle" fill="#6b7d93" font-family="monospace" font-size="12">Open Source  &#183;  Python 3.9+</text>
+</svg>
