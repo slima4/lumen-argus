@@ -13,3 +13,5 @@ venv/
 .env
 *.jsonl
 site/
+CLAUDE.md
+lumen-argus-spec.md
