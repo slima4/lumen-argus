@@ -55,6 +55,7 @@ class ExtensionRegistry:
         self._dispatcher = None  # type: Optional[object]
         self._channel_limit = 1  # type: Optional[int]  (None = unlimited)
         self._health_hook = None  # type: Optional[Callable]
+        self._metrics_hook = None  # type: Optional[Callable]
 
     def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
         """Register an additional detector.
@@ -263,6 +264,13 @@ class ExtensionRegistry:
 
     def get_health_hook(self) -> Optional[Callable]:
         return self._health_hook
+
+    def set_metrics_hook(self, hook: Callable) -> None:
+        """Register: hook() -> str of Prometheus metric lines appended to /metrics."""
+        self._metrics_hook = hook
+
+    def get_metrics_hook(self) -> Optional[Callable]:
+        return self._metrics_hook
 
     def loaded_plugins(self) -> List[tuple]:
         """Return list of (name, version) for loaded plugins."""

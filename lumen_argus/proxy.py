@@ -102,9 +102,19 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
     def _handle_metrics(self):
         """Respond to /metrics with Prometheus exposition format."""
         server = self.server  # type: ArgusProxyServer
-        body = server.stats.prometheus_metrics(
+        text = server.stats.prometheus_metrics(
             active_requests=server.active_requests,
-        ).encode("utf-8")
+        )
+        # Let Pro extend with additional metrics
+        metrics_hook = server.extensions.get_metrics_hook() if server.extensions else None
+        if metrics_hook:
+            try:
+                extra = metrics_hook()
+                if extra:
+                    text += extra
+            except Exception:
+                pass
+        body = text.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
