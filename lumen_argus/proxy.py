@@ -223,7 +223,7 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
 
             # Scan request body
             if body and len(body) <= server.max_body_size:
-                scan_result = server.pipeline.scan(body, provider)
+                scan_result = server.pipeline.scan(body, provider, model=model)
                 log.debug(
                     "#%d scan: %d findings, action=%s, %.1fms",
                     request_id,

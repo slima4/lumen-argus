@@ -79,12 +79,13 @@ class ScannerPipeline:
         if custom_rules is not None:
             self._custom_detector.update_rules(custom_rules)
 
-    def scan(self, body: bytes, provider: str) -> ScanResult:
+    def scan(self, body: bytes, provider: str, model: str = "") -> ScanResult:
         """Run the full scan pipeline on a request body.
 
         Args:
             body: Raw request body bytes (JSON).
             provider: Provider name for extraction format.
+            model: Model name from request body (for analytics/notifications).
 
         Returns:
             ScanResult with findings, timing, and resolved action.
@@ -177,7 +178,7 @@ class ScannerPipeline:
             store = self._extensions.get_analytics_store()
             if store:
                 try:
-                    store.record_findings(result.findings, provider=provider)
+                    store.record_findings(result.findings, provider=provider, model=model)
                 except Exception:
                     log.warning("analytics store record_findings failed", exc_info=False)
 
@@ -186,7 +187,7 @@ class ScannerPipeline:
             dispatcher = self._extensions.get_dispatcher()
             if dispatcher:
                 try:
-                    dispatcher.dispatch(result.findings, provider=provider)
+                    dispatcher.dispatch(result.findings, provider=provider, model=model)
                 except Exception:
                     log.warning("notification dispatch failed", exc_info=False)
 
