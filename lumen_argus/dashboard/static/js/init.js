@@ -10,8 +10,6 @@ registerPage('settings', 'Settings', {order: 70, loadFn: loadSettings});
 /* Register locked Pro placeholders */
 registerPage('rules', 'Rules', {locked: true, order: 25,
   proDescription: 'Create custom detection rules with regex patterns, keywords, and size limits. Manage rule priorities and per-rule actions.'});
-registerPage('patterns', 'Patterns', {locked: true, order: 35,
-  proDescription: 'Browse and toggle 1,600+ secret detection patterns. Filter by category, confidence level, and enable/disable individual patterns.'});
 registerPage('allowlists', 'Allowlists', {locked: true, order: 45,
   proDescription: 'Manage allowlist entries for secrets, PII, and file paths. Test patterns against recent findings before adding.'});
 registerPage('notifications', 'Notifications', {order: 55, loadFn: loadNotifications});
