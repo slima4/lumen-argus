@@ -66,12 +66,22 @@ async function loadData(){try{
   document.getElementById('total-badge').textContent=stats.total_findings.toLocaleString()+' findings';
   var cards=document.getElementById('cards');cards.replaceChildren();
   ['critical','high','warning','info'].forEach(function(s){cards.appendChild(makeCard(s,stats.by_severity[s]||0));});
+  var chartSvg=document.getElementById('chart');
   if(stats.daily_trend&&stats.daily_trend.length){
     var trend=stats.daily_trend;
     if(trend.length===1){var ymd=trend[0].date.split('-');
       var d=new Date(Date.UTC(+ymd[0],+ymd[1]-1,+ymd[2]-1));
       var prev=d.toISOString().slice(0,10);trend=[{date:prev,count:0}].concat(trend);}
-    renderChart(trend);}
+    chartSvg.parentNode.classList.remove('chart-empty');
+    renderChart(trend);
+  } else {
+    while(chartSvg.firstChild)chartSvg.removeChild(chartSvg.firstChild);
+    chartSvg.parentNode.classList.add('chart-empty');
+    var emptyEl=chartSvg.parentNode.querySelector('.chart-empty-msg');
+    if(!emptyEl){emptyEl=document.createElement('div');emptyEl.className='chart-empty-msg';
+      emptyEl.textContent='Findings will appear here as requests are scanned';
+      chartSvg.parentNode.appendChild(emptyEl);}
+  }
   if(stats.by_detector)renderBars('det-list',stats.by_detector);
   if(stats.by_provider)renderBars('prov-list',stats.by_provider);
   var _f=_forceProCharts;_forceProCharts=false;renderProCharts(trendDays,_f);

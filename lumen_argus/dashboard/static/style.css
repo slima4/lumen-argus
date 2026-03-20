@@ -92,6 +92,9 @@ nav{display:flex;gap:2px;padding:12px 32px 0;max-width:1360px;margin-inline:auto
 .range-btn.active{background:var(--accent-dim);color:var(--accent)}
 .chart-wrap{position:relative;height:130px;margin-top:6px}
 .chart-wrap svg{width:100%;height:100%;display:block}
+.chart-empty svg{opacity:.15}
+.chart-empty-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:.8rem;color:var(--text-muted);pointer-events:none}
 .chart-grid line{stroke:var(--border);stroke-width:.5}
 .chart-area{fill:var(--accent-dim)}.chart-line{fill:none;stroke:var(--accent);stroke-width:1.5;
   stroke-linecap:round;stroke-linejoin:round}
