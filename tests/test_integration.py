@@ -21,10 +21,10 @@ def _make_findings(count=3):
         findings.append(
             Finding(
                 detector="secrets",
-                type="aws_access_key",
+                type="aws_access_key_%d" % i,
                 severity="critical",
                 location="messages[%d].content" % i,
-                value_preview="AKIA****EXAMPLE",
+                value_preview="AKIA****EXAMPLE%d" % i,
                 matched_value="AKIAIOSFODNN7EXAMPLE",
                 action="alert",
             )

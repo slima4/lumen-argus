@@ -296,6 +296,14 @@ class AnalyticsConfig:
 
 
 @dataclass
+class DedupConfig:
+    conversation_ttl_minutes: int = 30
+    finding_ttl_minutes: int = 30
+    max_conversations: int = 10_000
+    max_hashes_per_conversation: int = 5_000
+
+
+@dataclass
 class CustomRuleConfig:
     name: str = ""
     pattern: str = ""  # raw regex string
@@ -320,6 +328,7 @@ class Config:
     upstreams: Dict[str, str] = field(default_factory=dict)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     analytics: AnalyticsConfig = field(default_factory=AnalyticsConfig)
+    dedup: DedupConfig = field(default_factory=DedupConfig)
     notifications: List[dict] = field(default_factory=list)
 
 
@@ -345,6 +354,7 @@ _KNOWN_TOP_KEYS = {
     "license_key",
     "redaction",
     "notifications",
+    "dedup",
     "enterprise",
     "custom_detectors",
 }
@@ -375,6 +385,12 @@ _KNOWN_LOGGING_KEYS = {"log_dir", "file_level", "max_size_mb", "backup_count", "
 _KNOWN_CUSTOM_RULE_KEYS = {"name", "pattern", "severity", "action", "detector"}
 _KNOWN_DASHBOARD_KEYS = {"enabled", "port", "bind", "password"}
 _KNOWN_ANALYTICS_KEYS = {"enabled", "db_path", "retention_days"}
+_KNOWN_DEDUP_KEYS = {
+    "conversation_ttl_minutes",
+    "finding_ttl_minutes",
+    "max_conversations",
+    "max_hashes_per_conversation",
+}
 _VALID_SEVERITIES = {"critical", "high", "warning", "info"}
 
 
@@ -654,6 +670,26 @@ def _validate_config(data: dict, source: str) -> List[str]:
             except (ValueError, TypeError):
                 warnings.append("%s: analytics.retention_days must be an integer" % source)
 
+    # Validate dedup section
+    dedup = data.get("dedup", {})
+    if isinstance(dedup, dict):
+        for key in dedup:
+            if key not in _KNOWN_DEDUP_KEYS:
+                warnings.append("%s: unknown key 'dedup.%s'" % (source, key))
+        for int_key in (
+            "conversation_ttl_minutes",
+            "finding_ttl_minutes",
+            "max_conversations",
+            "max_hashes_per_conversation",
+        ):
+            if int_key in dedup:
+                try:
+                    val = int(dedup[int_key])
+                    if val < 1:
+                        warnings.append("%s: dedup.%s must be positive" % (source, int_key))
+                except (ValueError, TypeError):
+                    warnings.append("%s: dedup.%s must be an integer" % (source, int_key))
+
     # Validate allowlists section
     al = data.get("allowlists", {})
     if isinstance(al, dict):
@@ -931,6 +967,18 @@ def _apply_config(config: Config, data: dict) -> None:
             config.analytics.db_path = str(analytics["db_path"])
         if "retention_days" in analytics:
             config.analytics.retention_days = int(analytics["retention_days"])
+
+    # Dedup
+    dedup = data.get("dedup", {})
+    if isinstance(dedup, dict):
+        if "conversation_ttl_minutes" in dedup:
+            config.dedup.conversation_ttl_minutes = int(dedup["conversation_ttl_minutes"])
+        if "finding_ttl_minutes" in dedup:
+            config.dedup.finding_ttl_minutes = int(dedup["finding_ttl_minutes"])
+        if "max_conversations" in dedup:
+            config.dedup.max_conversations = int(dedup["max_conversations"])
+        if "max_hashes_per_conversation" in dedup:
+            config.dedup.max_hashes_per_conversation = int(dedup["max_hashes_per_conversation"])
 
     # Custom rules
     rules = data.get("custom_rules", [])

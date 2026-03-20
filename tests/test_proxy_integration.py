@@ -155,7 +155,7 @@ class TestProxyIntegration(unittest.TestCase):
                 "model": "claude-opus-4-6",
                 "stream": True,
                 "messages": [
-                    {"role": "user", "content": "My key: AKIAIOSFODNN7EXAMPLE"},
+                    {"role": "user", "content": "My key: AKIAI44QH8DHBEXAMPLE"},
                 ],
             }
         ).encode()

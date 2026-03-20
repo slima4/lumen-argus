@@ -658,7 +658,9 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
         if api_key:
             if api_key.lower().startswith("bearer "):
                 api_key = api_key[7:]
-            ctx.api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:16]
+            ctx.api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()[
+                :16
+            ]  # not password hashing — truncated fingerprint for analytics grouping only
 
         # Client tool name from User-Agent
         ctx.client_name = _parse_client_name(headers.get("user-agent", ""))

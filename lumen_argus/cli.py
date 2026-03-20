@@ -183,6 +183,8 @@ def main(argv=None):
         pii=config.allowlist.pii,
         paths=config.allowlist.paths,
     )
+    from dataclasses import asdict
+
     pipeline = ScannerPipeline(
         default_action=config.default_action,
         action_overrides=action_overrides,
@@ -190,6 +192,7 @@ def main(argv=None):
         entropy_threshold=config.entropy_threshold,
         extensions=extensions,
         custom_rules=config.custom_rules,
+        dedup_config=asdict(config.dedup),
     )
     router = ProviderRouter(upstreams=config.upstreams or None)
 

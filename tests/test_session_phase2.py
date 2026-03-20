@@ -10,13 +10,18 @@ from lumen_argus.dashboard.api import handle_community_api
 from lumen_argus.models import Finding, SessionContext
 
 
+_finding_counter = 0
+
+
 def _make_finding():
+    global _finding_counter
+    _finding_counter += 1
     return Finding(
         detector="secrets",
-        type="aws_access_key",
+        type="aws_access_key_%d" % _finding_counter,
         severity="critical",
         location="messages[0].content",
-        value_preview="AKIA****",
+        value_preview="AKIA****%d" % _finding_counter,
         matched_value="AKIAIOSFODNN7EXAMPLE",
         action="block",
     )

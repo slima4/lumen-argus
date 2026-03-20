@@ -7,6 +7,7 @@ for retention enforcement.
 sqlite3 is Python stdlib — zero external dependencies.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -41,13 +42,17 @@ CREATE TABLE IF NOT EXISTS findings (
     git_branch TEXT NOT NULL DEFAULT '',
     os_platform TEXT NOT NULL DEFAULT '',
     client_name TEXT NOT NULL DEFAULT '',
-    api_key_hash TEXT NOT NULL DEFAULT ''
+    api_key_hash TEXT NOT NULL DEFAULT '',
+    content_hash TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_findings_timestamp ON findings(timestamp);
 CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
 CREATE INDEX IF NOT EXISTS idx_findings_session ON findings(session_id);
 CREATE INDEX IF NOT EXISTS idx_findings_account ON findings(account_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_dedup
+ON findings(content_hash, session_id)
+WHERE content_hash != '';
 
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
@@ -144,40 +149,50 @@ class AnalyticsStore:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         s = session  # shorthand
 
-        rows = [
-            (
-                now,
-                f.detector,
-                f.type,
-                f.severity,
-                f.location,
-                f.action,
-                provider,
-                model,
-                f.value_preview,
-                s.account_id if s else "",
-                s.session_id if s else "",
-                s.device_id if s else "",
-                s.source_ip if s else "",
-                s.working_directory if s else "",
-                s.git_branch if s else "",
-                s.os_platform if s else "",
-                s.client_name if s else "",
-                s.api_key_hash if s else "",
+        rows = []
+        for f in findings:
+            # Content hash: deterministic fingerprint for store-level dedup.
+            # Uses detector + type + value_preview (not matched_value, which
+            # is never persisted). Known limitation: two different secrets
+            # with the same masked preview (e.g. both "AKIA****") will
+            # collide within the same session — acceptable trade-off vs
+            # persisting raw secret material.
+            hash_input = "%s|%s|%s" % (f.detector, f.type, f.value_preview)
+            content_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
+            rows.append(
+                (
+                    now,
+                    f.detector,
+                    f.type,
+                    f.severity,
+                    f.location,
+                    f.action,
+                    provider,
+                    model,
+                    f.value_preview,
+                    s.account_id if s else "",
+                    s.session_id if s else "",
+                    s.device_id if s else "",
+                    s.source_ip if s else "",
+                    s.working_directory if s else "",
+                    s.git_branch if s else "",
+                    s.os_platform if s else "",
+                    s.client_name if s else "",
+                    s.api_key_hash if s else "",
+                    content_hash,
+                )
             )
-            for f in findings
-        ]
 
         with self._lock:
             with self._connect() as conn:
                 conn.executemany(
-                    "INSERT INTO findings "
+                    "INSERT OR IGNORE INTO findings "
                     "(timestamp, detector, finding_type, severity, location, "
                     "action_taken, provider, model, value_preview, "
                     "account_id, session_id, device_id, source_ip, "
                     "working_directory, git_branch, os_platform, "
-                    "client_name, api_key_hash) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "client_name, api_key_hash, content_hash) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
 

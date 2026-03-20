@@ -58,11 +58,11 @@ def _seed_findings(store, count=5):
         findings.append(
             Finding(
                 detector="secrets",
-                type="aws_access_key",
+                type="aws_access_key_%d" % i,
                 severity="critical",
                 location="user_message[%d]" % i,
                 matched_value="AKIA" + "X" * 16,
-                value_preview="AKIA****",
+                value_preview="AKIA****%d" % i,
                 action="alert",
             )
         )

@@ -1,6 +1,8 @@
 """Scanner pipeline: orchestrates extraction, detection, and policy evaluation."""
 
+import hashlib
 import logging
+import threading
 import time
 from typing import List
 
@@ -15,6 +17,206 @@ from lumen_argus.models import Finding, ScanField, ScanResult, SessionContext
 from lumen_argus.policy import PolicyEngine
 
 log = logging.getLogger("argus.pipeline")
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: Content Fingerprinting — skip already-scanned fields
+# ---------------------------------------------------------------------------
+
+
+class _ConversationCache:
+    """Per-conversation set of seen content hashes."""
+
+    __slots__ = ("seen_hashes", "last_access", "hash_count")
+
+    def __init__(self):
+        self.seen_hashes = set()  # set of str (SHA-256 prefix)
+        self.last_access = time.monotonic()
+        self.hash_count = 0
+
+
+class ContentFingerprint:
+    """Process-wide cache mapping conversation keys to seen content hashes.
+
+    Thread-safe. Sharded by conversation key for low lock contention.
+
+    Uses SHA-256 (truncated to 16 hex chars) for deterministic, cross-process
+    hashing. Python's built-in hash() is non-deterministic across restarts
+    (PYTHONHASHSEED randomization). SHA-256[:16] gives 64-bit collision
+    resistance — sufficient for dedup.
+    """
+
+    _NUM_SHARDS = 16
+
+    def __init__(
+        self, conversation_ttl: int = 1800, max_conversations: int = 10_000, max_hashes_per_conversation: int = 5_000
+    ):
+        self._ttl = conversation_ttl
+        self._max_conversations = max_conversations
+        self._max_hashes = max_hashes_per_conversation
+        self._shards = [{} for _ in range(self._NUM_SHARDS)]
+        self._locks = [threading.Lock() for _ in range(self._NUM_SHARDS)]
+        self._cleanup_timer = None
+
+    @staticmethod
+    def _hash_text(text: str) -> str:
+        """SHA-256 truncated to 16 hex chars (64-bit)."""
+        return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+    def _shard_for(self, key: str) -> int:
+        return hash(key) & (self._NUM_SHARDS - 1)
+
+    def filter_new_fields(self, conversation_key: str, fields: list) -> list:
+        """Return only fields whose content hasn't been seen before.
+
+        Updates the conversation's seen set with new hashes.
+        """
+        idx = self._shard_for(conversation_key)
+        now = time.monotonic()
+
+        # Compute hashes outside the lock (SHA-256 is CPU-bound)
+        field_hashes = [self._hash_text(f.text) for f in fields]
+
+        with self._locks[idx]:
+            shard = self._shards[idx]
+            cache = shard.get(conversation_key)
+            if cache is None:
+                cache = _ConversationCache()
+                shard[conversation_key] = cache
+            cache.last_access = now
+
+            new_fields = []
+            new_hashes = []
+            for f, h in zip(fields, field_hashes):
+                if h not in cache.seen_hashes:
+                    new_fields.append(f)
+                    new_hashes.append(h)
+
+            # Add new hashes, cap total to prevent memory blowup
+            remaining = self._max_hashes - cache.hash_count
+            if remaining > 0:
+                hashes_to_add = new_hashes[:remaining]
+                cache.seen_hashes.update(hashes_to_add)
+                cache.hash_count += len(hashes_to_add)
+
+        return new_fields
+
+    def cleanup(self) -> int:
+        """Remove expired conversations. Called periodically."""
+        now = time.monotonic()
+        total_removed = 0
+        for idx in range(self._NUM_SHARDS):
+            with self._locks[idx]:
+                expired = [k for k, v in self._shards[idx].items() if now - v.last_access > self._ttl]
+                for k in expired:
+                    del self._shards[idx][k]
+                total_removed += len(expired)
+        return total_removed
+
+    def start_cleanup_scheduler(self, interval: float = 300.0):
+        """Start background thread to clean expired conversations."""
+        if self._cleanup_timer is not None:
+            return
+
+        def _run():
+            removed = self.cleanup()
+            if removed:
+                log.debug("content fingerprint: evicted %d idle conversations", removed)
+            self._cleanup_timer = threading.Timer(interval, _run)
+            self._cleanup_timer.daemon = True
+            self._cleanup_timer.start()
+
+        self._cleanup_timer = threading.Timer(interval, _run)
+        self._cleanup_timer.daemon = True
+        self._cleanup_timer.start()
+
+    def stats(self) -> dict:
+        """Return cache statistics."""
+        conversations = 0
+        total_hashes = 0
+        for idx in range(self._NUM_SHARDS):
+            with self._locks[idx]:
+                for cache in self._shards[idx].values():
+                    conversations += 1
+                    total_hashes += cache.hash_count
+        return {"conversations": conversations, "total_hashes": total_hashes}
+
+
+# ---------------------------------------------------------------------------
+# Layer 2: Finding-Level TTL Cache — prevent duplicate recording
+# ---------------------------------------------------------------------------
+
+
+class _FindingDedup:
+    """Cross-request finding deduplication with TTL.
+
+    Tracks recently recorded (detector, type, matched_value_hash) tuples.
+    If a finding was already recorded within the TTL window, skip recording
+    but still include it in ScanResult for policy evaluation.
+
+    Thread-safe with sharded locks for low contention.
+    """
+
+    _NUM_SHARDS = 16
+
+    def __init__(self, ttl_seconds: int = 1800):
+        self._ttl = ttl_seconds
+        self._shards = [{} for _ in range(self._NUM_SHARDS)]
+        self._locks = [threading.Lock() for _ in range(self._NUM_SHARDS)]
+        self._cleanup_timer = None
+
+    def _shard_for(self, key: tuple) -> int:
+        return hash(key) & (self._NUM_SHARDS - 1)
+
+    def is_new(self, finding, session_id: str = "") -> bool:
+        """Return True if this finding hasn't been seen within the TTL window.
+
+        Session-scoped: same finding in different sessions is always new.
+        """
+        value_hash = hashlib.sha256(finding.matched_value.encode()).hexdigest()[:16]
+        key = (finding.detector, finding.type, value_hash, session_id)
+        idx = self._shard_for(key)
+        now = time.monotonic()
+
+        with self._locks[idx]:
+            entry = self._shards[idx].get(key)
+            if entry is not None and (now - entry) < self._ttl:
+                return False
+            self._shards[idx][key] = now
+            return True
+
+    def filter_new(self, findings: list, session_id: str = "") -> list:
+        """Return only findings that haven't been recorded within the TTL window."""
+        return [f for f in findings if self.is_new(f, session_id=session_id)]
+
+    def cleanup(self) -> int:
+        """Remove expired entries. Returns count removed."""
+        now = time.monotonic()
+        total = 0
+        for idx in range(self._NUM_SHARDS):
+            with self._locks[idx]:
+                expired = [k for k, ts in self._shards[idx].items() if now - ts > self._ttl]
+                for k in expired:
+                    del self._shards[idx][k]
+                total += len(expired)
+        return total
+
+    def start_cleanup_scheduler(self, interval: float = 300.0):
+        """Start background thread to clean expired entries."""
+        if self._cleanup_timer is not None:
+            return
+
+        def _run():
+            removed = self.cleanup()
+            if removed:
+                log.debug("finding dedup: evicted %d expired entries", removed)
+            self._cleanup_timer = threading.Timer(interval, _run)
+            self._cleanup_timer.daemon = True
+            self._cleanup_timer.start()
+
+        self._cleanup_timer = threading.Timer(interval, _run)
+        self._cleanup_timer.daemon = True
+        self._cleanup_timer.start()
 
 
 # Maximum total text bytes to scan per request. Fields beyond this are
@@ -36,6 +238,7 @@ class ScannerPipeline:
         extensions: ExtensionRegistry = None,
         max_scan_bytes: int = MAX_SCAN_TEXT_BYTES,
         custom_rules: list = None,
+        dedup_config: dict = None,
     ):
         self._extractor = RequestExtractor()
         self._allowlist = allowlist or AllowlistMatcher()
@@ -59,6 +262,21 @@ class ScannerPipeline:
         # Add any pro/enterprise extension detectors
         if extensions:
             self._detectors.extend(extensions.extra_detectors())
+
+        # Cross-request dedup (Layers 1 + 2)
+        dc = dedup_config or {}
+        conv_ttl = int(dc.get("conversation_ttl_minutes", 30)) * 60
+        finding_ttl = int(dc.get("finding_ttl_minutes", 30)) * 60
+        max_convs = int(dc.get("max_conversations", 10_000))
+        max_hashes = int(dc.get("max_hashes_per_conversation", 5_000))
+        self._fingerprint = ContentFingerprint(
+            conversation_ttl=conv_ttl,
+            max_conversations=max_convs,
+            max_hashes_per_conversation=max_hashes,
+        )
+        self._fingerprint.start_cleanup_scheduler()
+        self._finding_dedup = _FindingDedup(ttl_seconds=finding_ttl)
+        self._finding_dedup.start_cleanup_scheduler()
 
     def reload(
         self, allowlist: AllowlistMatcher, default_action: str, action_overrides: dict = None, custom_rules: list = None
@@ -99,6 +317,20 @@ class ScannerPipeline:
 
         # Filter out allowlisted paths
         fields = [f for f in fields if not (f.source_filename and self._allowlist.is_allowed_path(f.source_filename))]
+
+        # Layer 1: Content fingerprinting — skip fields already scanned
+        # in a previous request within this conversation.
+        conv_key = session.session_id if session else ""
+        if conv_key:
+            original_count = len(fields)
+            fields = self._fingerprint.filter_new_fields(conv_key, fields)
+            skipped = original_count - len(fields)
+            if skipped:
+                log.debug(
+                    "fingerprint: skipped %d/%d already-scanned fields",
+                    skipped,
+                    original_count,
+                )
 
         # Prioritize scanning: reverse order so newest messages (end of
         # conversation) are scanned first, then cap total text to keep
@@ -174,13 +406,19 @@ class ScannerPipeline:
             action=decision.action,
         )
 
-        # Record findings in analytics store (community dashboard)
-        if result.findings and self._extensions:
+        # Layer 2: Finding-level dedup — filter before recording but after
+        # policy eval. All findings stay in ScanResult for action enforcement.
+        # Session-scoped: same finding in different sessions is always new.
+        sess_id = session.session_id if session else ""
+        new_findings = self._finding_dedup.filter_new(result.findings, session_id=sess_id) if result.findings else []
+
+        # Record only NEW findings in analytics store (community dashboard)
+        if new_findings and self._extensions:
             store = self._extensions.get_analytics_store()
             if store:
                 try:
                     store.record_findings(
-                        result.findings,
+                        new_findings,
                         provider=provider,
                         model=model,
                         session=session,
@@ -188,7 +426,7 @@ class ScannerPipeline:
                 except Exception:
                     log.warning("analytics store record_findings failed", exc_info=False)
 
-        # Dispatch notifications for findings
+        # Dispatch notifications — pass ALL findings (dispatcher has its own dedup)
         if result.findings and self._extensions:
             dispatcher = self._extensions.get_dispatcher()
             if dispatcher:

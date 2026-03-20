@@ -496,8 +496,26 @@ class TestAnalyticsStoreSession(unittest.TestCase):
             working_directory="/dev/repo",
             git_branch="main",
         )
-        self.store.record_findings([self._finding()], session=session)
-        self.store.record_findings([self._finding()], session=session)
+        f1 = Finding(
+            detector="secrets",
+            type="aws_access_key",
+            severity="critical",
+            location="messages[0].content",
+            value_preview="AKIA****",
+            matched_value="AKIAIOSFODNN7EXAMPLE",
+            action="block",
+        )
+        f2 = Finding(
+            detector="secrets",
+            type="github_token",
+            severity="high",
+            location="messages[1].content",
+            value_preview="ghp_****",
+            matched_value="ghp_EXAMPLE",
+            action="block",
+        )
+        self.store.record_findings([f1], session=session)
+        self.store.record_findings([f2], session=session)
         sessions = self.store.get_sessions()
         self.assertEqual(len(sessions), 1)
         s = sessions[0]

@@ -370,7 +370,7 @@ class TestAnalyticsStore(unittest.TestCase):
 
     def test_cleanup_returns_count(self):
         """Cleanup should return the number of deleted rows."""
-        findings = [_make_finding() for _ in range(3)]
+        findings = [_make_finding(type_="type_%d" % i) for i in range(3)]
         self.store.record_findings(findings)
 
         conn = self.store._connect()
@@ -383,7 +383,7 @@ class TestAnalyticsStore(unittest.TestCase):
 
     def test_cleanup_mixed_old_and_new(self):
         """Cleanup should delete only old records, keeping recent ones."""
-        self.store.record_findings([_make_finding(), _make_finding()])
+        self.store.record_findings([_make_finding(type_="type_a"), _make_finding(type_="type_b")])
 
         # Backdate only the first record
         conn = self.store._connect()
@@ -455,10 +455,17 @@ class TestAnalyticsStore(unittest.TestCase):
             except Exception as e:
                 errors.append(e)
 
+        _writer_counter = [0]
+
         def writer():
             try:
                 for _ in range(20):
-                    self.store.record_findings([_make_finding()], provider="test")
+                    _writer_counter[0] += 1
+                    n = _writer_counter[0]
+                    self.store.record_findings(
+                        [_make_finding(type_="rw_type_%d" % n, value_preview="RW****%d" % n)],
+                        provider="test",
+                    )
             except Exception as e:
                 errors.append(e)
 
