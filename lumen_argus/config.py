@@ -293,6 +293,7 @@ class AnalyticsConfig:
     enabled: bool = True  # active when dashboard is enabled
     db_path: str = "~/.lumen-argus/analytics.db"
     retention_days: int = 365
+    hash_secrets: bool = True  # HMAC-SHA-256 hash of matched values in findings DB
 
 
 @dataclass
@@ -384,7 +385,7 @@ _KNOWN_AUDIT_KEYS = {"log_dir", "retention_days", "include_request_summary", "re
 _KNOWN_LOGGING_KEYS = {"log_dir", "file_level", "max_size_mb", "backup_count", "format", "output"}
 _KNOWN_CUSTOM_RULE_KEYS = {"name", "pattern", "severity", "action", "detector"}
 _KNOWN_DASHBOARD_KEYS = {"enabled", "port", "bind", "password"}
-_KNOWN_ANALYTICS_KEYS = {"enabled", "db_path", "retention_days"}
+_KNOWN_ANALYTICS_KEYS = {"enabled", "db_path", "retention_days", "hash_secrets"}
 _KNOWN_DEDUP_KEYS = {
     "conversation_ttl_minutes",
     "finding_ttl_minutes",
@@ -967,6 +968,8 @@ def _apply_config(config: Config, data: dict) -> None:
             config.analytics.db_path = str(analytics["db_path"])
         if "retention_days" in analytics:
             config.analytics.retention_days = int(analytics["retention_days"])
+        if "hash_secrets" in analytics:
+            config.analytics.hash_secrets = bool(analytics["hash_secrets"])
 
     # Dedup
     dedup = data.get("dedup", {})

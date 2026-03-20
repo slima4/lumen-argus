@@ -8,6 +8,7 @@ sqlite3 is Python stdlib — zero external dependencies.
 """
 
 import hashlib
+import hmac as hmac_mod
 import json
 import logging
 import os
@@ -44,7 +45,8 @@ CREATE TABLE IF NOT EXISTS findings (
     client_name TEXT NOT NULL DEFAULT '',
     api_key_hash TEXT NOT NULL DEFAULT '',
     content_hash TEXT NOT NULL DEFAULT '',
-    seen_count INTEGER NOT NULL DEFAULT 1
+    seen_count INTEGER NOT NULL DEFAULT 1,
+    value_hash TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_findings_timestamp ON findings(timestamp);
@@ -88,8 +90,9 @@ class AnalyticsStore:
     Write serialization: single Lock wraps all writes; reads don't acquire it.
     """
 
-    def __init__(self, db_path: str = "~/.lumen-argus/analytics.db"):
+    def __init__(self, db_path: str = "~/.lumen-argus/analytics.db", hmac_key: bytes = None):
         self._db_path = os.path.expanduser(db_path)
+        self._hmac_key = hmac_key
         self._lock = threading.Lock()
         self._local = threading.local()
         self._ensure_db()
@@ -157,9 +160,15 @@ class AnalyticsStore:
             # is only used transiently for hashing — never stored in the DB.
             # This avoids collisions between different secrets with the same
             # masked preview (e.g. two stripe keys both showing "sk_l****").
-            value_hash = hashlib.sha256(f.matched_value.encode()).hexdigest()[:16]
-            hash_input = "%s|%s|%s" % (f.detector, f.type, value_hash)
+            mv_hash = hashlib.sha256(f.matched_value.encode()).hexdigest()[:16]
+            hash_input = "%s|%s|%s" % (f.detector, f.type, mv_hash)
             content_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
+            # HMAC-SHA-256 of matched_value for cross-session secret tracking.
+            # Full 64 hex chars (256 bits), keyed — useless without the key file.
+            if self._hmac_key:
+                vh = hmac_mod.new(self._hmac_key, f.matched_value.encode(), hashlib.sha256).hexdigest()
+            else:
+                vh = ""
             rows.append(
                 (
                     now,
@@ -181,6 +190,7 @@ class AnalyticsStore:
                     s.client_name if s else "",
                     s.api_key_hash if s else "",
                     content_hash,
+                    vh,
                 )
             )
 
@@ -192,8 +202,8 @@ class AnalyticsStore:
                     "action_taken, provider, model, value_preview, "
                     "account_id, session_id, device_id, source_ip, "
                     "working_directory, git_branch, os_platform, "
-                    "client_name, api_key_hash, content_hash) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "client_name, api_key_hash, content_hash, value_hash) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(content_hash, session_id) "
                     "WHERE content_hash != '' "
                     "DO UPDATE SET seen_count = seen_count + 1, "

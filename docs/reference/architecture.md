@@ -113,13 +113,15 @@ A 3-layer architecture eliminates this redundancy:
 |-------|----------|-------------|------------------------|
 | **Content fingerprinting** | Before detectors | Per-session SHA-256[:16] hash set skips already-scanned fields | 80-95% wasted scan CPU |
 | **Finding TTL cache** | After policy eval, before `record_findings()` | Session-scoped `(detector, type, hash(matched_value), session_id)` cache suppresses duplicate DB writes | Same finding written N times per conversation |
-| **Store unique constraint** | `INSERT OR IGNORE` | `UNIQUE(content_hash, session_id)` index on findings table | Duplicates after process restart or cache eviction |
+| **Store unique constraint** | `ON CONFLICT DO UPDATE` | `UNIQUE(content_hash, session_id)` index, increments `seen_count` | Duplicates after process restart or cache eviction |
 
 **Content fingerprinting** (`ContentFingerprint` class) uses `session.session_id` as the conversation key. Each conversation tracks a set of SHA-256[:16] hashes of field text. On each request, only fields with unseen hashes are passed to detectors. Sharded (16 locks) for low contention, with TTL eviction (default 30 minutes) and a per-conversation hash cap (5,000).
 
 **Finding TTL cache** (`_FindingDedup` class) filters findings before `record_findings()` but keeps all findings in `ScanResult` for policy evaluation — the action (block/alert) still fires even if the finding isn't new. The notification dispatcher also receives all findings (it has its own independent cooldown). Both cleanup schedulers run on background daemon threads.
 
-**Store unique constraint** uses a `content_hash` column computed as SHA-256[:16] of `detector|type|value_preview`. The partial unique index `WHERE content_hash != ''` excludes legacy rows. `INSERT OR IGNORE` silently drops duplicates.
+**Store unique constraint** uses a `content_hash` column computed as SHA-256[:16] of `detector|type|hash(matched_value)`. The partial unique index `WHERE content_hash != ''` excludes legacy rows. `ON CONFLICT DO UPDATE SET seen_count = seen_count + 1` tracks how many times each finding was detected. When Layer 1 skips fields (conversation history re-sent), `bump_seen_counts()` increments all existing findings in the session.
+
+**Value hashing:** Each finding optionally stores `value_hash` — an HMAC-SHA-256 hash of `matched_value` using a server-side key (`~/.lumen-argus/hmac.key`, auto-generated, 0600 permissions). Full 64 hex chars (256 bits). Enables cross-session secret tracking without persisting raw secrets. Configurable via `analytics.hash_secrets` (default: true).
 
 Configurable via `dedup:` in config.yaml:
 

@@ -87,6 +87,7 @@ function showDetail(f){selectedFindingId=f.id;
    ['Severity',f.severity],['Action',f.action_taken||'none'],['Location',f.location],
    ['Provider',f.provider||'unknown'],['Model',f.model||'unknown'],['Preview',f.value_preview||'']];
   if(f.seen_count>1)fields.push(['Seen',f.seen_count+' times across requests']);
+  if(f.value_hash)fields.push(['Value Hash',f.value_hash]);
   if(f.session_id)fields.push(['Session',f.session_id]);
   if(f.account_id)fields.push(['Account',f.account_id]);
   if(f.device_id)fields.push(['Device',f.device_id]);

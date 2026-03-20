@@ -397,5 +397,86 @@ class TestStoreLevelDedup(unittest.TestCase):
         self.assertEqual(findings[0]["seen_count"], 1)
 
 
+class TestValueHash(unittest.TestCase):
+    """HMAC-SHA-256 value_hash tests."""
+
+    def setUp(self):
+        import tempfile
+        from lumen_argus.analytics.store import AnalyticsStore
+
+        self._tmpdir = tempfile.mkdtemp()
+        self._hmac_key = b"\x00" * 32  # 32-byte test key
+        self.store = AnalyticsStore(db_path=self._tmpdir + "/test.db", hmac_key=self._hmac_key)
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _make_finding(self, matched="AKIAIOSFODNN7EXAMPLE"):
+        return Finding(
+            detector="secrets",
+            type="aws_access_key",
+            severity="critical",
+            location="m[0]",
+            value_preview="AKIA****",
+            matched_value=matched,
+        )
+
+    def test_value_hash_populated_when_key_set(self):
+        session = SessionContext(session_id="sess-1")
+        self.store.record_findings([self._make_finding()], provider="anthropic", session=session)
+
+        findings, _ = self.store.get_findings_page()
+        self.assertEqual(len(findings[0]["value_hash"]), 64)  # full SHA-256
+
+    def test_value_hash_deterministic(self):
+        """Same secret produces same value_hash."""
+        session = SessionContext(session_id="sess-1")
+        f = self._make_finding()
+        self.store.record_findings([f], provider="anthropic", session=session)
+        # Different session so it's not deduped
+        self.store.record_findings([f], provider="anthropic", session=SessionContext(session_id="sess-2"))
+
+        findings, _ = self.store.get_findings_page()
+        self.assertEqual(findings[0]["value_hash"], findings[1]["value_hash"])
+
+    def test_different_secrets_different_value_hash(self):
+        session = SessionContext(session_id="sess-1")
+        f1 = self._make_finding(matched="secret_one_value")
+        f2 = self._make_finding(matched="secret_two_value")
+        self.store.record_findings([f1, f2], provider="anthropic", session=session)
+
+        findings, _ = self.store.get_findings_page()
+        self.assertNotEqual(findings[0]["value_hash"], findings[1]["value_hash"])
+
+    def test_value_hash_empty_when_no_key(self):
+        """Without HMAC key, value_hash is empty string."""
+        import tempfile
+        from lumen_argus.analytics.store import AnalyticsStore
+
+        tmpdir = tempfile.mkdtemp()
+        store = AnalyticsStore(db_path=tmpdir + "/test.db")  # no hmac_key
+        session = SessionContext(session_id="sess-1")
+        store.record_findings([self._make_finding()], provider="anthropic", session=session)
+
+        findings, _ = store.get_findings_page()
+        self.assertEqual(findings[0]["value_hash"], "")
+
+        import shutil
+
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_value_hash_is_hmac_not_plain_sha256(self):
+        """value_hash should differ from a plain SHA-256 (proves HMAC keying)."""
+        session = SessionContext(session_id="sess-1")
+        f = self._make_finding()
+        self.store.record_findings([f], provider="anthropic", session=session)
+
+        findings, _ = self.store.get_findings_page()
+        plain_sha = hashlib.sha256(f.matched_value.encode()).hexdigest()
+        self.assertNotEqual(findings[0]["value_hash"], plain_sha)
+
+
 if __name__ == "__main__":
     unittest.main()

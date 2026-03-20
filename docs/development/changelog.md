@@ -14,6 +14,18 @@ All notable changes to lumen-argus are documented here.
 - Background cleanup schedulers for both content fingerprint and finding caches
 - All findings remain in `ScanResult` for policy enforcement — dedup only affects DB recording
 - Notification dispatcher still receives all findings (has its own cooldown)
+- `seen_count` column tracks how many requests included each finding (dashboard shows ×N badge)
+- `content_hash` uses `hash(matched_value)` — no collisions between different secrets with same masked preview
+- `bump_seen_counts()` increments existing findings when conversation history is re-sent
+
+### Value Hashing
+
+- HMAC-SHA-256 hash of matched secret values stored as `value_hash` in findings DB
+- Enables cross-session secret tracking without persisting raw secrets
+- Auto-generated 32-byte key at `~/.lumen-argus/hmac.key` (0600 permissions)
+- Full 64 hex chars output (256 bits, no truncation)
+- Configurable: `analytics.hash_secrets` (default: true)
+- Dashboard detail panel shows "Value Hash" field when populated
 
 ---
 

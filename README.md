@@ -142,6 +142,10 @@ LLM API requests contain the full conversation history — every previous messag
 
 No configuration needed — works automatically when session tracking is active. Tunable via `dedup:` config section.
 
+Each finding tracks `seen_count` — how many requests included that secret. Dashboard shows a `×N` badge on findings seen multiple times.
+
+**Value hashing:** HMAC-SHA-256 hash of each matched secret stored as `value_hash` in the findings DB. Enables cross-session tracking ("this exact key appeared in 5 sessions") without persisting the raw secret. Enabled by default, disable via `analytics.hash_secrets: false`.
+
 ## Performance
 
 Scanning overhead stays under 50ms for typical payloads. Connection pooling eliminates redundant TLS handshakes.
@@ -335,6 +339,7 @@ def register(registry):
 - Plain HTTP on localhost, HTTPS to upstream — no TLS interception
 - All sensitive files created with `0600` permissions
 - Matched values kept in memory only — never written to disk, logs, or DB
+- Value hashing uses HMAC-SHA-256 with auto-generated key (`~/.lumen-argus/hmac.key`, 0600) — DB compromise without key is useless
 - Connection pooling scoped per-host — no auth header leakage across providers
 - Dashboard: session auth (HttpOnly, SameSite=Strict), CSRF double-submit, CRLF-safe redirects
 - Plugin HTML sanitized client-side; plugin JS is trusted (entry-point only)

@@ -238,10 +238,15 @@ def main(argv=None):
         from lumen_argus.dashboard.server import start_dashboard
         from lumen_argus.dashboard.sse import SSEBroadcaster
 
+        # Load or generate HMAC key for value hashing
+        hmac_key = None
+        if config.analytics.hash_secrets:
+            hmac_key = _load_hmac_key()
+
         # Create analytics store (or use plugin-provided one)
         analytics_store = extensions.get_analytics_store()
         if analytics_store is None and config.analytics.enabled:
-            analytics_store = AnalyticsStore(db_path=config.analytics.db_path)
+            analytics_store = AnalyticsStore(db_path=config.analytics.db_path, hmac_key=hmac_key)
             extensions.set_analytics_store(analytics_store)
             analytics_store.start_cleanup_scheduler(config.analytics.retention_days)
 
@@ -382,6 +387,36 @@ def main(argv=None):
         os.close(wakeup_w)
     except OSError:
         pass
+
+
+def _load_hmac_key() -> bytes:
+    """Load or generate the HMAC key for value hashing.
+
+    Stored at ~/.lumen-argus/hmac.key with 0o600 permissions.
+    Auto-generated (32 bytes) on first run. If deleted, a new key is
+    generated and old hashes become unmatchable (graceful degradation).
+    HMAC-SHA-256 accepts any key length — no truncation applied.
+    """
+    key_path = os.path.expanduser("~/.lumen-argus/hmac.key")
+    try:
+        with open(key_path, "rb") as f:
+            key = f.read()
+        if len(key) >= 32:
+            return key
+    except FileNotFoundError:
+        pass
+    # Generate new key — use exclusive create to avoid race conditions
+    key = os.urandom(32)
+    os.makedirs(os.path.dirname(key_path), exist_ok=True)
+    try:
+        fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.write(fd, key)
+        os.close(fd)
+    except FileExistsError:
+        # Another process created it first — read theirs
+        with open(key_path, "rb") as f:
+            key = f.read()
+    return key
 
 
 def _do_reload(server, config_path, file_handler, console_level, root_logger, extensions, current_config, log):
