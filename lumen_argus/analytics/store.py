@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS findings (
     os_platform TEXT NOT NULL DEFAULT '',
     client_name TEXT NOT NULL DEFAULT '',
     api_key_hash TEXT NOT NULL DEFAULT '',
-    content_hash TEXT NOT NULL DEFAULT ''
+    content_hash TEXT NOT NULL DEFAULT '',
+    seen_count INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX IF NOT EXISTS idx_findings_timestamp ON findings(timestamp);
@@ -186,13 +187,17 @@ class AnalyticsStore:
         with self._lock:
             with self._connect() as conn:
                 conn.executemany(
-                    "INSERT OR IGNORE INTO findings "
+                    "INSERT INTO findings "
                     "(timestamp, detector, finding_type, severity, location, "
                     "action_taken, provider, model, value_preview, "
                     "account_id, session_id, device_id, source_ip, "
                     "working_directory, git_branch, os_platform, "
                     "client_name, api_key_hash, content_hash) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(content_hash, session_id) "
+                    "WHERE content_hash != '' "
+                    "DO UPDATE SET seen_count = seen_count + 1, "
+                    "timestamp = excluded.timestamp",
                     rows,
                 )
 

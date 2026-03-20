@@ -282,14 +282,16 @@ class TestStoreLevelDedup(unittest.TestCase):
             matched_value="AKIAIOSFODNN7EXAMPLE",
         )
 
-    def test_insert_or_ignore_skips_duplicate_in_same_session(self):
+    def test_duplicate_increments_seen_count(self):
         session = SessionContext(session_id="sess-1")
         f = self._make_finding()
+        self.store.record_findings([f], provider="anthropic", session=session)
         self.store.record_findings([f], provider="anthropic", session=session)
         self.store.record_findings([f], provider="anthropic", session=session)
 
         findings, total = self.store.get_findings_page()
         self.assertEqual(total, 1)
+        self.assertEqual(findings[0]["seen_count"], 3)
 
     def test_same_hash_different_session_is_allowed(self):
         f = self._make_finding()
@@ -345,7 +347,7 @@ class TestStoreLevelDedup(unittest.TestCase):
         self.assertEqual(len(hashes), 2)
 
     def test_process_restart_layer3_catches_duplicates(self):
-        """After cache loss (process restart), Layer 3 prevents DB duplicates."""
+        """After cache loss (process restart), Layer 3 prevents DB duplicates but increments seen_count."""
         session = SessionContext(session_id="sess-1")
         f = self._make_finding()
 
@@ -356,7 +358,17 @@ class TestStoreLevelDedup(unittest.TestCase):
         self.store.record_findings([f], provider="anthropic", session=session)
 
         findings, total = self.store.get_findings_page()
-        self.assertEqual(total, 1)  # INSERT OR IGNORE prevented duplicate
+        self.assertEqual(total, 1)  # No duplicate row
+        self.assertEqual(findings[0]["seen_count"], 2)  # But seen_count incremented
+
+    def test_seen_count_default_is_one(self):
+        """New findings start with seen_count=1."""
+        session = SessionContext(session_id="sess-1")
+        f = self._make_finding()
+        self.store.record_findings([f], provider="anthropic", session=session)
+
+        findings, _ = self.store.get_findings_page()
+        self.assertEqual(findings[0]["seen_count"], 1)
 
 
 if __name__ == "__main__":

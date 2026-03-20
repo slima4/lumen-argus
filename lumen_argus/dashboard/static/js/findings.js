@@ -57,6 +57,10 @@ function renderFindingsTable(){
       if(col.key==='severity')td.appendChild(makeBadge(f.severity));
       else if(col.key==='action_taken'&&f.action_taken){var tag=document.createElement('span');
         tag.className='action-tag';tag.textContent=f.action_taken;td.appendChild(tag);}
+      else if(col.key==='finding_type'){td.textContent=f.finding_type||'';
+        if(f.seen_count>1){var sc=document.createElement('span');sc.className='seen-count';
+          sc.textContent='\u00d7'+f.seen_count;sc.title='Seen '+f.seen_count+' times across requests';
+          td.appendChild(sc);}}
       else if(col.key==='timestamp')td.textContent=fmtTime(f.timestamp);
       else if(col.key==='location'){td.textContent=f[col.key]||'';td.title=f[col.key]||'';}
       else if(col.key==='session_id'&&f.session_id){
@@ -82,6 +86,7 @@ function showDetail(f){selectedFindingId=f.id;
   var fields=[['ID',f.id],['Timestamp',f.timestamp],['Detector',f.detector],['Type',f.finding_type],
    ['Severity',f.severity],['Action',f.action_taken||'none'],['Location',f.location],
    ['Provider',f.provider||'unknown'],['Model',f.model||'unknown'],['Preview',f.value_preview||'']];
+  if(f.seen_count>1)fields.push(['Seen',f.seen_count+' times across requests']);
   if(f.session_id)fields.push(['Session',f.session_id]);
   if(f.account_id)fields.push(['Account',f.account_id]);
   if(f.device_id)fields.push(['Device',f.device_id]);
