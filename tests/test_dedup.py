@@ -105,6 +105,69 @@ class TestContentFingerprint(unittest.TestCase):
         # 3 are skipped (stored), 2 are "new" (not stored due to cap)
         self.assertEqual(len(result2), 2)
 
+    def test_lru_eviction_on_max_conversations(self):
+        """When max_conversations is exceeded, LRU conversation is evicted."""
+        # 16 shards, max 32 conversations = 2 per shard
+        fp = ContentFingerprint(conversation_ttl=60, max_conversations=32, max_hashes_per_conversation=100)
+
+        # Force 3 conversations into the same shard by finding keys that hash to shard 0
+        keys = []
+        for i in range(1000):
+            k = "conv-%d" % i
+            if fp._shard_for(k) == 0:
+                keys.append(k)
+            if len(keys) == 3:
+                break
+
+        fields = [ScanField(path="m[0]", text="hello", source_filename="")]
+
+        # Add first 2 conversations — within limit
+        fp.filter_new_fields(keys[0], fields)
+        fp.filter_new_fields(keys[1], fields)
+        stats = fp.stats()
+        self.assertEqual(stats["conversations"], 2)
+
+        # Add 3rd — exceeds shard limit (2), LRU (keys[0]) should be evicted
+        fp.filter_new_fields(keys[2], fields)
+        stats = fp.stats()
+        self.assertEqual(stats["conversations"], 2)  # Still 2, not 3
+
+        # keys[0] was evicted — its fields are treated as new again
+        result = fp.filter_new_fields(keys[0], fields)
+        self.assertEqual(len(result), 1)  # "hello" is new again
+
+    def test_lru_evicts_oldest_not_newest(self):
+        """LRU eviction removes the least recently accessed conversation."""
+        fp = ContentFingerprint(conversation_ttl=60, max_conversations=32, max_hashes_per_conversation=100)
+
+        keys = []
+        for i in range(1000):
+            k = "conv-%d" % i
+            if fp._shard_for(k) == 0:
+                keys.append(k)
+            if len(keys) == 3:
+                break
+
+        fields = [ScanField(path="m[0]", text="hello", source_filename="")]
+
+        # Add keys[0] first (oldest), then keys[1]
+        fp.filter_new_fields(keys[0], fields)
+        fp.filter_new_fields(keys[1], fields)
+
+        # Touch keys[0] again — now keys[1] is LRU
+        fp.filter_new_fields(keys[0], [ScanField(path="m[1]", text="world", source_filename="")])
+
+        # Add keys[2] — keys[1] should be evicted (it's LRU), not keys[0]
+        fp.filter_new_fields(keys[2], fields)
+
+        # keys[0] should still have its hashes (not evicted)
+        result = fp.filter_new_fields(keys[0], fields)
+        self.assertEqual(len(result), 0)  # "hello" still remembered
+
+        # keys[1] was evicted — "hello" is new
+        result = fp.filter_new_fields(keys[1], fields)
+        self.assertEqual(len(result), 1)
+
     def test_thread_safety(self):
         fp = ContentFingerprint(conversation_ttl=60, max_conversations=1000)
         errors = []

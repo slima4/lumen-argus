@@ -80,7 +80,8 @@ class ContentFingerprint:
         with self._locks[idx]:
             shard = self._shards[idx]
             cache = shard.get(conversation_key)
-            if cache is None:
+            is_new_conv = cache is None
+            if is_new_conv:
                 cache = _ConversationCache()
                 shard[conversation_key] = cache
             cache.last_access = now
@@ -98,6 +99,16 @@ class ContentFingerprint:
                 hashes_to_add = new_hashes[:remaining]
                 cache.seen_hashes.update(hashes_to_add)
                 cache.hash_count += len(hashes_to_add)
+
+            # LRU eviction: if adding a new conversation exceeded the
+            # per-shard limit, evict the least-recently-accessed entry.
+            shard_limit = self._max_conversations // self._NUM_SHARDS
+            if is_new_conv and len(shard) > shard_limit > 0:
+                lru_key = min(
+                    (k for k in shard if k != conversation_key),
+                    key=lambda k: shard[k].last_access,
+                )
+                del shard[lru_key]
 
         return new_fields
 
