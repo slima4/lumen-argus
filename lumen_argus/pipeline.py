@@ -331,6 +331,17 @@ class ScannerPipeline:
                     skipped,
                     original_count,
                 )
+                # Bump seen_count for existing findings in this session.
+                # Safe to always bump: runs before record_findings(), so
+                # new findings from this request aren't in the DB yet and
+                # won't be double-counted (they INSERT with seen_count=1).
+                if self._extensions:
+                    store = self._extensions.get_analytics_store()
+                    if store:
+                        try:
+                            store.bump_seen_counts(conv_key)
+                        except Exception:
+                            pass
 
         # Prioritize scanning: reverse order so newest messages (end of
         # conversation) are scanned first, then cap total text to keep

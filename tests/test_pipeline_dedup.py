@@ -74,6 +74,93 @@ class TestPipelineDedup(unittest.TestCase):
         # No new rows from second scan
         self.assertEqual(total, first_total)
 
+    def test_seen_count_increments_on_pure_resend(self):
+        """seen_count bumps when exact same body is re-sent (all fields skipped)."""
+        session = SessionContext(session_id="sess-1")
+        body = _make_anthropic_body(
+            [
+                "Here is my key: AKIAIOSFODNN7EXAMPLE",
+            ]
+        )
+
+        # Request 1: finding detected and stored (seen_count=1)
+        self.pipeline.scan(body, "anthropic", session=session)
+        findings, _ = self.store.get_findings_page()
+        self.assertGreater(len(findings), 0)
+        self.assertEqual(findings[0]["seen_count"], 1)
+
+        # Request 2: exact same body — all fields skipped, seen_count bumped
+        self.pipeline.scan(body, "anthropic", session=session)
+        findings, _ = self.store.get_findings_page()
+        self.assertEqual(findings[0]["seen_count"], 2)
+
+        # Request 3: again
+        self.pipeline.scan(body, "anthropic", session=session)
+        findings, _ = self.store.get_findings_page()
+        self.assertEqual(findings[0]["seen_count"], 3)
+
+    def test_seen_count_increments_on_growing_conversation(self):
+        """seen_count bumps when conversation grows (old fields re-sent + new)."""
+        session = SessionContext(session_id="sess-grow")
+        body1 = _make_anthropic_body(
+            [
+                "Here is my key: AKIAIOSFODNN7EXAMPLE",
+            ]
+        )
+        self.pipeline.scan(body1, "anthropic", session=session)
+
+        # Request 2: old message re-sent + new assistant reply
+        body2 = _make_anthropic_body(
+            [
+                "Here is my key: AKIAIOSFODNN7EXAMPLE",
+                "OK I see the key.",
+            ]
+        )
+        self.pipeline.scan(body2, "anthropic", session=session)
+        findings, _ = self.store.get_findings_page()
+        self.assertEqual(findings[0]["seen_count"], 2)
+
+        # Request 3: conversation grows again
+        body3 = _make_anthropic_body(
+            [
+                "Here is my key: AKIAIOSFODNN7EXAMPLE",
+                "OK I see the key.",
+                "Please remove it from the code.",
+            ]
+        )
+        self.pipeline.scan(body3, "anthropic", session=session)
+        findings, _ = self.store.get_findings_page()
+        self.assertEqual(findings[0]["seen_count"], 3)
+
+    def test_seen_count_correct_on_mixed_request(self):
+        """Old findings get bumped, new findings start at 1 on mixed requests."""
+        session = SessionContext(session_id="sess-mixed")
+        body1 = _make_anthropic_body(
+            [
+                "Key: AKIAIOSFODNN7EXAMPLE",
+            ]
+        )
+        self.pipeline.scan(body1, "anthropic", session=session)
+
+        # Request 2: old message re-sent + new secret in new message
+        body2 = _make_anthropic_body(
+            [
+                "Key: AKIAIOSFODNN7EXAMPLE",
+                "OK noted.",
+                "Also: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij1234",
+            ]
+        )
+        self.pipeline.scan(body2, "anthropic", session=session)
+
+        findings, _ = self.store.get_findings_page()
+        by_type = {f["finding_type"]: f["seen_count"] for f in findings}
+        # GitHub token is new — bump ran before INSERT, so starts at 1
+        self.assertIn("github_token", by_type)
+        self.assertEqual(by_type["github_token"], 1)
+        # AWS key was bumped (old field re-sent)
+        aws_count = by_type.get("aws_access_key") or by_type.get("aws_access_key_id_value")
+        self.assertEqual(aws_count, 2)
+
     def test_new_message_records_only_new_findings(self):
         """Delta detection: only new content scanned and recorded."""
         session = SessionContext(session_id="sess-1")

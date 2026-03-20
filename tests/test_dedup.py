@@ -331,8 +331,9 @@ class TestStoreLevelDedup(unittest.TestCase):
         findings, _ = self.store.get_findings_page()
         hash1 = findings[0]["content_hash"]
 
-        # Compute expected hash
-        expected = hashlib.sha256(("%s|%s|%s" % (f.detector, f.type, f.value_preview)).encode()).hexdigest()[:16]
+        # Compute expected hash — uses hash(matched_value), not value_preview
+        value_hash = hashlib.sha256(f.matched_value.encode()).hexdigest()[:16]
+        expected = hashlib.sha256(("%s|%s|%s" % (f.detector, f.type, value_hash)).encode()).hexdigest()[:16]
         self.assertEqual(hash1, expected)
 
     def test_different_findings_different_hash(self):
@@ -345,6 +346,31 @@ class TestStoreLevelDedup(unittest.TestCase):
         self.assertEqual(total, 2)
         hashes = {f["content_hash"] for f in findings}
         self.assertEqual(len(hashes), 2)
+
+    def test_different_secrets_same_preview_get_separate_rows(self):
+        """Two different secrets with the same masked preview are NOT collapsed."""
+        session = SessionContext(session_id="sess-1")
+        f1 = Finding(
+            detector="secrets",
+            type="aws_secret_key",
+            severity="critical",
+            location="m[0]",
+            value_preview="wJal****",
+            matched_value="wJalrXUtnFEMI_K7MDENG_bPxRfiCYEXAMPLEKEY",
+        )
+        f2 = Finding(
+            detector="secrets",
+            type="aws_secret_key",
+            severity="critical",
+            location="m[2]",
+            value_preview="wJal****",
+            matched_value="wJalrXUtnFEMI_K7MDENG_bPxRfiCYDIFFERENTKEY",
+        )
+        self.store.record_findings([f1], provider="anthropic", session=session)
+        self.store.record_findings([f2], provider="anthropic", session=session)
+
+        findings, total = self.store.get_findings_page()
+        self.assertEqual(total, 2)  # Two separate rows, not collapsed
 
     def test_process_restart_layer3_catches_duplicates(self):
         """After cache loss (process restart), Layer 3 prevents DB duplicates but increments seen_count."""

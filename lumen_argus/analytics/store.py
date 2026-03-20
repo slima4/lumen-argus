@@ -153,12 +153,12 @@ class AnalyticsStore:
         rows = []
         for f in findings:
             # Content hash: deterministic fingerprint for store-level dedup.
-            # Uses detector + type + value_preview (not matched_value, which
-            # is never persisted). Known limitation: two different secrets
-            # with the same masked preview (e.g. both "AKIA****") will
-            # collide within the same session — acceptable trade-off vs
-            # persisting raw secret material.
-            hash_input = "%s|%s|%s" % (f.detector, f.type, f.value_preview)
+            # Uses detector + type + hash(matched_value). The matched_value
+            # is only used transiently for hashing — never stored in the DB.
+            # This avoids collisions between different secrets with the same
+            # masked preview (e.g. two stripe keys both showing "sk_l****").
+            value_hash = hashlib.sha256(f.matched_value.encode()).hexdigest()[:16]
+            hash_input = "%s|%s|%s" % (f.detector, f.type, value_hash)
             content_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
             rows.append(
                 (
@@ -199,6 +199,22 @@ class AnalyticsStore:
                     "DO UPDATE SET seen_count = seen_count + 1, "
                     "timestamp = excluded.timestamp",
                     rows,
+                )
+
+    def bump_seen_counts(self, session_id: str) -> None:
+        """Increment seen_count for all findings in a session.
+
+        Called when Layer 1 skips fields (conversation history re-sent).
+        LLM APIs send the full history on each request, so all previously
+        found secrets are present in the re-sent content.
+        """
+        if not session_id:
+            return
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE findings SET seen_count = seen_count + 1 WHERE session_id = ?",
+                    (session_id,),
                 )
 
     def get_findings_page(
