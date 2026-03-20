@@ -835,6 +835,109 @@ class AnalyticsStore:
             "by_detector": by_detector,
         }
 
+    def reconcile_yaml_rules(self, custom_rules: list) -> dict:
+        """Kubernetes-style reconciliation of YAML custom_rules to DB.
+
+        YAML is authoritative for source='yaml' rules: all fields overwrite.
+        Dashboard-created and import rules are never touched.
+
+        Returns {"created": [...], "updated": [...], "deleted": [...]}.
+        """
+        import re as re_mod
+
+        result = {"created": [], "updated": [], "deleted": []}  # type: dict
+        now = self._now()
+
+        yaml_by_name = {}
+        for rule in custom_rules:
+            if not isinstance(rule, dict):
+                continue
+            name = rule.get("name", "")
+            if not name:
+                log.warning("custom_rules: rule with missing 'name' skipped")
+                continue
+            yaml_by_name[name] = rule
+
+        with self._lock:
+            with self._connect() as conn:
+                # Snapshot YAML-sourced rules inside the lock to avoid TOCTOU
+                db_yaml = {}
+                for row in conn.execute("SELECT name FROM rules WHERE source = 'yaml'").fetchall():
+                    db_yaml[row[0]] = True
+
+                # Delete YAML rules no longer in config
+                for name in db_yaml:
+                    if name not in yaml_by_name:
+                        conn.execute("DELETE FROM rules WHERE name = ? AND source = 'yaml'", (name,))
+                        result["deleted"].append(name)
+
+                # Create or update YAML rules
+                for name, rule in yaml_by_name.items():
+                    pattern = str(rule.get("pattern", ""))
+                    if not pattern:
+                        continue
+                    try:
+                        re_mod.compile(pattern)
+                    except re_mod.error:
+                        log.warning("custom_rules '%s': invalid regex, skipping", name)
+                        continue
+
+                    if name in db_yaml:
+                        conn.execute(
+                            "UPDATE rules SET pattern=?, detector=?, severity=?, "
+                            "action=?, description=?, updated_at=?, updated_by=? "
+                            "WHERE name=? AND source='yaml'",
+                            (
+                                pattern,
+                                str(rule.get("detector", "custom")),
+                                str(rule.get("severity", "high")),
+                                str(rule.get("action", "")),
+                                str(rule.get("description", "")),
+                                now,
+                                "config",
+                                name,
+                            ),
+                        )
+                        result["updated"].append(name)
+                    else:
+                        # Check if name conflicts with non-yaml rule
+                        existing = conn.execute("SELECT source FROM rules WHERE name = ?", (name,)).fetchone()
+                        if existing:
+                            log.warning(
+                                "custom_rules '%s' conflicts with %s rule — skipping",
+                                name,
+                                existing[0],
+                            )
+                            continue
+                        conn.execute(
+                            "INSERT INTO rules "
+                            "(name, pattern, detector, severity, action, enabled, "
+                            "tier, source, description, tags, validator, entropy_context, "
+                            "created_at, updated_at, created_by, updated_by) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                name,
+                                pattern,
+                                str(rule.get("detector", "custom")),
+                                str(rule.get("severity", "high")),
+                                str(rule.get("action", "")),
+                                1,
+                                "custom",
+                                "yaml",
+                                str(rule.get("description", "")),
+                                "[]",
+                                "",
+                                0,
+                                now,
+                                now,
+                                "config",
+                                "config",
+                            ),
+                        )
+                        result["created"].append(name)
+
+        return result
+
     # --- Notification channels ---
 
     def _now(self) -> str:

@@ -213,15 +213,6 @@ def main(argv=None):
     )
     from dataclasses import asdict
 
-    pipeline = ScannerPipeline(
-        default_action=config.default_action,
-        action_overrides=action_overrides,
-        allowlist=allowlist,
-        entropy_threshold=config.entropy_threshold,
-        extensions=extensions,
-        custom_rules=config.custom_rules,
-        dedup_config=asdict(config.dedup),
-    )
     router = ProviderRouter(upstreams=config.upstreams or None)
 
     # Build SSL context for upstream connections
@@ -232,33 +223,7 @@ def main(argv=None):
         verify_ssl=config.proxy.verify_ssl,
     )
 
-    # Start server
-    try:
-        server = ArgusProxyServer(
-            bind=bind,
-            port=port,
-            pipeline=pipeline,
-            router=router,
-            audit=audit,
-            display=display,
-            timeout=config.proxy.timeout,
-            retries=config.proxy.retries,
-            max_body_size=config.proxy.max_body_size,
-            redact_hook=extensions.get_redact_hook(),
-            ssl_context=ssl_context,
-            max_connections=config.proxy.max_connections,
-        )
-        extensions.set_proxy_server(server)
-        server.extensions = extensions
-    except OSError as e:
-        print("Error: Could not bind to %s:%d — %s" % (bind, port, e), file=sys.stderr)
-        sys.exit(1)
-
-    display.show_banner(port, bind)
-    log.info("listening on http://%s:%d", bind, port)
-    start_time = time.monotonic()
-
-    # --- Dashboard and analytics ---
+    # --- Analytics store and rules (must happen before pipeline creation) ---
     dashboard_server = None
     if config.dashboard.enabled:
         from lumen_argus.analytics.store import AnalyticsStore
@@ -288,6 +253,66 @@ def main(argv=None):
                 result = analytics_store.import_rules(rules, tier=tier)
                 log.info("auto-imported %d community rules v%s", result["created"], version)
 
+        # Reconcile YAML custom_rules to DB (Kubernetes-style)
+        if analytics_store and config.custom_rules:
+            yaml_rules = [
+                {
+                    "name": r.name,
+                    "pattern": r.pattern,
+                    "severity": r.severity,
+                    "action": r.action,
+                    "detector": r.detector,
+                }
+                for r in config.custom_rules
+            ]
+            rules_result = analytics_store.reconcile_yaml_rules(yaml_rules)
+            for action_name in ("created", "updated", "deleted"):
+                if rules_result[action_name]:
+                    log.info(
+                        "custom rules %s: %s",
+                        action_name,
+                        ", ".join(rules_result[action_name]),
+                    )
+
+    # --- Pipeline (created after store + rules so RulesDetector sees imported rules) ---
+    pipeline = ScannerPipeline(
+        default_action=config.default_action,
+        action_overrides=action_overrides,
+        allowlist=allowlist,
+        entropy_threshold=config.entropy_threshold,
+        extensions=extensions,
+        custom_rules=config.custom_rules,
+        dedup_config=asdict(config.dedup),
+    )
+
+    # Start server
+    try:
+        server = ArgusProxyServer(
+            bind=bind,
+            port=port,
+            pipeline=pipeline,
+            router=router,
+            audit=audit,
+            display=display,
+            timeout=config.proxy.timeout,
+            retries=config.proxy.retries,
+            max_body_size=config.proxy.max_body_size,
+            redact_hook=extensions.get_redact_hook(),
+            ssl_context=ssl_context,
+            max_connections=config.proxy.max_connections,
+        )
+        extensions.set_proxy_server(server)
+        server.extensions = extensions
+    except OSError as e:
+        print("Error: Could not bind to %s:%d — %s" % (bind, port, e), file=sys.stderr)
+        sys.exit(1)
+
+    display.show_banner(port, bind)
+    log.info("listening on http://%s:%d", bind, port)
+    start_time = time.monotonic()
+
+    # --- Dashboard ---
+    if config.dashboard.enabled:
         # Create SSE broadcaster and register with extensions so Pro can use it
         sse_broadcaster = SSEBroadcaster()
         extensions.set_sse_broadcaster(sse_broadcaster)
@@ -477,6 +502,25 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
             pii=new_config.allowlist.pii,
             paths=new_config.allowlist.paths,
         )
+        # Reconcile YAML custom rules to DB BEFORE pipeline reload
+        # so RulesDetector.reload() sees the updated rules
+        analytics_store = extensions.get_analytics_store()
+        if analytics_store and new_config.custom_rules:
+            yaml_rules = [
+                {
+                    "name": r.name,
+                    "pattern": r.pattern,
+                    "severity": r.severity,
+                    "action": r.action,
+                    "detector": r.detector,
+                }
+                for r in new_config.custom_rules
+            ]
+            rules_result = analytics_store.reconcile_yaml_rules(yaml_rules)
+            for action_name in ("created", "updated", "deleted"):
+                if rules_result[action_name]:
+                    log.info("custom rules %s: %s", action_name, ", ".join(rules_result[action_name]))
+
         new_overrides = {}
         if new_config.secrets.action:
             new_overrides["secrets"] = new_config.secrets.action
@@ -526,7 +570,8 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
                 pass
 
         # Re-reconcile YAML notification channels (after Pro hook updates limit)
-        analytics_store = extensions.get_analytics_store()
+        if not analytics_store:
+            analytics_store = extensions.get_analytics_store()
         if analytics_store:
             limit = extensions.get_channel_limit()
             notif_result = analytics_store.reconcile_yaml_channels(
@@ -641,8 +686,19 @@ def _run_rules(args):
 
     if args.rules_command == "import":
         if args.pro:
-            # TODO: license validation (Pro implements this)
-            pass
+            try:
+                from lumen_argus_pro.license import get_license
+
+                lic = get_license()
+                if not lic.is_valid:
+                    print(
+                        "lumen-argus: Pro license required. Activate with: lumen-argus license activate",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+            except ImportError:
+                print("lumen-argus: lumen-argus-pro not installed", file=sys.stderr)
+                sys.exit(1)
         if args.dry_run:
             rules, version, tier = _load_rules_bundle(path=args.file, pro=args.pro)
             print("lumen-argus: dry run — %d %s rules (v%s)" % (len(rules), tier, version))

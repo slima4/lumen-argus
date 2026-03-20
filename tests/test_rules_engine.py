@@ -382,5 +382,162 @@ class TestAutoImport(unittest.TestCase):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+class TestYAMLReconciliation(unittest.TestCase):
+    """Test YAML custom_rules reconciliation to DB."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.store = AnalyticsStore(db_path=self._tmpdir + "/test.db")
+
+    def tearDown(self):
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_create_yaml_rules(self):
+        result = self.store.reconcile_yaml_rules(
+            [
+                {"name": "yaml_rule_1", "pattern": "YAML_[A-Z]+", "severity": "high"},
+                {"name": "yaml_rule_2", "pattern": "YAML2_[A-Z]+", "severity": "warning"},
+            ]
+        )
+        self.assertEqual(len(result["created"]), 2)
+        rule = self.store.get_rule_by_name("yaml_rule_1")
+        self.assertEqual(rule["source"], "yaml")
+        self.assertEqual(rule["tier"], "custom")
+
+    def test_update_yaml_rules(self):
+        self.store.reconcile_yaml_rules(
+            [
+                {"name": "yr", "pattern": "OLD_[A-Z]+", "severity": "high"},
+            ]
+        )
+        self.store.reconcile_yaml_rules(
+            [
+                {"name": "yr", "pattern": "NEW_[A-Z]+", "severity": "critical"},
+            ]
+        )
+        rule = self.store.get_rule_by_name("yr")
+        self.assertEqual(rule["pattern"], "NEW_[A-Z]+")
+        self.assertEqual(rule["severity"], "critical")
+
+    def test_delete_removed_yaml_rules(self):
+        self.store.reconcile_yaml_rules(
+            [
+                {"name": "keep", "pattern": "A+", "severity": "high"},
+                {"name": "remove", "pattern": "B+", "severity": "high"},
+            ]
+        )
+        result = self.store.reconcile_yaml_rules(
+            [
+                {"name": "keep", "pattern": "A+", "severity": "high"},
+            ]
+        )
+        self.assertIn("remove", result["deleted"])
+        self.assertIsNone(self.store.get_rule_by_name("remove"))
+        self.assertIsNotNone(self.store.get_rule_by_name("keep"))
+
+    def test_yaml_does_not_touch_dashboard_rules(self):
+        self.store.create_rule(
+            {
+                "name": "dashboard_rule",
+                "pattern": "D+",
+                "source": "dashboard",
+                "tier": "custom",
+                "created_by": "user",
+            }
+        )
+        result = self.store.reconcile_yaml_rules(
+            [
+                {"name": "dashboard_rule", "pattern": "OVERWRITE+", "severity": "high"},
+            ]
+        )
+        # Should not create (name conflict) and not modify
+        self.assertEqual(len(result["created"]), 0)
+        rule = self.store.get_rule_by_name("dashboard_rule")
+        self.assertEqual(rule["pattern"], "D+")
+
+    def test_yaml_does_not_touch_import_rules(self):
+        self.store.import_rules(
+            [
+                {"name": "imported", "pattern": "I+", "detector": "secrets", "severity": "high"},
+            ],
+            tier="community",
+        )
+        self.store.reconcile_yaml_rules(
+            [
+                {"name": "imported", "pattern": "OVERWRITE+", "severity": "high"},
+            ]
+        )
+        rule = self.store.get_rule_by_name("imported")
+        self.assertEqual(rule["pattern"], "I+")  # unchanged
+
+    def test_invalid_regex_skipped(self):
+        result = self.store.reconcile_yaml_rules(
+            [
+                {"name": "bad", "pattern": "[invalid(", "severity": "high"},
+            ]
+        )
+        self.assertEqual(len(result["created"]), 0)
+        self.assertIsNone(self.store.get_rule_by_name("bad"))
+
+
+class TestPipelineRulesIntegration(unittest.TestCase):
+    """Test pipeline uses RulesDetector when rules exist in DB."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.store = AnalyticsStore(db_path=self._tmpdir + "/test.db")
+
+    def tearDown(self):
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_pipeline_uses_rules_detector_when_rules_exist(self):
+        from lumen_argus.extensions import ExtensionRegistry
+        from lumen_argus.pipeline import ScannerPipeline
+
+        self.store.import_rules(
+            [
+                {"name": "test_key", "pattern": "TESTKEY_[A-Z]{10}", "detector": "secrets", "severity": "high"},
+            ],
+            tier="community",
+        )
+        ext = ExtensionRegistry()
+        ext.set_analytics_store(self.store)
+        pipeline = ScannerPipeline(default_action="alert", extensions=ext)
+        self.assertIsNotNone(pipeline._rules_detector)
+
+    def test_pipeline_falls_back_to_hardcoded_when_no_rules(self):
+        from lumen_argus.extensions import ExtensionRegistry
+        from lumen_argus.pipeline import ScannerPipeline
+
+        ext = ExtensionRegistry()
+        ext.set_analytics_store(self.store)  # empty DB, no rules
+        pipeline = ScannerPipeline(default_action="alert", extensions=ext)
+        self.assertIsNone(pipeline._rules_detector)
+
+    def test_pipeline_detects_with_rules_detector(self):
+        from lumen_argus.extensions import ExtensionRegistry
+        from lumen_argus.pipeline import ScannerPipeline
+
+        self.store.import_rules(
+            [
+                {"name": "test_key", "pattern": "TESTKEY_[A-Z]{10}", "detector": "secrets", "severity": "high"},
+            ],
+            tier="community",
+        )
+        ext = ExtensionRegistry()
+        ext.set_analytics_store(self.store)
+        pipeline = ScannerPipeline(default_action="alert", extensions=ext)
+
+        body = json.dumps(
+            {
+                "model": "test",
+                "messages": [{"role": "user", "content": "Key: TESTKEY_ABCDEFGHIJ"}],
+            }
+        ).encode()
+        result = pipeline.scan(body, "anthropic")
+        types = {f.type for f in result.findings}
+        self.assertIn("test_key", types)
+
+
 if __name__ == "__main__":
     unittest.main()

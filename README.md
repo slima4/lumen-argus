@@ -43,6 +43,7 @@ lumen-argus sits between your AI tool and the provider, scanning every outbound 
 - **Cross-request dedup** — 3-layer dedup eliminates redundant scanning of conversation history
 - **Web dashboard** with real-time findings, charts, session filtering, and audit log
 - **Notification channels** — webhook, email, Slack, Teams, PagerDuty, OpsGenie, Jira
+- **DB-backed rules engine** — import, export, toggle, and manage detection rules via CLI and dashboard
 - **Pre-commit scanner** — catch secrets before they enter conversation history
 - **Hot-reload** — update config via SIGHUP, no downtime
 - **Docker ready** — single command, data persists across upgrades
@@ -114,6 +115,19 @@ AWS keys, GitHub tokens, Anthropic/OpenAI/Google API keys, Stripe keys, Slack to
 
 - **File pattern blocklist** — `.pem`, `.key`, `.env`, `credentials.json`, etc.
 - **Keyword detection** — `CONFIDENTIAL`, `TRADE SECRET`, `INTERNAL ONLY`, etc.
+
+## Rules Engine
+
+Detection rules are stored in SQLite — manage via CLI or dashboard (Pro). Community rules auto-imported on first run.
+
+```bash
+lumen-argus rules import              # import 43 community rules
+lumen-argus rules import --pro        # import 1,800+ Pro rules (license required)
+lumen-argus rules list                # show loaded rules
+lumen-argus rules export > backup.json  # backup for migration
+```
+
+Rules support three sources: **import** (CLI, pattern read-only), **dashboard** (full CRUD, Pro), **yaml** (config-managed, Kubernetes-style reconciliation). Each rule has tier (`community`/`pro`/`custom`), action override, enable/disable toggle, and validators.
 
 ## Session Tracking
 

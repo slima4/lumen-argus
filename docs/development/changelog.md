@@ -4,6 +4,20 @@ All notable changes to lumen-argus are documented here.
 
 ## 0.4.0 (2026-03-20)
 
+### Rules Engine
+
+- DB-backed detection rules replace hardcoded Python pattern files
+- `rules` table in SQLite: name, pattern, detector, severity, action, enabled, tier, source, description, tags, validator
+- CLI: `lumen-argus rules import/export/list/validate` subcommands
+- Auto-import 43 community rules on first `serve` (opt out: `--no-default-rules`)
+- `RulesDetector`: loads compiled patterns from DB, license-gated for Pro rules
+- Validator registry: `luhn`, `ssn_range`, `iban_mod97`, `exclude_private_ips`
+- Capture-group-aware matching: `group(1)` preferred over `group(0)`
+- Pipeline uses `RulesDetector` when DB has rules, falls back to hardcoded detectors
+- YAML `custom_rules:` reconciled to DB on startup/SIGHUP (Kubernetes-style)
+- SIGHUP reloads rules from DB via `RulesDetector.reload()`
+- Configurable: `rules.auto_import: false` to skip auto-import
+
 ### Cross-Request Deduplication
 
 - 3-layer dedup architecture eliminates redundant scanning of conversation history

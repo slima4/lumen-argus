@@ -10,6 +10,7 @@ from lumen_argus.allowlist import AllowlistMatcher
 from lumen_argus.detectors.custom import CustomDetector
 from lumen_argus.detectors.pii import PIIDetector
 from lumen_argus.detectors.proprietary import ProprietaryDetector
+from lumen_argus.detectors.rules import RulesDetector
 from lumen_argus.detectors.secrets import SecretsDetector
 from lumen_argus.extensions import ExtensionRegistry
 from lumen_argus.extractor import RequestExtractor
@@ -260,15 +261,36 @@ class ScannerPipeline:
         self._max_scan_bytes = max_scan_bytes
         self._extensions = extensions
 
-        # Build detector chain
+        # Build detector chain.
+        # If DB has rules, use RulesDetector (replaces Secrets/PII/Custom).
+        # ProprietaryDetector always runs (file-pattern + keyword based, not regex rules).
+        # Fallback to hardcoded detectors if no rules in DB.
         self._detectors = []  # type: List[BaseDetector]
-        self._detectors.append(SecretsDetector(entropy_threshold=entropy_threshold))
-        self._detectors.append(PIIDetector())
-        self._detectors.append(ProprietaryDetector())
+        self._rules_detector = None
+        store = extensions.get_analytics_store() if extensions else None
+        has_rules = False
+        if store and hasattr(store, "get_rules_count"):
+            try:
+                count = store.get_rules_count()
+                if isinstance(count, int) and count > 0:
+                    has_rules = True
+            except Exception:
+                pass
+        if has_rules:
+            self._rules_detector = RulesDetector(
+                store=store,
+                license_checker=extensions.get_license_checker() if extensions else None,
+            )
+            self._detectors.append(self._rules_detector)
+            log.info("using DB-backed rules detector (%d rules)", count)
+        else:
+            # Fallback: hardcoded pattern files (no rules imported yet)
+            self._detectors.append(SecretsDetector(entropy_threshold=entropy_threshold))
+            self._detectors.append(PIIDetector())
+            self._custom_detector = CustomDetector(custom_rules)
+            self._detectors.append(self._custom_detector)
 
-        # Custom regex rules from config (reloaded on SIGHUP)
-        self._custom_detector = CustomDetector(custom_rules)
-        self._detectors.append(self._custom_detector)
+        self._detectors.append(ProprietaryDetector())
 
         # Add any pro/enterprise extension detectors
         if extensions:
@@ -305,7 +327,10 @@ class ScannerPipeline:
         # Atomic swaps — each is a single reference assignment
         self._allowlist = allowlist
         self._policy = new_policy
-        if custom_rules is not None:
+        # Reload rules from DB if using RulesDetector, otherwise update custom rules
+        if self._rules_detector:
+            self._rules_detector.reload()
+        elif custom_rules is not None and hasattr(self, "_custom_detector"):
             self._custom_detector.update_rules(custom_rules)
 
     def scan(self, body: bytes, provider: str, model: str = "", session: SessionContext = None) -> ScanResult:

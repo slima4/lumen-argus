@@ -90,14 +90,17 @@ Each `ScanField` contains:
 
 Detectors run **sequentially** on extracted fields. Each detector implements the `BaseDetector` ABC defined in `lumen_argus/detectors/__init__.py`.
 
+When the `rules` DB table has rules (auto-imported on first run), the pipeline uses `RulesDetector` which replaces `SecretsDetector`, `PIIDetector`, and `CustomDetector`. `ProprietaryDetector` always runs (file-pattern based, not regex rules).
+
 | Detector | Module | Description |
 |----------|--------|-------------|
-| **SecretsDetector** | `detectors/secrets.py` | 30+ compiled regex patterns (AWS, GitHub, Anthropic, OpenAI, Google, Stripe, Slack, JWT, database URLs, PEM keys, etc.) plus Shannon entropy sweep (threshold default: 4.5 bits/char). |
-| **PIIDetector** | `detectors/pii.py` | Regex patterns with validators: email, SSN (range validation), credit cards (Luhn check), phone numbers, IP addresses (excluding private ranges), IBAN, passport numbers. |
-| **ProprietaryDetector** | `detectors/proprietary.py` | File pattern blocklist (`.pem`, `.key`, `.env`, etc.) and keyword detection (`CONFIDENTIAL`, `TRADE SECRET`, etc.). |
-| **CustomDetector** | `detectors/custom.py` | User-defined regex rules from `custom_rules` config. Reloaded on SIGHUP. |
+| **RulesDetector** | `detectors/rules.py` | DB-backed rules with validator registry and license gating. Used when DB has rules. |
+| **SecretsDetector** | `detectors/secrets.py` | Fallback: 30+ compiled regex patterns plus Shannon entropy sweep. Used when DB has no rules. |
+| **PIIDetector** | `detectors/pii.py` | Fallback: regex patterns with validators (Luhn, SSN, IBAN). Used when DB has no rules. |
+| **ProprietaryDetector** | `detectors/proprietary.py` | File pattern blocklist and keyword detection. Always active. |
+| **CustomDetector** | `detectors/custom.py` | Fallback: user-defined regex rules from config. Used when DB has no rules. |
 
-All regex patterns are compiled at import time to avoid runtime compilation overhead.
+All regex patterns are compiled at load time (startup or SIGHUP reload) to avoid runtime compilation overhead. The `RulesDetector` supports named validators (`luhn`, `ssn_range`, `iban_mod97`, `exclude_private_ips`) and is license-aware — Pro rules (`tier='pro'`) are skipped when no valid license is present.
 
 ### Within-Request Deduplication
 

@@ -57,6 +57,7 @@ class ExtensionRegistry:
         self._health_hook = None  # type: Optional[Callable]
         self._metrics_hook = None  # type: Optional[Callable]
         self._trace_request_hook = None  # type: Optional[Callable]
+        self._license_checker = None  # type: Optional[object]
 
     def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
         """Register an additional detector.
@@ -287,6 +288,13 @@ class ExtensionRegistry:
 
     def get_trace_request_hook(self) -> Optional[Callable]:
         return self._trace_request_hook
+
+    def set_license_checker(self, checker) -> None:
+        """Register a license checker with is_valid() method for rule-tier gating."""
+        self._license_checker = checker
+
+    def get_license_checker(self):
+        return self._license_checker
 
     def loaded_plugins(self) -> List[tuple]:
         """Return list of (name, version) for loaded plugins."""
