@@ -249,6 +249,9 @@ def main(argv=None):
             analytics_store = AnalyticsStore(db_path=config.analytics.db_path, hmac_key=hmac_key)
             extensions.set_analytics_store(analytics_store)
             analytics_store.start_cleanup_scheduler(config.analytics.retention_days)
+        elif analytics_store is not None and hmac_key:
+            # Plugin-provided store (Pro) — inject HMAC key for value hashing
+            analytics_store._hmac_key = hmac_key
 
         # Create SSE broadcaster and register with extensions so Pro can use it
         sse_broadcaster = SSEBroadcaster()
