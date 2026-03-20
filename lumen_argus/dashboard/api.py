@@ -17,7 +17,6 @@ log = logging.getLogger("argus.dashboard.api")
 # Pro endpoint prefixes — return 402 when Pro is not installed
 _PRO_ENDPOINTS = (
     "/api/v1/rules",
-    "/api/v1/patterns",
     "/api/v1/allowlist",
 )
 

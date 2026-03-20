@@ -87,7 +87,7 @@ The built-in dashboard starts automatically on port 8081:
 http://localhost:8081
 ```
 
-View real-time stats, browse findings, search audit logs, and manage your license. Four additional pages (Rules, Patterns, Allowlists, Notifications) are available with a Pro license.
+View real-time stats, browse findings, search audit logs, and manage your license. Additional pages (Rules, Allowlists, Notifications) are available with a Pro license.
 
 ## Next Steps
 

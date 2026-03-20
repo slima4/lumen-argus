@@ -620,12 +620,6 @@ class TestTierGating(unittest.TestCase):
         data = json.loads(body)
         self.assertEqual(data["error"], "pro_required")
 
-    def test_delete_patterns_returns_402(self):
-        status, _, body = _delete(self.port, "/api/v1/patterns/1")
-        self.assertEqual(status, 402)
-        data = json.loads(body)
-        self.assertEqual(data["error"], "pro_required")
-
     def test_post_allowlist_returns_402(self):
         status, _, body = _post(self.port, "/api/v1/allowlist", body=b"{}")
         self.assertEqual(status, 402)
@@ -1061,7 +1055,7 @@ class TestCommunityAPIDirect(unittest.TestCase):
 
     def test_pro_endpoint_post_returns_402(self):
         # Notifications are now community-handled, not in _PRO_ENDPOINTS
-        for path in ("/api/v1/rules", "/api/v1/patterns", "/api/v1/allowlist"):
+        for path in ("/api/v1/rules", "/api/v1/allowlist"):
             status, body = handle_community_api(path, "POST", b"{}", None)
             data = json.loads(body)
             self.assertEqual(status, 402, "Expected 402 for POST %s" % path)

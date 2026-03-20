@@ -178,7 +178,7 @@ Built-in web dashboard at `http://localhost:8081`:
 
 **Community pages:** Dashboard (stats, trend charts, recent findings), Findings (paginated table with filters, CSV/JSON export), Audit (log viewer with search), Settings (config, license activation), Notifications (channel management).
 
-**Pro pages:** Rules, Patterns, Allowlists — unlocked with a Pro license.
+**Pro pages:** Rules, Allowlists — unlocked with a Pro license.
 
 ### Dashboard API
 
@@ -365,11 +365,11 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 Upgrade to Pro for advanced features:
 
 - **Redaction** — replace secrets in request bodies instead of blocking
-- **1,600+ detection patterns** — AI-generated, curated, and validated
+- **1,800+ detection patterns** — AI-generated, curated, and validated
 - **NLP-based PII detection** — beyond regex
 - **Advanced notifications** — circuit breakers, retry, deduplication, dispatch history
 - **Unlimited channels** — free tier allows 1 channel of any type
-- **Dashboard CRUD** — Rules, Patterns, Allowlists pages
+- **Dashboard CRUD** — Rules, Allowlists pages
 - **Compliance reporting** — audit exports, analytics
 - **OpenTelemetry tracing** — full request lifecycle spans with provider, findings, action attributes
 

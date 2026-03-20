@@ -247,8 +247,7 @@ These return `402 pro_required` when Pro is not active:
 
 | Endpoint | Description |
 |----------|-------------|
-| `/api/v1/rules/*` | Custom rules management |
-| `/api/v1/patterns/*` | Pattern browser and toggle |
+| `/api/v1/rules/*` | Rules management (CRUD, import, clone, stats) |
 | `/api/v1/allowlist/*` | Allowlist management |
 
 ### Authentication
