@@ -380,6 +380,181 @@ def format_results(results: List[dict]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Dedup benchmark helpers
+# ---------------------------------------------------------------------------
+
+
+def build_conversation_body(num_messages: int, with_secrets: bool = True) -> bytes:
+    """Build an Anthropic conversation with N messages.
+
+    First message contains secrets (if with_secrets). Subsequent messages
+    alternate user/assistant with clean code — simulating real usage where
+    secrets leak once and then conversation continues.
+    """
+    messages = []
+    if with_secrets:
+        stripe_key = "sk_" + "live" + "_" + "a" * 24 + "EXAMPLE"
+        github_token = "ghp_" + "A" * 36 + "EXAMPLE"
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Deploy with these creds:\n"
+                    'AWS_ACCESS_KEY="AKIAIOSFODNN7EXAMPLE"\n'
+                    'AWS_SECRET="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"\n'
+                    'STRIPE_KEY="%s"\n'
+                    'GITHUB_TOKEN="%s"\n'
+                    "Customer SSN: 123-45-6789, email: john@company.com\n"
+                )
+                % (stripe_key, github_token),
+            }
+        )
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "I see credentials. Let me help you set up secure credential management.",
+            }
+        )
+    for i in range(len(messages), num_messages):
+        role = "user" if i % 2 == 0 else "assistant"
+        messages.append(
+            {
+                "role": role,
+                "content": _random_code(1000) if role == "user" else _random_prose(800),
+            }
+        )
+    return json.dumps(
+        {
+            "model": "claude-opus-4-6",
+            "max_tokens": 4096,
+            "messages": messages,
+        }
+    ).encode()
+
+
+def run_dedup_benchmarks(iterations: int) -> List[dict]:
+    """Run dedup-specific benchmarks."""
+    from lumen_argus.models import SessionContext
+
+    results = []
+
+    # --- Benchmark 1: First scan vs repeat scan (same body) ---
+    for num_msgs, label in [(10, "10-msg"), (30, "30-msg"), (50, "50-msg")]:
+        body = build_conversation_body(num_msgs, with_secrets=True)
+
+        # Cold scan (fresh pipeline, no dedup cache)
+        cold_times = []
+        for i in range(iterations):
+            p = ScannerPipeline(default_action="alert", allowlist=AllowlistMatcher())
+            sess = SessionContext(session_id="cold-%d-%d" % (num_msgs, i))
+            t0 = time.monotonic()
+            r = p.scan(body, "anthropic", session=sess)
+            cold_times.append((time.monotonic() - t0) * 1000)
+
+        cold_findings = len(r.findings)
+
+        # Warm scan (same pipeline + session, dedup active)
+        p_warm = ScannerPipeline(default_action="alert", allowlist=AllowlistMatcher())
+        sess_warm = SessionContext(session_id="warm-%d" % num_msgs)
+        p_warm.scan(body, "anthropic", session=sess_warm)  # prime cache
+        warm_times = []
+        for _ in range(iterations):
+            t0 = time.monotonic()
+            r2 = p_warm.scan(body, "anthropic", session=sess_warm)
+            warm_times.append((time.monotonic() - t0) * 1000)
+
+        results.append(
+            {
+                "label": "%s / first scan" % label,
+                "payload_bytes": len(body),
+                "iterations": iterations,
+                "min_ms": min(cold_times),
+                "max_ms": max(cold_times),
+                "mean_ms": statistics.mean(cold_times),
+                "median_ms": statistics.median(cold_times),
+                "p95_ms": sorted(cold_times)[int(len(cold_times) * 0.95)],
+                "p99_ms": sorted(cold_times)[int(len(cold_times) * 0.99)],
+                "stddev_ms": statistics.stdev(cold_times) if len(cold_times) > 1 else 0,
+                "findings": cold_findings,
+                "action": r.action,
+            }
+        )
+        results.append(
+            {
+                "label": "%s / dedup repeat" % label,
+                "payload_bytes": len(body),
+                "iterations": iterations,
+                "min_ms": min(warm_times),
+                "max_ms": max(warm_times),
+                "mean_ms": statistics.mean(warm_times),
+                "median_ms": statistics.median(warm_times),
+                "p95_ms": sorted(warm_times)[int(len(warm_times) * 0.95)],
+                "p99_ms": sorted(warm_times)[int(len(warm_times) * 0.99)],
+                "stddev_ms": statistics.stdev(warm_times) if len(warm_times) > 1 else 0,
+                "findings": len(r2.findings),
+                "action": r2.action,
+            }
+        )
+
+    # --- Benchmark 2: Growing conversation (realistic usage) ---
+    # Each iteration adds a new message to the conversation
+    p_grow = ScannerPipeline(default_action="alert", allowlist=AllowlistMatcher())
+    sess_grow = SessionContext(session_id="grow-bench")
+    grow_times = []
+    for msg_count in range(2, 52):
+        body = build_conversation_body(msg_count, with_secrets=True)
+        t0 = time.monotonic()
+        r = p_grow.scan(body, "anthropic", session=sess_grow)
+        grow_times.append((time.monotonic() - t0) * 1000)
+
+    results.append(
+        {
+            "label": "growing conv (2→50 msgs)",
+            "payload_bytes": len(body),
+            "iterations": len(grow_times),
+            "min_ms": min(grow_times),
+            "max_ms": max(grow_times),
+            "mean_ms": statistics.mean(grow_times),
+            "median_ms": statistics.median(grow_times),
+            "p95_ms": sorted(grow_times)[int(len(grow_times) * 0.95)],
+            "p99_ms": sorted(grow_times)[int(len(grow_times) * 0.99)],
+            "stddev_ms": statistics.stdev(grow_times) if len(grow_times) > 1 else 0,
+            "findings": len(r.findings),
+            "action": r.action,
+        }
+    )
+
+    # --- Benchmark 3: Multiple concurrent sessions ---
+    p_multi = ScannerPipeline(default_action="alert", allowlist=AllowlistMatcher())
+    body_multi = build_conversation_body(20, with_secrets=True)
+    multi_times = []
+    for i in range(iterations):
+        sess = SessionContext(session_id="multi-%d" % (i % 50))
+        t0 = time.monotonic()
+        p_multi.scan(body_multi, "anthropic", session=sess)
+        multi_times.append((time.monotonic() - t0) * 1000)
+
+    results.append(
+        {
+            "label": "50 sessions rotating",
+            "payload_bytes": len(body_multi),
+            "iterations": iterations,
+            "min_ms": min(multi_times),
+            "max_ms": max(multi_times),
+            "mean_ms": statistics.mean(multi_times),
+            "median_ms": statistics.median(multi_times),
+            "p95_ms": sorted(multi_times)[int(len(multi_times) * 0.95)],
+            "p99_ms": sorted(multi_times)[int(len(multi_times) * 0.99)],
+            "stddev_ms": statistics.stdev(multi_times) if len(multi_times) > 1 else 0,
+            "findings": 0,
+            "action": "pass",
+        }
+    )
+
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description="lumen-argus scan pipeline benchmark")
     parser.add_argument(
@@ -397,7 +572,20 @@ def main():
         choices=list(PAYLOAD_SIZES.keys()),
         help="Run only a specific payload size",
     )
+    parser.add_argument(
+        "--dedup",
+        action="store_true",
+        help="Run dedup benchmarks (first scan vs repeat, growing conversation, multi-session)",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Run both payload and dedup benchmarks",
+    )
     args = parser.parse_args()
+
+    run_payload = not args.dedup or args.all
+    run_dedup = args.dedup or args.all
 
     pipeline = ScannerPipeline(
         default_action="alert",
@@ -408,27 +596,45 @@ def main():
 
     print("\n  lumen-argus benchmark — %d iterations per payload\n" % args.iterations)
 
-    if args.payload:
-        sizes = {args.payload: PAYLOAD_SIZES[args.payload]}
-    else:
-        sizes = PAYLOAD_SIZES
-
     results = []
 
-    for name, target_size in sizes.items():
-        # Clean payload (no secrets)
-        clean = build_clean_payload(target_size)
-        r = run_benchmark(pipeline, clean, "%s / clean" % name, args.iterations)
-        results.append(r)
-        print("    done: %s / clean" % name)
+    if run_payload:
+        if args.payload:
+            sizes = {args.payload: PAYLOAD_SIZES[args.payload]}
+        else:
+            sizes = PAYLOAD_SIZES
 
-        # Dirty payload (with secrets, PII, proprietary)
-        dirty = build_secrets_payload(target_size)
-        r = run_benchmark(pipeline, dirty, "%s / secrets+pii" % name, args.iterations)
-        results.append(r)
-        print("    done: %s / secrets+pii" % name)
+        for name, target_size in sizes.items():
+            clean = build_clean_payload(target_size)
+            r = run_benchmark(pipeline, clean, "%s / clean" % name, args.iterations)
+            results.append(r)
+            print("    done: %s / clean" % name)
 
-    print(format_results(results))
+            dirty = build_secrets_payload(target_size)
+            r = run_benchmark(pipeline, dirty, "%s / secrets+pii" % name, args.iterations)
+            results.append(r)
+            print("    done: %s / secrets+pii" % name)
+
+        print(format_results(results))
+
+    if run_dedup:
+        print("\n  === Dedup Benchmarks ===\n")
+        dedup_results = run_dedup_benchmarks(args.iterations)
+
+        # Print with speedup annotations
+        for i, r in enumerate(dedup_results):
+            label = r["label"]
+            if "first scan" in label:
+                print("    done: %s" % label)
+            elif "dedup repeat" in label:
+                # Calculate speedup vs previous (first scan)
+                first = dedup_results[i - 1]
+                speedup = first["median_ms"] / r["median_ms"] if r["median_ms"] > 0 else 0
+                print("    done: %s (%.0fx speedup)" % (label, speedup))
+            else:
+                print("    done: %s" % label)
+
+        print(format_results(dedup_results))
 
 
 if __name__ == "__main__":
