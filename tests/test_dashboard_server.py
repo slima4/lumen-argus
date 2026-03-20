@@ -1038,6 +1038,12 @@ class TestCommunityAPIDirect(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(data["total_findings"], 0)
 
+    def test_stats_advanced_returns_402_without_pro(self):
+        status, body = handle_community_api("/api/v1/stats/advanced", "GET", b"", None)
+        data = json.loads(body)
+        self.assertEqual(status, 402)
+        self.assertEqual(data["error"], "pro_required")
+
     def test_config_no_config(self):
         status, body = handle_community_api("/api/v1/config", "GET", b"", None)
         data = json.loads(body)

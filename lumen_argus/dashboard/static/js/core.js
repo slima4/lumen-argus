@@ -236,6 +236,28 @@ function _safeInjectHTML(container, html) {
   }
 }
 
+/* Pro charts hook — Pro JS calls registerCharts(fn) to render advanced analytics */
+var _proChartsRenderer=null;
+var _proChartsLastFetch=0;
+var _proChartsAvailable=null; /* null=unknown, true=Pro active, false=402 */
+function registerCharts(fn){_proChartsRenderer=fn;_proChartsAvailable=true;}
+function renderProCharts(days,force){
+  var container=document.getElementById('pro-charts');
+  if(!container||!_proChartsRenderer)return;
+  if(_proChartsAvailable===false)return;
+  /* Throttle: refresh at most every 60s unless forced (range toggle, initial load) */
+  var now=Date.now();
+  if(!force&&_proChartsLastFetch&&(now-_proChartsLastFetch)<60000)return;
+  _proChartsLastFetch=now;
+  fetch('/api/v1/stats/advanced?days='+days).then(function(r){
+    if(r.status===402){_proChartsAvailable=false;container.replaceChildren();return;}
+    _proChartsAvailable=true;
+    return r.json();
+  }).then(function(data){
+    if(data)_proChartsRenderer(container,data);
+  }).catch(function(){});
+}
+
 function showPageError(containerId,msg,retryFn){
   var el=document.getElementById(containerId);if(!el)return;el.replaceChildren();
   var wrap=document.createElement('div');wrap.className='empty';

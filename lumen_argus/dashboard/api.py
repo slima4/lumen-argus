@@ -85,6 +85,9 @@ def handle_community_api(
         if path == "/api/v1/stats":
             return _handle_stats(params, store)
 
+        if path == "/api/v1/stats/advanced":
+            return _handle_stats_advanced(params, store, extensions)
+
         if path == "/api/v1/config":
             return _handle_config(config)
 
@@ -235,6 +238,40 @@ def _handle_stats(params: dict, store) -> tuple:
         days = 30
     stats = store.get_stats(days=days)
     return _json_response(200, stats)
+
+
+def _handle_stats_advanced(params: dict, store, extensions) -> tuple:
+    """Pro-gated advanced analytics for dashboard charts."""
+    # Check if Pro is active via extensions
+    if extensions:
+        try:
+            checker = extensions.get_license_checker()
+            is_valid = checker and checker.is_valid()
+        except Exception:
+            is_valid = False
+        if is_valid:
+            days_str = params.get("days", "30")
+            try:
+                days = int(days_str)
+            except (ValueError, TypeError):
+                days = 30
+            data = {
+                "action_trend": store.get_action_trend(days=days) if store else [],
+                "activity_matrix": store.get_activity_matrix(days=days) if store else [],
+                "top_accounts": store.get_top_accounts(days=days) if store else [],
+                "top_projects": store.get_top_projects(days=days) if store else [],
+                "detection_coverage": store.get_rules_coverage() if store else {},
+            }
+            return _json_response(200, data)
+
+    return _json_response(
+        402,
+        {
+            "error": "pro_required",
+            "message": "Advanced analytics requires a Pro license",
+            "upgrade_url": "https://lumen-argus.com/pro",
+        },
+    )
 
 
 def _handle_config(config) -> tuple:

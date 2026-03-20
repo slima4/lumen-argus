@@ -281,6 +281,71 @@ class FindingsRepository:
             "daily_trend": daily,
         }
 
+    def get_action_trend(self, days: int = 30) -> list:
+        """Daily findings grouped by action_taken for stacked area chart."""
+        days = max(1, min(days, 365))
+        with self._store._connect() as conn:
+            rows = conn.execute(
+                "SELECT DATE(timestamp) as day, action_taken, COUNT(*) as cnt "
+                "FROM findings "
+                "WHERE timestamp >= DATE('now', '-' || ? || ' days') "
+                "GROUP BY day, action_taken ORDER BY day",
+                (days,),
+            ).fetchall()
+        # Pivot into {date, block, redact, alert, log} per day
+        by_day = {}  # type: dict
+        for row in rows:
+            day = row["day"]
+            if day not in by_day:
+                by_day[day] = {"date": day, "block": 0, "redact": 0, "alert": 0, "log": 0}
+            action = row["action_taken"] or "log"
+            if action in by_day[day]:
+                by_day[day][action] = row["cnt"]
+        return sorted(by_day.values(), key=lambda d: d["date"])
+
+    def get_activity_matrix(self, days: int = 30) -> list:
+        """Hour x weekday finding counts for heatmap chart."""
+        days = max(1, min(days, 365))
+        with self._store._connect() as conn:
+            rows = conn.execute(
+                "SELECT CAST(strftime('%w', timestamp) AS INTEGER) as weekday, "
+                "CAST(strftime('%H', timestamp) AS INTEGER) as hour, "
+                "COUNT(*) as cnt "
+                "FROM findings "
+                "WHERE timestamp >= DATE('now', '-' || ? || ' days') "
+                "GROUP BY weekday, hour",
+                (days,),
+            ).fetchall()
+        return [{"weekday": r["weekday"], "hour": r["hour"], "count": r["cnt"]} for r in rows]
+
+    def get_top_accounts(self, days: int = 30, limit: int = 8) -> list:
+        """Top accounts by finding count."""
+        days = max(1, min(days, 365))
+        with self._store._connect() as conn:
+            rows = conn.execute(
+                "SELECT account_id, COUNT(*) as cnt "
+                "FROM findings "
+                "WHERE account_id IS NOT NULL AND account_id != '' "
+                "AND timestamp >= DATE('now', '-' || ? || ' days') "
+                "GROUP BY account_id ORDER BY cnt DESC LIMIT ?",
+                (days, limit),
+            ).fetchall()
+        return [{"account_id": r["account_id"], "count": r["cnt"]} for r in rows]
+
+    def get_top_projects(self, days: int = 30, limit: int = 8) -> list:
+        """Top working directories by finding count."""
+        days = max(1, min(days, 365))
+        with self._store._connect() as conn:
+            rows = conn.execute(
+                "SELECT working_directory, COUNT(*) as cnt "
+                "FROM findings "
+                "WHERE working_directory IS NOT NULL AND working_directory != '' "
+                "AND timestamp >= DATE('now', '-' || ? || ' days') "
+                "GROUP BY working_directory ORDER BY cnt DESC LIMIT ?",
+                (days, limit),
+            ).fetchall()
+        return [{"working_directory": r["working_directory"], "count": r["cnt"]} for r in rows]
+
     def get_total_count(
         self,
         severity: Optional[str] = None,

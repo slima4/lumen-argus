@@ -160,6 +160,18 @@ class AnalyticsStore:
     def bump_seen_counts(self, session_id):
         return self.findings.bump_seen_counts(session_id)
 
+    def get_action_trend(self, days=30):
+        return self.findings.get_action_trend(days=days)
+
+    def get_activity_matrix(self, days=30):
+        return self.findings.get_activity_matrix(days=days)
+
+    def get_top_accounts(self, days=30, limit=8):
+        return self.findings.get_top_accounts(days=days, limit=limit)
+
+    def get_top_projects(self, days=30, limit=8):
+        return self.findings.get_top_projects(days=days, limit=limit)
+
     def cleanup(self, retention_days=365):
         return self.findings.cleanup(retention_days)
 
@@ -167,6 +179,9 @@ class AnalyticsStore:
 
     def get_rules_count(self):
         return self.rules.get_count()
+
+    def get_rules_coverage(self):
+        return self.rules.get_coverage()
 
     def get_active_rules(self, detector=None, tier=None):
         return self.rules.get_active(detector=detector, tier=tier)

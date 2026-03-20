@@ -421,6 +421,18 @@ class RulesRepository:
             "by_detector": by_detector,
         }
 
+    def get_coverage(self) -> dict:
+        """Detection coverage stats for dashboard gauge."""
+        with self._store._connect() as conn:
+            total = conn.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
+            active = conn.execute("SELECT COUNT(*) FROM rules WHERE enabled = 1").fetchone()[0]
+            pro_imported = conn.execute("SELECT COUNT(*) FROM rules WHERE tier = 'pro'").fetchone()[0]
+        return {
+            "active_rules": active,
+            "total_rules": total,
+            "pro_imported": pro_imported,
+        }
+
     def get_tag_stats(self) -> list:
         """Return tag counts for category chip display.
 

@@ -496,5 +496,121 @@ class TestAnalyticsStore(unittest.TestCase):
         self.assertTrue(os.path.exists(nested))
 
 
+class TestAdvancedAnalytics(unittest.TestCase):
+    """Tests for advanced analytics query methods (Pro chart data sources)."""
+
+    def setUp(self):
+        from lumen_argus.models import SessionContext
+
+        self.tmpdir = tempfile.mkdtemp()
+        self.db_path = os.path.join(self.tmpdir, "test_analytics.db")
+        self.store = AnalyticsStore(db_path=self.db_path)
+        # Insert findings with varied attributes
+        findings = [
+            _make_finding(type_="aws_access_key", severity="critical", action="block"),
+            _make_finding(detector="pii", type_="email", severity="warning", action="alert"),
+            _make_finding(type_="github_token", severity="high", action="alert"),
+        ]
+        session1 = SessionContext(
+            session_id="sess-1",
+            account_id="acct-1",
+            working_directory="/Users/dev/project-a",
+        )
+        self.store.record_findings(findings, provider="anthropic", model="opus-4-6", session=session1)
+        # Second batch with different account/project
+        findings2 = [
+            _make_finding(type_="stripe_key", severity="critical", action="block"),
+        ]
+        session2 = SessionContext(
+            session_id="sess-2",
+            account_id="acct-2",
+            working_directory="/Users/dev/project-b",
+        )
+        self.store.record_findings(findings2, provider="openai", model="gpt-4", session=session2)
+
+    def tearDown(self):
+        conn = getattr(self.store._local, "conn", None)
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_action_trend_returns_pivoted_data(self):
+        result = self.store.get_action_trend(days=30)
+        self.assertIsInstance(result, list)
+        self.assertGreater(len(result), 0)
+        day = result[0]
+        self.assertIn("date", day)
+        self.assertIn("block", day)
+        self.assertIn("alert", day)
+        self.assertIn("log", day)
+        # We inserted 2 blocks and 2 alerts
+        total_block = sum(d["block"] for d in result)
+        total_alert = sum(d["alert"] for d in result)
+        self.assertEqual(total_block, 2)
+        self.assertEqual(total_alert, 2)
+
+    def test_activity_matrix_returns_entries(self):
+        result = self.store.get_activity_matrix(days=30)
+        self.assertIsInstance(result, list)
+        self.assertGreater(len(result), 0)
+        entry = result[0]
+        self.assertIn("weekday", entry)
+        self.assertIn("hour", entry)
+        self.assertIn("count", entry)
+        self.assertIsInstance(entry["weekday"], int)
+        self.assertIsInstance(entry["hour"], int)
+
+    def test_top_accounts(self):
+        result = self.store.get_top_accounts(days=30)
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 2)
+        # acct-1 has 3 findings, acct-2 has 1
+        self.assertEqual(result[0]["account_id"], "acct-1")
+        self.assertEqual(result[0]["count"], 3)
+        self.assertEqual(result[1]["account_id"], "acct-2")
+        self.assertEqual(result[1]["count"], 1)
+
+    def test_top_projects(self):
+        result = self.store.get_top_projects(days=30)
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 2)
+        # project-a has 3 findings, project-b has 1
+        self.assertEqual(result[0]["working_directory"], "/Users/dev/project-a")
+        self.assertEqual(result[0]["count"], 3)
+
+    def test_top_accounts_limit(self):
+        result = self.store.get_top_accounts(days=30, limit=1)
+        self.assertEqual(len(result), 1)
+
+    def test_action_trend_respects_days(self):
+        # With days=0 (clamped to 1), should still return today's data
+        result = self.store.get_action_trend(days=1)
+        self.assertIsInstance(result, list)
+
+    def test_rules_coverage(self):
+        result = self.store.get_rules_coverage()
+        self.assertIn("active_rules", result)
+        self.assertIn("total_rules", result)
+        self.assertIn("pro_imported", result)
+        # No rules imported, all zeros
+        self.assertEqual(result["active_rules"], 0)
+        self.assertEqual(result["total_rules"], 0)
+
+    def test_rules_coverage_with_rules(self):
+        # Import some rules
+        rules = [
+            {"name": "test_rule_1", "pattern": "test1", "detector": "secrets"},
+            {"name": "test_rule_2", "pattern": "test2", "detector": "pii"},
+        ]
+        self.store.import_rules(rules, tier="community")
+        result = self.store.get_rules_coverage()
+        self.assertEqual(result["active_rules"], 2)
+        self.assertEqual(result["total_rules"], 2)
+        self.assertEqual(result["pro_imported"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

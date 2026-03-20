@@ -43,13 +43,14 @@ var trendDays=parseInt(localStorage.getItem('lumen_trend_days'))||30;
       trendDays=parseInt(b.getAttribute('data-days'));
       localStorage.setItem('lumen_trend_days',String(trendDays));
       document.getElementById('trend-title').textContent=trendDays+'-day trend';
-      loadData();
+      _forceProCharts=true;loadData();
     });
   });
   document.getElementById('trend-title').textContent=trendDays+'-day trend';
 })();
 
 /* SSE / POLLING TOGGLE */
+var _forceProCharts=true; /* force on initial load */
 var sseMode=localStorage.getItem('lumen_sse_mode')==='true';
 var sseSource=null;
 var pollTimer=null;
@@ -73,6 +74,7 @@ async function loadData(){try{
     renderChart(trend);}
   if(stats.by_detector)renderBars('det-list',stats.by_detector);
   if(stats.by_provider)renderBars('prov-list',stats.by_provider);
+  var _f=_forceProCharts;_forceProCharts=false;renderProCharts(trendDays,_f);
   var dtb=document.getElementById('dash-tbody');dtb.replaceChildren();
   var dashTotal=fd.total;
   var dashStart=dashPage*dashPerPage;
