@@ -304,8 +304,14 @@ class FindingsRepository:
         return sorted(by_day.values(), key=lambda d: d["date"])
 
     def get_activity_matrix(self, days: int = 30) -> list:
-        """Hour x weekday finding counts for heatmap chart."""
+        """Pre-shaped 7x24 activity matrix for heatmap chart.
+
+        Returns list of 7 objects (Mon–Sun), each with a 24-element hours array.
+        SQLite strftime('%w') returns 0=Sunday, so we remap to Mon-first order.
+        """
         days = max(1, min(days, 365))
+        # Build empty 7x24 grid (indexed by strftime %w: 0=Sun, 1=Mon, ...)
+        grid = [[0] * 24 for _ in range(7)]
         with self._store._connect() as conn:
             rows = conn.execute(
                 "SELECT CAST(strftime('%w', timestamp) AS INTEGER) as weekday, "
@@ -316,7 +322,12 @@ class FindingsRepository:
                 "GROUP BY weekday, hour",
                 (days,),
             ).fetchall()
-        return [{"weekday": r["weekday"], "hour": r["hour"], "count": r["cnt"]} for r in rows]
+        for r in rows:
+            grid[r["weekday"]][r["hour"]] = r["cnt"]
+        # Remap to Mon-first: Mon(1), Tue(2), ..., Sat(6), Sun(0)
+        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        day_order = [1, 2, 3, 4, 5, 6, 0]  # strftime %w indices
+        return [{"weekday": day_names[i], "hours": grid[day_order[i]]} for i in range(7)]
 
     def get_top_accounts(self, days: int = 30, limit: int = 8) -> list:
         """Top accounts by finding count."""

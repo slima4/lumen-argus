@@ -308,7 +308,8 @@ The dashboard trend chart includes a 7d / 30d / 90d toggle that sets this parame
     {"date": "2026-03-15", "block": 3, "redact": 1, "alert": 12, "log": 5}
   ],
   "activity_matrix": [
-    {"weekday": 1, "hour": 14, "count": 8}
+    {"weekday": "Mon", "hours": [0, 0, 5, 2, 0, 0, 0, 0, 3, 8, 12, 7, 4, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]},
+    {"weekday": "Tue", "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 5, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}
   ],
   "top_accounts": [
     {"account_id": "dbd6eafd-...", "count": 42}

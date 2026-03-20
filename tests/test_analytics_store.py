@@ -552,16 +552,19 @@ class TestAdvancedAnalytics(unittest.TestCase):
         self.assertEqual(total_block, 2)
         self.assertEqual(total_alert, 2)
 
-    def test_activity_matrix_returns_entries(self):
+    def test_activity_matrix_returns_7x24_grid(self):
         result = self.store.get_activity_matrix(days=30)
         self.assertIsInstance(result, list)
-        self.assertGreater(len(result), 0)
-        entry = result[0]
-        self.assertIn("weekday", entry)
-        self.assertIn("hour", entry)
-        self.assertIn("count", entry)
-        self.assertIsInstance(entry["weekday"], int)
-        self.assertIsInstance(entry["hour"], int)
+        self.assertEqual(len(result), 7)
+        # Check Mon-first order
+        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        for i, entry in enumerate(result):
+            self.assertEqual(entry["weekday"], day_names[i])
+            self.assertIsInstance(entry["hours"], list)
+            self.assertEqual(len(entry["hours"]), 24)
+        # At least one cell should be non-zero (we inserted findings)
+        total = sum(sum(entry["hours"]) for entry in result)
+        self.assertGreater(total, 0)
 
     def test_top_accounts(self):
         result = self.store.get_top_accounts(days=30)
