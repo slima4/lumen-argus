@@ -149,7 +149,7 @@ Actions are resolved using a strict priority order:
 
 | Priority | Action | Description |
 |----------|--------|-------------|
-| 4 | `block` | Reject with HTTP 403 JSON (Anthropic error envelope) regardless of streaming mode. If findings are only in conversation history, strips affected messages and forwards the cleaned request (logged as `strip`). |
+| 4 | `block` | Reject with HTTP 400 (`invalid_request_error`) regardless of streaming mode. If findings are only in conversation history, strips affected messages and forwards the cleaned request (logged as `strip`). |
 | 3 | `redact` | Replace matched values in the request body before forwarding. **(Pro only)** |
 | 2 | `alert` | Forward the request but log and display a warning. |
 | 1 | `log` | Forward the request and record the finding silently. |

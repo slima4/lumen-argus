@@ -308,7 +308,7 @@ custom_rules:
 |---|---|
 | **log** | Record in audit log, allow request |
 | **alert** | Log + print to terminal, allow request |
-| **block** | Reject with HTTP 403 JSON (Anthropic error envelope). If findings are only in conversation history, strips those messages and forwards the cleaned request (logged as `strip`). |
+| **block** | Reject with HTTP 400 (`invalid_request_error`). If findings are only in conversation history, strips those messages and forwards the cleaned request (logged as `strip`). |
 | **redact** | Replace sensitive values in request body (Pro) |
 
 Highest-severity action wins: `block > redact > alert > log`.

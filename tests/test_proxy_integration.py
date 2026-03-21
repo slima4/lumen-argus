@@ -138,8 +138,8 @@ class TestProxyIntegration(unittest.TestCase):
                 ],
             }
         )
-        self.assertEqual(status, 403)
-        self.assertEqual(data["error"]["type"], "request_blocked")
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"]["type"], "invalid_request_error")
         self.assertIn("lumen-argus", data["error"]["message"])
 
     def test_pii_alerted_but_forwarded(self):
@@ -154,8 +154,8 @@ class TestProxyIntegration(unittest.TestCase):
         # Alert action should forward (not block)
         self.assertEqual(status, 200)
 
-    def test_streaming_secret_blocked_as_403(self):
-        """#2: Blocked streaming request returns 403 JSON, not SSE."""
+    def test_streaming_secret_blocked_as_400(self):
+        """#2: Blocked streaming request returns 400 JSON, not SSE."""
         TestProxyIntegration._session_counter += 1
         session_id = "test-sess-%d" % TestProxyIntegration._session_counter
         body = json.dumps(
@@ -180,9 +180,9 @@ class TestProxyIntegration(unittest.TestCase):
         )
         with self.assertRaises(HTTPError) as ctx:
             urllib.request.urlopen(req)
-        self.assertEqual(ctx.exception.code, 403)
+        self.assertEqual(ctx.exception.code, 400)
         data = ctx.exception.read().decode()
-        self.assertIn("request_blocked", data)
+        self.assertIn("invalid_request_error", data)
 
     def test_history_strip_forwards_request(self):
         """#3: Blocked finding in history only → strip and forward, get 200."""

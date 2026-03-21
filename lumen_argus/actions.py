@@ -18,8 +18,9 @@ _CONTENT_BLOCK_RE = re.compile(r"messages\[(\d+)\]\.content\[(\d+)\]$")
 def build_block_response(result: ScanResult) -> bytes:
     """Build a JSON error response matching Anthropic's API error format.
 
-    Uses the standard {"type": "error", "error": {...}} envelope so that
-    the Anthropic SDK parses it and Claude Code displays the message cleanly.
+    Uses HTTP 400 + "invalid_request_error" type so that Claude Code
+    displays the message cleanly. HTTP 403 triggers Claude Code's
+    "Please run /login" auth error handler regardless of the body.
     """
     types = ", ".join(f.type for f in result.findings)
     message = (
@@ -31,7 +32,7 @@ def build_block_response(result: ScanResult) -> bytes:
     body = {
         "type": "error",
         "error": {
-            "type": "request_blocked",
+            "type": "invalid_request_error",
             "message": message,
         },
     }

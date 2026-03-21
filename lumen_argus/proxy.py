@@ -471,13 +471,13 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                     types = ", ".join(f.type for f in scan_result.findings)
                     block_body = build_block_response(scan_result)
                     log.info(
-                        "#%d blocking request (403, streaming=%s, %d bytes): %s",
+                        "#%d blocking request (400, streaming=%s, %d bytes): %s",
                         request_id,
                         is_streaming,
                         len(block_body),
                         types,
                     )
-                    self.send_response(403)
+                    self.send_response(400)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(block_body)))
                     self.end_headers()
