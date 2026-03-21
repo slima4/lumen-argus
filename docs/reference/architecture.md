@@ -118,7 +118,7 @@ A 3-layer architecture eliminates this redundancy:
 | **Finding TTL cache** | After policy eval, before `record_findings()` | Session-scoped `(detector, type, hash(matched_value), session_id)` cache suppresses duplicate DB writes | Same finding written N times per conversation |
 | **Store unique constraint** | `ON CONFLICT DO UPDATE` | `UNIQUE(content_hash, session_id)` index, increments `seen_count` | Duplicates after process restart or cache eviction |
 
-**Content fingerprinting** (`ContentFingerprint` class) uses `session.session_id` as the conversation key. Each conversation tracks a set of SHA-256[:16] hashes of field text. On each request, only fields with unseen hashes are passed to detectors. Sharded (16 locks) for low contention, with TTL eviction (default 30 minutes) and a per-conversation hash cap (5,000).
+**Content fingerprinting** (`ContentFingerprint` class) uses `session.session_id` as the conversation key. Each conversation tracks a set of SHA-256[:16] hashes of field text. On each request, only fields with unseen hashes are passed to detectors. Sharded (16 locks) for low contention, with TTL eviction (default 30 minutes) and a per-conversation hash cap (5,000). Two-phase commit: `filter_new_fields()` returns pending hashes, `commit_hashes()` stores them only if the request is not blocked. After successful history stripping, `commit_pending()` commits the hashes so subsequent requests skip the stripped content — avoiding repeated strip overhead for the rest of the session.
 
 **Finding TTL cache** (`_FindingDedup` class) filters findings before `record_findings()` but keeps all findings in `ScanResult` for policy evaluation — the action (block/alert) still fires even if the finding isn't new. The notification dispatcher also receives all findings (it has its own independent cooldown). Both cleanup schedulers run on background daemon threads.
 
@@ -149,7 +149,7 @@ Actions are resolved using a strict priority order:
 
 | Priority | Action | Description |
 |----------|--------|-------------|
-| 4 | `block` | Reject the request with a 403 response (or SSE-compatible block for streaming). |
+| 4 | `block` | Reject with HTTP 403 JSON (Anthropic error envelope) regardless of streaming mode. If findings are only in conversation history, strips affected messages and forwards the cleaned request (logged as `strip`). |
 | 3 | `redact` | Replace matched values in the request body before forwarding. **(Pro only)** |
 | 2 | `alert` | Forward the request but log and display a warning. |
 | 1 | `log` | Forward the request and record the finding silently. |
@@ -163,6 +163,15 @@ Each detector can have its own action via `detectors.<name>.action` in the confi
 
 !!! warning "Community Edition limitation"
     In the Community Edition, the `redact` action is automatically downgraded to `alert` by the policy engine. Full redaction support requires the Pro edition, which registers an `evaluate` hook to bypass this downgrade.
+
+### History stripping
+
+When block fires but findings are only in conversation history (not the latest user message), the proxy strips those messages/content blocks from the request body and forwards the cleaned request. This prevents a blocked message from tainting the entire session.
+
+- **Message-level**: In multi-message conversations, entire messages containing findings are removed.
+- **Content-block-level**: Claude Code packs everything into `messages[0]` with multiple content blocks — only the offending blocks are removed, preserving the rest.
+- **Audit**: Strip events are logged with `action="strip"`, preserving findings for forensic review.
+- **Dedup**: After successful strip, `commit_pending()` commits fingerprint hashes so subsequent requests skip the stripped content (no repeated strip overhead).
 
 ---
 
@@ -181,6 +190,8 @@ The audit logger writes JSONL records for every scanned request to `~/.lumen-arg
 
 !!! danger "Security: matched_value is never written to disk"
     The `Finding.matched_value` field (the actual secret/PII value) is kept in memory only. Audit log entries contain only the masked `value_preview` (e.g., `AKIA****EXAMPLE`). This prevents secondary exfiltration of sensitive data through log files.
+
+History strip events are recorded with `action="strip"` — the findings are preserved in the audit log for forensic review, even though the cleaned request was forwarded.
 
 ---
 

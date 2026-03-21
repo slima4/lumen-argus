@@ -62,7 +62,10 @@ class ScanResult:
 
     findings: List[Finding] = field(default_factory=list)
     scan_duration_ms: float = 0.0
-    action: str = "pass"  # highest-priority action: "pass" | "log" | "alert" | "block"
+    action: str = "pass"  # "pass" | "log" | "alert" | "block" | "strip" (audit-only)
+    # Opaque token for deferred fingerprint commit. Set by pipeline on block
+    # so the proxy can commit hashes after successful history stripping.
+    _pending_hashes: object = field(default=None, repr=False)
 
 
 @dataclass

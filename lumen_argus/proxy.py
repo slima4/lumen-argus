@@ -22,7 +22,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from lumen_argus.actions import build_block_response, build_sse_block_response, should_forward
+from lumen_argus.actions import build_block_response, should_forward, try_strip_blocked_history
 from lumen_argus.audit import AuditLogger
 from lumen_argus.display import TerminalDisplay
 from lumen_argus.models import AuditEntry, Finding, ScanResult, SessionContext
@@ -418,44 +418,94 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                     "body too large to scan (%d bytes > %d limit)" % (len(body), server.max_body_size),
                 )
 
-            # Check if we should block (SSE-aware block response)
+            # Check if we should block — always return 403 JSON regardless
+            # of streaming mode. AI tool SDKs handle HTTP errors before SSE
+            # parsing, so a 403 is surfaced properly. A 200 with a custom SSE
+            # error event would be silently ignored by most clients.
+            #
+            # History stripping: if blocked findings are only in conversation
+            # history (not the latest user message), strip those messages and
+            # forward. This prevents a blocked message from tainting the
+            # entire session — the user can continue with clean messages.
             if not should_forward(scan_result):
-                if is_streaming:
-                    block_body = build_sse_block_response(scan_result)
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/event-stream")
-                    self.send_header("Cache-Control", "no-cache")
+                stripped_body = try_strip_blocked_history(req_data, scan_result.findings)
+                if stripped_body is not None:
+                    # Findings are in history only — strip and fall through
+                    # to the forwarding logic below.
+                    types = ", ".join(f.type for f in scan_result.findings)
+                    log.info(
+                        "#%d stripping %d blocked message(s) from history (%d→%d bytes): %s",
+                        request_id,
+                        len(scan_result.findings),
+                        len(body),
+                        len(stripped_body),
+                        types,
+                    )
+                    # Audit the strip event with original findings before clearing
+                    self._log_audit(
+                        server,
+                        request_id,
+                        provider,
+                        model,
+                        ScanResult(
+                            action="strip",
+                            findings=scan_result.findings,
+                            scan_duration_ms=scan_result.scan_duration_ms,
+                        ),
+                        len(body),
+                        True,
+                        session,
+                    )
+                    # Commit fingerprint hashes so the stripped content is
+                    # skipped by Layer 1 on future requests (no repeated
+                    # strip overhead for the rest of this session).
+                    server.pipeline.commit_pending(scan_result)
+                    body = stripped_body
+                    scan_result = ScanResult(
+                        action="pass",
+                        findings=[],
+                        scan_duration_ms=scan_result.scan_duration_ms,
+                    )
                 else:
+                    # New sensitive data in latest message — block and return
+                    types = ", ".join(f.type for f in scan_result.findings)
                     block_body = build_block_response(scan_result)
+                    log.info(
+                        "#%d blocking request (403, streaming=%s, %d bytes): %s",
+                        request_id,
+                        is_streaming,
+                        len(block_body),
+                        types,
+                    )
                     self.send_response(403)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(block_body)))
-                self.end_headers()
-                self.wfile.write(block_body)
-                resp_size = len(block_body)
+                    self.end_headers()
+                    self.wfile.write(block_body)
+                    resp_size = len(block_body)
 
-                server.display.show_request(
-                    request_id,
-                    self.command,
-                    self.path,
-                    model,
-                    len(body),
-                    resp_size,
-                    (time.monotonic() - t0) * 1000,
-                    scan_result,
-                )
-                self._log_audit(
-                    server,
-                    request_id,
-                    provider,
-                    model,
-                    scan_result,
-                    len(body),
-                    False,
-                    session,
-                )
-                server.stats.record(provider, len(body), scan_result)
-                return
+                    server.display.show_request(
+                        request_id,
+                        self.command,
+                        self.path,
+                        model,
+                        len(body),
+                        resp_size,
+                        (time.monotonic() - t0) * 1000,
+                        scan_result,
+                    )
+                    self._log_audit(
+                        server,
+                        request_id,
+                        provider,
+                        model,
+                        scan_result,
+                        len(body),
+                        False,
+                        session,
+                    )
+                    server.stats.record(provider, len(body), scan_result)
+                    return
 
             # Apply redaction if action is "redact" and a hook is registered
             if scan_result.action == "redact" and server.redact_hook is not None:

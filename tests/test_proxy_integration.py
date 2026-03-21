@@ -94,8 +94,13 @@ class TestProxyIntegration(unittest.TestCase):
         cls.upstream.shutdown()
         cls.audit.close()
 
-    def _post(self, body_dict):
-        """Send a POST to the proxy."""
+    _session_counter = 0
+
+    def _post(self, body_dict, session_id=None):
+        """Send a POST to the proxy with a unique session ID."""
+        if session_id is None:
+            TestProxyIntegration._session_counter += 1
+            session_id = "test-sess-%d" % TestProxyIntegration._session_counter
         body = json.dumps(body_dict).encode()
         req = urllib.request.Request(
             "http://127.0.0.1:%d/v1/messages" % self.proxy_port,
@@ -104,6 +109,7 @@ class TestProxyIntegration(unittest.TestCase):
                 "Content-Type": "application/json",
                 "x-api-key": "test-key",
                 "anthropic-version": "2024-01-01",
+                "x-session-id": session_id,
             },
             method="POST",
         )
@@ -134,7 +140,7 @@ class TestProxyIntegration(unittest.TestCase):
         )
         self.assertEqual(status, 403)
         self.assertEqual(data["error"]["type"], "request_blocked")
-        self.assertTrue(len(data["error"]["findings"]) > 0)
+        self.assertIn("lumen-argus", data["error"]["message"])
 
     def test_pii_alerted_but_forwarded(self):
         status, data = self._post(
@@ -148,8 +154,10 @@ class TestProxyIntegration(unittest.TestCase):
         # Alert action should forward (not block)
         self.assertEqual(status, 200)
 
-    def test_streaming_secret_blocked_as_sse(self):
-        """#2: Blocked SSE request should return SSE error event."""
+    def test_streaming_secret_blocked_as_403(self):
+        """#2: Blocked streaming request returns 403 JSON, not SSE."""
+        TestProxyIntegration._session_counter += 1
+        session_id = "test-sess-%d" % TestProxyIntegration._session_counter
         body = json.dumps(
             {
                 "model": "claude-opus-4-6",
@@ -166,17 +174,32 @@ class TestProxyIntegration(unittest.TestCase):
                 "Content-Type": "application/json",
                 "x-api-key": "test-key",
                 "anthropic-version": "2024-01-01",
+                "x-session-id": session_id,
             },
             method="POST",
         )
-        resp = urllib.request.urlopen(req)
-        # SSE block returns 200 with text/event-stream
-        self.assertEqual(resp.status, 200)
-        content_type = resp.headers.get("Content-Type", "")
-        self.assertIn("text/event-stream", content_type)
-        data = resp.read().decode()
-        self.assertIn("event: error", data)
+        with self.assertRaises(HTTPError) as ctx:
+            urllib.request.urlopen(req)
+        self.assertEqual(ctx.exception.code, 403)
+        data = ctx.exception.read().decode()
         self.assertIn("request_blocked", data)
+
+    def test_history_strip_forwards_request(self):
+        """#3: Blocked finding in history only → strip and forward, get 200."""
+        status, data = self._post(
+            {
+                "model": "claude-opus-4-6",
+                "messages": [
+                    {"role": "user", "content": "My key: AKIAI44QH8DHBEXAMPLE"},
+                    {"role": "assistant", "content": "Error: blocked."},
+                    {"role": "user", "content": "What is 2+2?"},
+                ],
+            }
+        )
+        # Secret is in messages[0] (history), not in messages[2] (latest)
+        # Proxy should strip messages[0]+[1] and forward messages[2]
+        self.assertEqual(status, 200)
+        self.assertEqual(data["type"], "message")
 
 
 if __name__ == "__main__":

@@ -67,10 +67,16 @@ class ContentFingerprint:
     def _shard_for(self, key: str) -> int:
         return hash(key) & (self._NUM_SHARDS - 1)
 
-    def filter_new_fields(self, conversation_key: str, fields: list) -> list:
+    def filter_new_fields(self, conversation_key: str, fields: list) -> tuple:
         """Return only fields whose content hasn't been seen before.
 
-        Updates the conversation's seen set with new hashes.
+        Does NOT commit hashes yet — call commit_hashes() after confirming
+        the request won't be blocked. This prevents blocked content from
+        being fingerprinted, which would allow it through on retry.
+
+        Returns:
+            (new_fields, pending_hashes) — pending_hashes is an opaque token
+            to pass to commit_hashes().
         """
         idx = self._shard_for(conversation_key)
         now = time.monotonic()
@@ -94,13 +100,6 @@ class ContentFingerprint:
                     new_fields.append(f)
                     new_hashes.append(h)
 
-            # Add new hashes, cap total to prevent memory blowup
-            remaining = self._max_hashes - cache.hash_count
-            if remaining > 0:
-                hashes_to_add = new_hashes[:remaining]
-                cache.seen_hashes.update(hashes_to_add)
-                cache.hash_count += len(hashes_to_add)
-
             # LRU eviction: if adding a new conversation exceeded the
             # per-shard limit, evict the least-recently-accessed entry.
             shard_limit = self._max_conversations // self._NUM_SHARDS
@@ -111,7 +110,29 @@ class ContentFingerprint:
                 )
                 del shard[lru_key]
 
-        return new_fields
+        pending = (conversation_key, new_hashes)
+        return new_fields, pending
+
+    def commit_hashes(self, pending) -> None:
+        """Commit previously computed hashes to the seen set.
+
+        Call this only when the request was NOT blocked, so that blocked
+        content will be re-scanned on retry.
+        """
+        conversation_key, new_hashes = pending
+        if not new_hashes:
+            return
+        idx = self._shard_for(conversation_key)
+        with self._locks[idx]:
+            shard = self._shards[idx]
+            cache = shard.get(conversation_key)
+            if cache is None:
+                return
+            remaining = self._max_hashes - cache.hash_count
+            if remaining > 0:
+                hashes_to_add = new_hashes[:remaining]
+                cache.seen_hashes.update(hashes_to_add)
+                cache.hash_count += len(hashes_to_add)
 
     def cleanup(self) -> int:
         """Remove expired conversations. Called periodically."""
@@ -314,6 +335,23 @@ class ScannerPipeline:
         self._finding_dedup = _FindingDedup(ttl_seconds=finding_ttl)
         self._finding_dedup.start_cleanup_scheduler()
 
+    def commit_pending(self, result: ScanResult) -> None:
+        """Commit deferred fingerprint hashes from a blocked-then-stripped request.
+
+        Call this after history stripping succeeds — the stripped content has
+        been handled, so future requests can skip re-scanning it.
+        """
+        pending = result._pending_hashes
+        if pending:
+            conv_key, hashes = pending
+            log.debug(
+                "commit_pending: committing %d hashes for session %s after strip",
+                len(hashes),
+                conv_key[:16] if conv_key else "",
+            )
+            self._fingerprint.commit_hashes(pending)
+            result._pending_hashes = None
+
     def reload(
         self, allowlist: AllowlistMatcher, default_action: str, action_overrides: dict = None, custom_rules: list = None
     ) -> None:
@@ -359,10 +397,13 @@ class ScannerPipeline:
 
         # Layer 1: Content fingerprinting — skip fields already scanned
         # in a previous request within this conversation.
+        # Two-phase: filter first, commit hashes only if not blocked.
+        # This ensures blocked content is re-scanned on retry.
         conv_key = session.session_id if session else ""
+        pending_hashes = None
         if conv_key:
             original_count = len(fields)
-            fields = self._fingerprint.filter_new_fields(conv_key, fields)
+            fields, pending_hashes = self._fingerprint.filter_new_fields(conv_key, fields)
             skipped = original_count - len(fields)
             if skipped:
                 log.debug(
@@ -455,6 +496,15 @@ class ScannerPipeline:
             scan_duration_ms=elapsed_ms,
             action=decision.action,
         )
+
+        # Commit fingerprint hashes only if request is NOT blocked.
+        # Blocked content must be re-scanned on retry to prevent bypass.
+        # On block, store pending_hashes on the result so the proxy can
+        # commit them later if history stripping succeeds.
+        if pending_hashes and result.action != "block":
+            self._fingerprint.commit_hashes(pending_hashes)
+        elif pending_hashes and result.action == "block":
+            result._pending_hashes = pending_hashes
 
         # Layer 2: Finding-level dedup — filter before recording but after
         # policy eval. All findings stay in ScanResult for action enforcement.

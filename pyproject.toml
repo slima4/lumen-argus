@@ -46,6 +46,7 @@ include = ["lumen_argus*"]
 
 [tool.setuptools.package-data]
 "lumen_argus.dashboard" = ["static/**/*"]
+"lumen_argus.rules" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

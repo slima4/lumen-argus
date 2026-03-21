@@ -15,12 +15,18 @@ class TestContentFingerprint(unittest.TestCase):
     def setUp(self):
         self.fp = ContentFingerprint(conversation_ttl=60, max_conversations=100)
 
+    def _filter_and_commit(self, fp, conv_key, fields):
+        """Helper: filter new fields and immediately commit hashes (non-block path)."""
+        new_fields, pending = fp.filter_new_fields(conv_key, fields)
+        fp.commit_hashes(pending)
+        return new_fields
+
     def test_first_request_returns_all_fields(self):
         fields = [
             ScanField(path="messages[0]", text="hello world", source_filename=""),
             ScanField(path="messages[1]", text="secret key here", source_filename=""),
         ]
-        result = self.fp.filter_new_fields("conv-1", fields)
+        result = self._filter_and_commit(self.fp, "conv-1", fields)
         self.assertEqual(len(result), 2)
 
     def test_second_request_skips_identical_fields(self):
@@ -28,58 +34,58 @@ class TestContentFingerprint(unittest.TestCase):
             ScanField(path="messages[0]", text="hello world", source_filename=""),
             ScanField(path="messages[1]", text="secret key here", source_filename=""),
         ]
-        self.fp.filter_new_fields("conv-1", fields)
+        self._filter_and_commit(self.fp, "conv-1", fields)
 
         # Same fields again — should all be skipped
-        result = self.fp.filter_new_fields("conv-1", fields)
+        result = self._filter_and_commit(self.fp, "conv-1", fields)
         self.assertEqual(len(result), 0)
 
     def test_modified_field_is_rescanned(self):
         fields = [
             ScanField(path="messages[0]", text="original text", source_filename=""),
         ]
-        self.fp.filter_new_fields("conv-1", fields)
+        self._filter_and_commit(self.fp, "conv-1", fields)
 
         # Modified text — new hash, should be returned
         modified = [
             ScanField(path="messages[0]", text="modified text", source_filename=""),
         ]
-        result = self.fp.filter_new_fields("conv-1", modified)
+        result = self._filter_and_commit(self.fp, "conv-1", modified)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].text, "modified text")
 
     def test_new_field_returned_with_existing(self):
         """Second request with old + new fields returns only new."""
         old = [ScanField(path="m[0]", text="old msg", source_filename="")]
-        self.fp.filter_new_fields("conv-1", old)
+        self._filter_and_commit(self.fp, "conv-1", old)
 
         combined = [
             ScanField(path="m[0]", text="old msg", source_filename=""),
             ScanField(path="m[1]", text="new msg", source_filename=""),
         ]
-        result = self.fp.filter_new_fields("conv-1", combined)
+        result = self._filter_and_commit(self.fp, "conv-1", combined)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].text, "new msg")
 
     def test_different_conversations_are_independent(self):
         fields = [ScanField(path="m[0]", text="shared text", source_filename="")]
-        self.fp.filter_new_fields("conv-1", fields)
+        self._filter_and_commit(self.fp, "conv-1", fields)
 
         # Different conversation — same text should still be returned
-        result = self.fp.filter_new_fields("conv-2", fields)
+        result = self._filter_and_commit(self.fp, "conv-2", fields)
         self.assertEqual(len(result), 1)
 
     def test_ttl_eviction(self):
         fp = ContentFingerprint(conversation_ttl=0, max_conversations=100)
         fields = [ScanField(path="m[0]", text="text", source_filename="")]
-        fp.filter_new_fields("conv-1", fields)
+        self._filter_and_commit(fp, "conv-1", fields)
 
         # TTL=0 means immediately expired
         removed = fp.cleanup()
         self.assertEqual(removed, 1)
 
         # After eviction, same text is treated as new
-        result = fp.filter_new_fields("conv-1", fields)
+        result = self._filter_and_commit(fp, "conv-1", fields)
         self.assertEqual(len(result), 1)
 
     def test_conversation_key_collision_is_safe(self):
@@ -87,8 +93,8 @@ class TestContentFingerprint(unittest.TestCase):
         fields_a = [ScanField(path="m[0]", text="same text", source_filename="")]
         fields_b = [ScanField(path="m[0]", text="same text", source_filename="")]
 
-        self.fp.filter_new_fields("shared-key", fields_a)
-        result = self.fp.filter_new_fields("shared-key", fields_b)
+        self._filter_and_commit(self.fp, "shared-key", fields_a)
+        result = self._filter_and_commit(self.fp, "shared-key", fields_b)
         # Same text deduped — correct behavior
         self.assertEqual(len(result), 0)
 
@@ -96,14 +102,27 @@ class TestContentFingerprint(unittest.TestCase):
         fp = ContentFingerprint(conversation_ttl=60, max_conversations=100, max_hashes_per_conversation=3)
 
         fields = [ScanField(path="m[%d]" % i, text="text-%d" % i, source_filename="") for i in range(5)]
-        result = fp.filter_new_fields("conv-1", fields)
+        result = self._filter_and_commit(fp, "conv-1", fields)
         # All 5 are new (never seen), but only 3 hashes stored
         self.assertEqual(len(result), 5)
 
         # On second call, only the 3 stored hashes are recognized
-        result2 = fp.filter_new_fields("conv-1", fields)
+        result2 = self._filter_and_commit(fp, "conv-1", fields)
         # 3 are skipped (stored), 2 are "new" (not stored due to cap)
         self.assertEqual(len(result2), 2)
+
+    def test_blocked_content_not_fingerprinted(self):
+        """If hashes are not committed (block path), content is re-scanned on retry."""
+        fields = [ScanField(path="m[0]", text="secret key", source_filename="")]
+
+        # Filter but do NOT commit (simulates block)
+        new_fields, pending = self.fp.filter_new_fields("conv-1", fields)
+        self.assertEqual(len(new_fields), 1)
+        # Don't call commit_hashes — request was blocked
+
+        # Retry — same content should be returned again (not skipped)
+        result = self._filter_and_commit(self.fp, "conv-1", fields)
+        self.assertEqual(len(result), 1)
 
     def test_lru_eviction_on_max_conversations(self):
         """When max_conversations is exceeded, LRU conversation is evicted."""
@@ -122,18 +141,18 @@ class TestContentFingerprint(unittest.TestCase):
         fields = [ScanField(path="m[0]", text="hello", source_filename="")]
 
         # Add first 2 conversations — within limit
-        fp.filter_new_fields(keys[0], fields)
-        fp.filter_new_fields(keys[1], fields)
+        self._filter_and_commit(fp, keys[0], fields)
+        self._filter_and_commit(fp, keys[1], fields)
         stats = fp.stats()
         self.assertEqual(stats["conversations"], 2)
 
         # Add 3rd — exceeds shard limit (2), LRU (keys[0]) should be evicted
-        fp.filter_new_fields(keys[2], fields)
+        self._filter_and_commit(fp, keys[2], fields)
         stats = fp.stats()
         self.assertEqual(stats["conversations"], 2)  # Still 2, not 3
 
         # keys[0] was evicted — its fields are treated as new again
-        result = fp.filter_new_fields(keys[0], fields)
+        result = self._filter_and_commit(fp, keys[0], fields)
         self.assertEqual(len(result), 1)  # "hello" is new again
 
     def test_lru_evicts_oldest_not_newest(self):
@@ -151,21 +170,21 @@ class TestContentFingerprint(unittest.TestCase):
         fields = [ScanField(path="m[0]", text="hello", source_filename="")]
 
         # Add keys[0] first (oldest), then keys[1]
-        fp.filter_new_fields(keys[0], fields)
-        fp.filter_new_fields(keys[1], fields)
+        self._filter_and_commit(fp, keys[0], fields)
+        self._filter_and_commit(fp, keys[1], fields)
 
         # Touch keys[0] again — now keys[1] is LRU
-        fp.filter_new_fields(keys[0], [ScanField(path="m[1]", text="world", source_filename="")])
+        self._filter_and_commit(fp, keys[0], [ScanField(path="m[1]", text="world", source_filename="")])
 
         # Add keys[2] — keys[1] should be evicted (it's LRU), not keys[0]
-        fp.filter_new_fields(keys[2], fields)
+        self._filter_and_commit(fp, keys[2], fields)
 
         # keys[0] should still have its hashes (not evicted)
-        result = fp.filter_new_fields(keys[0], fields)
+        result = self._filter_and_commit(fp, keys[0], fields)
         self.assertEqual(len(result), 0)  # "hello" still remembered
 
         # keys[1] was evicted — "hello" is new
-        result = fp.filter_new_fields(keys[1], fields)
+        result = self._filter_and_commit(fp, keys[1], fields)
         self.assertEqual(len(result), 1)
 
     def test_thread_safety(self):
@@ -182,7 +201,7 @@ class TestContentFingerprint(unittest.TestCase):
                             source_filename="",
                         )
                     ]
-                    fp.filter_new_fields(conv_id, fields)
+                    self._filter_and_commit(fp, conv_id, fields)
             except Exception as e:
                 errors.append(e)
 
@@ -196,8 +215,9 @@ class TestContentFingerprint(unittest.TestCase):
 
     def test_stats(self):
         fields = [ScanField(path="m[0]", text="text", source_filename="")]
-        self.fp.filter_new_fields("conv-1", fields)
-        self.fp.filter_new_fields(
+        self._filter_and_commit(self.fp, "conv-1", fields)
+        self._filter_and_commit(
+            self.fp,
             "conv-2",
             [
                 ScanField(path="m[0]", text="a", source_filename=""),
@@ -216,7 +236,7 @@ class TestContentFingerprint(unittest.TestCase):
         self.assertEqual(len(h1), 16)
 
     def test_empty_fields_list(self):
-        result = self.fp.filter_new_fields("conv-1", [])
+        result, pending = self.fp.filter_new_fields("conv-1", [])
         self.assertEqual(result, [])
 
 
