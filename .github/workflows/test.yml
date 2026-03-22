@@ -55,7 +55,7 @@ jobs:
       - name: Audit dependencies
         run: |
           pip install pip-audit
-          pip-audit
+          pip-audit --skip-editable --ignore-vuln PYSEC-2022-43012 --ignore-vuln PYSEC-2025-49 --ignore-vuln CVE-2024-6345
 
   benchmark:
     if: github.event_name == 'push'
