@@ -7,6 +7,7 @@ import time
 from typing import List
 
 from lumen_argus.allowlist import AllowlistMatcher
+from lumen_argus.decoders import ContentDecoder
 from lumen_argus.detectors.custom import CustomDetector
 from lumen_argus.detectors.pii import PIIDetector
 from lumen_argus.detectors.proprietary import ProprietaryDetector
@@ -292,6 +293,9 @@ class ScannerPipeline:
         if not self._encoding_decode_enabled:
             log.info("pipeline stage encoding_decode is DISABLED")
 
+        # Content decoder (encoding-aware scanning)
+        self._decoder = self._build_decoder(pc) if self._encoding_decode_enabled else None
+
         # Build detector chain.
         # If DB has rules, use RulesDetector (replaces Secrets/PII/Custom).
         # ProprietaryDetector always runs (file-pattern + keyword based, not regex rules).
@@ -387,6 +391,7 @@ class ScannerPipeline:
         if pipeline_config:
             self._outbound_dlp_enabled = bool(pipeline_config.get("outbound_dlp_enabled", True))
             self._encoding_decode_enabled = bool(pipeline_config.get("encoding_decode_enabled", True))
+            self._decoder = self._build_decoder(pipeline_config) if self._encoding_decode_enabled else None
             log.info(
                 "pipeline reload: outbound_dlp=%s encoding_decode=%s",
                 "enabled" if self._outbound_dlp_enabled else "disabled",
@@ -397,6 +402,19 @@ class ScannerPipeline:
             self._rules_detector.reload()
         elif custom_rules is not None and hasattr(self, "_custom_detector"):
             self._custom_detector.update_rules(custom_rules)
+
+    @staticmethod
+    def _build_decoder(pc: dict) -> ContentDecoder:
+        """Build a ContentDecoder from pipeline config dict."""
+        return ContentDecoder(
+            enable_base64=bool(pc.get("encoding_base64", True)),
+            enable_hex=bool(pc.get("encoding_hex", True)),
+            enable_url=bool(pc.get("encoding_url", True)),
+            enable_unicode=bool(pc.get("encoding_unicode", True)),
+            max_depth=int(pc.get("encoding_max_depth", 2)),
+            min_decoded_length=int(pc.get("encoding_min_decoded_length", 8)),
+            max_decoded_length=int(pc.get("encoding_max_decoded_length", 10_000)),
+        )
 
     def scan(self, body: bytes, provider: str, model: str = "", session: SessionContext = None) -> ScanResult:
         """Run the full scan pipeline on a request body.
@@ -411,18 +429,46 @@ class ScannerPipeline:
             ScanResult with findings, timing, and resolved action.
         """
         t0 = time.monotonic()
+        stage_timings = {}  # type: dict
 
         # Extract scannable fields
+        t_stage = time.monotonic()
         fields = self._extractor.extract(body, provider)
         log.debug("extracted %d fields from %s request (%d bytes)", len(fields), provider, len(body))
 
         # Filter out allowlisted paths
         fields = [f for f in fields if not (f.source_filename and self._allowlist.is_allowed_path(f.source_filename))]
+        stage_timings["extraction"] = (time.monotonic() - t_stage) * 1000
+
+        # Encoding decode stage — expand fields with decoded variants
+        if self._decoder:
+            t_stage = time.monotonic()
+            expanded = []
+            for field in fields:
+                variants = self._decoder.decode_field(field.text)
+                for v in variants:
+                    expanded.append(
+                        ScanField(
+                            path=field.path if v.encoding == "raw" else "%s[%s]" % (field.path, v.encoding),
+                            text=v.text,
+                            source_filename=field.source_filename,
+                        )
+                    )
+            if len(expanded) > len(fields):
+                log.debug(
+                    "encoding decode: %d fields -> %d fields (+%d decoded)",
+                    len(fields),
+                    len(expanded),
+                    len(expanded) - len(fields),
+                )
+            fields = expanded
+            stage_timings["encoding_decode"] = (time.monotonic() - t_stage) * 1000
 
         # Layer 1: Content fingerprinting — skip fields already scanned
         # in a previous request within this conversation.
         # Two-phase: filter first, commit hashes only if not blocked.
         # This ensures blocked content is re-scanned on retry.
+        t_stage = time.monotonic()
         conv_key = session.session_id if session else ""
         pending_hashes = None
         if conv_key:
@@ -475,8 +521,10 @@ class ScannerPipeline:
             total_text,
             self._max_scan_bytes,
         )
+        stage_timings["fingerprint"] = (time.monotonic() - t_stage) * 1000
 
         # Run all detectors (gated by outbound_dlp stage toggle)
+        t_stage = time.monotonic()
         all_findings = []  # type: List[Finding]
         if self._outbound_dlp_enabled:
             for detector in self._detectors:
@@ -490,6 +538,7 @@ class ScannerPipeline:
                 all_findings.extend(det_findings)
         else:
             log.debug("outbound_dlp stage disabled — skipping all detectors")
+        stage_timings["outbound_dlp"] = (time.monotonic() - t_stage) * 1000
 
         # Deduplicate findings — same (detector, type, matched_value) collapsed
         # into one finding with a count. Reduces noise from repeated secrets
@@ -522,6 +571,7 @@ class ScannerPipeline:
             findings=decision.findings,
             scan_duration_ms=elapsed_ms,
             action=decision.action,
+            stage_timings=stage_timings,
         )
 
         # Commit fingerprint hashes only if request is NOT blocked.

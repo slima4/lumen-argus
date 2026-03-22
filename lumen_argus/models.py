@@ -1,7 +1,7 @@
 """Core data structures used across all modules."""
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List
 
 
 @dataclass
@@ -63,6 +63,7 @@ class ScanResult:
     findings: List[Finding] = field(default_factory=list)
     scan_duration_ms: float = 0.0
     action: str = "pass"  # "pass" | "log" | "alert" | "block" | "strip" (audit-only)
+    stage_timings: Dict[str, float] = field(default_factory=dict)  # {stage_name: elapsed_ms}
     # Opaque token for deferred fingerprint commit. Set by pipeline on block
     # so the proxy can commit hashes after successful history stripping.
     _pending_hashes: object = field(default=None, repr=False)

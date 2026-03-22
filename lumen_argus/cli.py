@@ -23,9 +23,17 @@ from lumen_argus.proxy import ArgusProxyServer
 
 def _build_pipeline_config(cfg):
     """Build flat dict from PipelineConfig for ScannerPipeline."""
+    enc = cfg.pipeline.encoding_decode
     return {
         "outbound_dlp_enabled": cfg.pipeline.outbound_dlp.enabled,
-        "encoding_decode_enabled": cfg.pipeline.encoding_decode.enabled,
+        "encoding_decode_enabled": enc.enabled,
+        "encoding_base64": enc.base64,
+        "encoding_hex": enc.hex,
+        "encoding_url": enc.url,
+        "encoding_unicode": enc.unicode,
+        "encoding_max_depth": enc.max_depth,
+        "encoding_min_decoded_length": enc.min_decoded_length,
+        "encoding_max_decoded_length": enc.max_decoded_length,
     }
 
 

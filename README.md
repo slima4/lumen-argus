@@ -35,6 +35,7 @@ lumen-argus sits between your AI tool and the provider, scanning every outbound 
 ## Key Features
 
 - **34+ secret patterns** with Shannon entropy analysis
+- **Encoding-aware scanning** — catches base64, hex, URL, Unicode encoded secrets
 - **8 PII detectors** with validation (Luhn, SSN ranges, IBAN checksums)
 - **Proprietary code** detection (file patterns + keyword matching)
 - **< 50ms scanning overhead** for typical payloads
@@ -115,6 +116,19 @@ AWS keys, GitHub tokens, Anthropic/OpenAI/Google API keys, Stripe keys, Slack to
 
 - **File pattern blocklist** — `.pem`, `.key`, `.env`, `credentials.json`, etc.
 - **Keyword detection** — `CONFIDENTIAL`, `TRADE SECRET`, `INTERNAL ONLY`, etc.
+
+### Encoding-Aware Scanning
+
+Secrets hidden behind encoding are decoded before scanning:
+
+| Encoding | Example |
+|---|---|
+| Base64 | `c2tfbGl2ZV8xMjM0...` → `sk_live_1234...` |
+| Hex | `736b5f6c6976655f...` → `sk_live_...` |
+| URL | `sk%5Flive%5F1234...` → `sk_live_1234...` |
+| Unicode | `\u0073\u006b\u005f...` → `sk_...` |
+
+Nested encoding supported (e.g., base64 inside URL-encoding, configurable depth). Each encoding type toggleable from the Pipeline dashboard page. Finding locations annotated: `messages[0].content[base64]`.
 
 ## Rules Engine
 

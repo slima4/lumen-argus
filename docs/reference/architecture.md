@@ -61,7 +61,7 @@ Upstream connections are managed by a thread-safe per-host connection pool:
 
 **Module:** `lumen_argus/pipeline.py`
 
-The pipeline orchestrates extraction, content fingerprinting, detection, finding dedup, and policy evaluation.
+The pipeline orchestrates extraction, encoding decode, content fingerprinting, detection, finding dedup, and policy evaluation. Per-stage timing is recorded in `ScanResult.stage_timings` for observability.
 
 ### Extraction
 
@@ -83,6 +83,29 @@ Each `ScanField` contains:
 
 !!! note "Scan budget"
     To keep scan time under 50ms, the pipeline caps total scanned text at 200 KB per request. Fields are scanned in reverse order (newest messages first), since older messages were already scanned in previous requests.
+
+### Encoding Decode
+
+**Module:** `lumen_argus/decoders.py`
+
+The `ContentDecoder` expands extracted fields by decoding encoded content before detection. Each field produces the original text plus any decoded variants:
+
+| Encoding | Detection pattern | Example |
+|----------|------------------|---------|
+| **Base64** | 20+ chars of `[A-Za-z0-9+/]` | `c2tfbGl2ZV8...` → `sk_live_...` |
+| **Hex** | 16+ hex chars (even length) | `736b5f6c69...` → `sk_live_...` |
+| **URL** | `%XX` sequences | `sk%5Flive%5F...` → `sk_live_...` |
+| **Unicode** | `\uXXXX` sequences | `\u0073\u006b...` → `sk_...` |
+
+Decoded variants get annotated paths: `messages[0].content[base64]`. A quality filter (`_is_meaningful`) rejects non-printable binary output (images, protobuf).
+
+Configurable via `pipeline.stages.encoding_decode` in YAML or the Pipeline dashboard page:
+
+- Per-encoding toggles (base64, hex, URL, Unicode)
+- `max_depth` (default 2) — nested encoding layers
+- `min_decoded_length` / `max_decoded_length` — filter noise
+
+Gated by the `encoding_decode` pipeline stage toggle. When disabled, fields pass through unchanged.
 
 ### Detection
 
@@ -233,8 +256,9 @@ Aggregated result of scanning a request.
 | Field | Type | Description |
 |-------|------|-------------|
 | `findings` | `list[Finding]` | All findings from the scan |
-| `scan_duration_ms` | `float` | Time spent scanning in milliseconds |
+| `scan_duration_ms` | `float` | Total time spent scanning in milliseconds |
 | `action` | `str` | Highest-priority resolved action: `pass`, `log`, `alert`, or `block` |
+| `stage_timings` | `dict[str, float]` | Per-stage timing breakdown in ms: `extraction`, `encoding_decode`, `fingerprint`, `outbound_dlp` |
 
 ### `SessionContext`
 
