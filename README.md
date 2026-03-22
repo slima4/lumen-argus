@@ -164,7 +164,7 @@ lumen-argus mcp-wrap -- npx @modelcontextprotocol/server-filesystem /path
 }
 ```
 
-Configurable tool allow/block lists via `mcp:` config section. MCP over HTTP already works through the proxy — `mcp-wrap` covers the stdio transport gap.
+Configurable tool allow/block lists via `mcp:` config section or dashboard API. MCP over HTTP is automatically detected and scanned by the proxy — no config needed. `mcp-wrap` covers the stdio transport gap for local MCP servers.
 
 ## Rules Engine
 

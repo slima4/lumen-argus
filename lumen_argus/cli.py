@@ -458,6 +458,43 @@ def main(argv=None):
                         count,
                     )
 
+    # --- MCP-aware scanning in HTTP proxy ---
+    mcp_args_enabled = config.pipeline.mcp_arguments.enabled
+    mcp_resp_enabled = config.pipeline.mcp_responses.enabled
+    if mcp_args_enabled or mcp_resp_enabled:
+        from lumen_argus.mcp_scanner import MCPScanner
+
+        mcp_cfg = getattr(config, "mcp", None)
+        allowed_tools = set(mcp_cfg.allowed_tools) if mcp_cfg and mcp_cfg.allowed_tools else set()
+        blocked_tools = set(mcp_cfg.blocked_tools) if mcp_cfg and mcp_cfg.blocked_tools else set()
+
+        # Merge DB tool lists
+        if analytics_store:
+            try:
+                db_lists = analytics_store.get_mcp_tool_lists()
+                for entry in db_lists.get("allowed", []):
+                    allowed_tools.add(entry["tool_name"])
+                for entry in db_lists.get("blocked", []):
+                    blocked_tools.add(entry["tool_name"])
+            except Exception:
+                pass
+
+        server.mcp_scanner = MCPScanner(
+            detectors=pipeline._detectors,
+            allowlist=pipeline._allowlist,
+            response_scanner=server.response_scanner,
+            scan_arguments=mcp_args_enabled,
+            scan_responses=mcp_resp_enabled,
+            allowed_tools=allowed_tools or None,
+            blocked_tools=blocked_tools or None,
+            action=config.pipeline.mcp_arguments.action or config.default_action,
+        )
+        log.info(
+            "MCP proxy scanning enabled: arguments=%s responses=%s",
+            mcp_args_enabled,
+            mcp_resp_enabled,
+        )
+
     # --- WebSocket proxy ---
     from lumen_argus.ws_proxy import WebSocketScanner, start_ws_proxy, _HAS_WEBSOCKETS
 
@@ -724,6 +761,38 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
             log.info("response scanning reloaded: secrets=%s injection=%s", resp_secrets, resp_injection)
         else:
             server.response_scanner = None
+
+        # Rebuild MCP scanner for proxy on reload
+        mcp_args_enabled = new_config.pipeline.mcp_arguments.enabled
+        mcp_resp_enabled = new_config.pipeline.mcp_responses.enabled
+        if mcp_args_enabled or mcp_resp_enabled:
+            from lumen_argus.mcp_scanner import MCPScanner as _MCPScanner
+
+            mcp_cfg = getattr(new_config, "mcp", None)
+            allowed_tools = set(mcp_cfg.allowed_tools) if mcp_cfg and mcp_cfg.allowed_tools else set()
+            blocked_tools = set(mcp_cfg.blocked_tools) if mcp_cfg and mcp_cfg.blocked_tools else set()
+            if analytics_store:
+                try:
+                    db_lists = analytics_store.get_mcp_tool_lists()
+                    for entry in db_lists.get("allowed", []):
+                        allowed_tools.add(entry["tool_name"])
+                    for entry in db_lists.get("blocked", []):
+                        blocked_tools.add(entry["tool_name"])
+                except Exception:
+                    pass
+            server.mcp_scanner = _MCPScanner(
+                detectors=server.pipeline._detectors,
+                allowlist=server.pipeline._allowlist,
+                response_scanner=server.response_scanner,
+                scan_arguments=mcp_args_enabled,
+                scan_responses=mcp_resp_enabled,
+                allowed_tools=allowed_tools or None,
+                blocked_tools=blocked_tools or None,
+                action=new_config.pipeline.mcp_arguments.action or new_config.default_action,
+            )
+            log.info("MCP proxy scanning reloaded")
+        else:
+            server.mcp_scanner = None
 
         # Rebuild WebSocket proxy on reload (start/stop/restart)
         from lumen_argus.ws_proxy import WebSocketScanner, start_ws_proxy, _HAS_WEBSOCKETS
@@ -1007,7 +1076,8 @@ def _run_mcp_wrap(args):
 
     from lumen_argus.allowlist import AllowlistMatcher
     from lumen_argus.config import load_config
-    from lumen_argus.mcp_wrap import MCPScanner, _run_wrapper
+    from lumen_argus.mcp_scanner import MCPScanner
+    from lumen_argus.mcp_wrap import _run_wrapper
 
     # Parse server command (strip leading --)
     cmd = args.server_command

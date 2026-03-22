@@ -419,6 +419,91 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                     "body too large to scan (%d bytes > %d limit)" % (len(body), server.max_body_size),
                 )
 
+            # MCP-aware scanning — detect tools/call in HTTP MCP traffic
+            _mcp_info = None
+            if body and server.mcp_scanner:
+                from lumen_argus.mcp_scanner import detect_mcp_request
+
+                _mcp_info = detect_mcp_request(body)
+                if _mcp_info:
+                    tool_name = _mcp_info["tool_name"]
+                    log.debug("#%d MCP tools/call detected: %s", request_id, tool_name)
+
+                    # Track tool usage
+                    if server.extensions:
+                        store = server.extensions.get_analytics_store()
+                        if store:
+                            try:
+                                store.record_mcp_tool_seen(tool_name)
+                            except Exception:
+                                pass
+
+                    # Check tool allow/block lists
+                    if not server.mcp_scanner.is_tool_allowed(tool_name):
+                        log.info("#%d MCP tool '%s' blocked by policy", request_id, tool_name)
+                        blocked_finding = Finding(
+                            detector="mcp",
+                            type="blocked_tool",
+                            severity="high",
+                            location="mcp.tools/call.%s" % tool_name,
+                            value_preview=tool_name,
+                            matched_value=tool_name,
+                            action="block",
+                        )
+                        block_result = ScanResult(
+                            action="block",
+                            findings=[blocked_finding],
+                            scan_duration_ms=scan_result.scan_duration_ms,
+                        )
+                        block_body = json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": _mcp_info["request_id"],
+                                "error": {
+                                    "code": -32600,
+                                    "message": "Tool blocked by lumen-argus: %s" % tool_name,
+                                },
+                            }
+                        ).encode()
+                        self.send_response(400)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(block_body)))
+                        self.end_headers()
+                        self.wfile.write(block_body)
+                        server.display.show_request(
+                            request_id,
+                            self.command,
+                            self.path,
+                            model,
+                            len(body),
+                            len(block_body),
+                            (time.monotonic() - t0) * 1000,
+                            block_result,
+                        )
+                        self._log_audit(
+                            server,
+                            request_id,
+                            provider,
+                            model,
+                            block_result,
+                            len(body),
+                            False,
+                            session,
+                        )
+                        server.stats.record(provider, len(body), block_result)
+                        return
+
+                    # Scan tool arguments
+                    mcp_findings = server.mcp_scanner.scan_arguments(tool_name, _mcp_info["arguments"])
+                    if mcp_findings:
+                        scan_result.findings.extend(mcp_findings)
+                        log.info(
+                            "#%d MCP argument scan: %d finding(s) in '%s'",
+                            request_id,
+                            len(mcp_findings),
+                            tool_name,
+                        )
+
             # Check if we should block — always return 403 JSON regardless
             # of streaming mode. AI tool SDKs handle HTTP errors before SSE
             # parsing, so a 403 is surfaced properly. A 200 with a custom SSE
@@ -556,6 +641,9 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
 
                         # Determine response scanning strategy
                         _should_scan_response = server.response_scanner is not None
+                        _should_accumulate = _should_scan_response or (
+                            _mcp_info is not None and server.mcp_scanner is not None
+                        )
                         _response_hook = server.extensions.get_response_scan_hook() if server.extensions else None
 
                         # Collect response headers
@@ -622,14 +710,14 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                         if is_sse:
                             # SSE connections cannot be reused
                             try:
-                                resp_size, resp_text = self._stream_sse(resp, accumulate=_should_scan_response)
+                                resp_size, resp_text = self._stream_sse(resp, accumulate=_should_accumulate)
                             finally:
                                 conn.close()
                         else:
                             data = resp.read()
                             self.wfile.write(data)
                             resp_size = len(data)
-                            resp_text = data.decode("utf-8", errors="ignore") if _should_scan_response else ""
+                            resp_text = data.decode("utf-8", errors="ignore") if _should_accumulate else ""
                             # Return non-streaming connection to pool for reuse
                             server.pool.put(host, port, use_ssl, conn)
 
@@ -674,6 +762,36 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
             # Async response scanning — scan after forwarding (no latency impact)
             if _should_scan_response and resp_text:
                 self._async_response_scan(server, request_id, resp_text, provider, model, session)
+
+            # MCP response scanning — detect tool response in HTTP response body
+            if _mcp_info and server.mcp_scanner and resp_text:
+                from lumen_argus.mcp_scanner import detect_mcp_response
+
+                mcp_resp = detect_mcp_response(resp_text.encode("utf-8", errors="ignore"))
+                if mcp_resp and mcp_resp.get("content"):
+                    mcp_resp_findings = server.mcp_scanner.scan_response_content(mcp_resp["content"])
+                    if mcp_resp_findings:
+                        log.info(
+                            "#%d MCP response scan: %d finding(s)",
+                            request_id,
+                            len(mcp_resp_findings),
+                        )
+                        # Record to analytics store
+                        if server.extensions:
+                            _store = server.extensions.get_analytics_store()
+                            if _store:
+                                try:
+                                    _store.record_findings(
+                                        findings=mcp_resp_findings,
+                                        provider=provider,
+                                        model=model,
+                                        session_id=session.session_id if session else "",
+                                        account_id=session.account_id if session else "",
+                                        source_ip=session.source_ip if session else "",
+                                        action="alert",
+                                    )
+                                except Exception:
+                                    pass
 
         except (BrokenPipeError, ConnectionResetError):
             pass  # Client disconnected
@@ -1002,6 +1120,7 @@ class ArgusProxyServer(http.server.ThreadingHTTPServer):
         self.start_time = time.monotonic()
         self.extensions = None  # set by cli.py after creation
         self.response_scanner = None  # set by cli.py when response scanning is enabled
+        self.mcp_scanner = None  # set by cli.py when MCP scanning is enabled
 
         super().__init__((bind, port), ArgusProxyHandler)
 

@@ -1,12 +1,10 @@
-"""MCP stdio wrapper — scan tool calls and responses for sensitive data.
+"""MCP stdio wrapper — scan tool calls and responses over stdio transport.
 
 Sits between the AI tool (client) and an MCP server (subprocess), scanning
-JSON-RPC messages bidirectionally over stdio. The wrapper acts as a
-transparent MCP server that spawns the real server as a child process.
+JSON-RPC messages bidirectionally. Uses MCPScanner from mcp_scanner.py
+(shared with the HTTP proxy).
 
 Wire format: newline-delimited JSON-RPC 2.0 (one message per line).
-Scan targets: tools/call arguments (outbound) and result.content text (inbound).
-All other messages (handshake, notifications, non-tool methods) pass through.
 
 Usage:
     lumen-argus mcp-wrap -- npx @modelcontextprotocol/server-filesystem /path
@@ -19,156 +17,11 @@ import asyncio
 import json
 import logging
 import sys
-from typing import List, Optional, Set
+from typing import List
 
-from lumen_argus.models import Finding, ScanField
-from lumen_argus.text_utils import sanitize_text
+from lumen_argus.mcp_scanner import MCPScanner  # noqa: F401 — re-export for cli.py
 
 log = logging.getLogger("argus.mcp")
-
-
-def _extract_text_from_content(content: list) -> str:
-    """Extract scannable text from MCP result content array."""
-    parts = []
-    for item in content:
-        if isinstance(item, dict) and item.get("type") == "text":
-            text = item.get("text", "")
-            if text:
-                parts.append(text)
-    return "\n".join(parts)
-
-
-class MCPScanner:
-    """Scans MCP JSON-RPC messages for sensitive data.
-
-    Uses the same detectors as request scanning for consistency.
-    Injection patterns from the response scanner for tool responses.
-    """
-
-    def __init__(
-        self,
-        detectors: list = None,
-        allowlist=None,
-        response_scanner=None,
-        scan_arguments: bool = True,
-        scan_responses: bool = True,
-        allowed_tools: Optional[Set[str]] = None,
-        blocked_tools: Optional[Set[str]] = None,
-        action: str = "alert",
-    ):
-        self._detectors = detectors or []
-        self._allowlist = allowlist
-        self._response_scanner = response_scanner
-        self._scan_arguments = scan_arguments
-        self._scan_responses = scan_responses
-        self._allowed_tools = allowed_tools
-        self._blocked_tools = blocked_tools
-        self._action = action
-
-    def _is_tool_allowed(self, tool_name: str) -> bool:
-        """Check if a tool is allowed based on allow/block lists."""
-        if self._blocked_tools and tool_name in self._blocked_tools:
-            return False
-        if self._allowed_tools and tool_name not in self._allowed_tools:
-            return False
-        return True
-
-    def scan_request(self, msg: dict) -> List[Finding]:
-        """Scan a tools/call request for secrets in arguments."""
-        if not self._scan_arguments:
-            return []
-
-        method = msg.get("method", "")
-        if method != "tools/call":
-            return []
-
-        params = msg.get("params", {})
-        tool_name = params.get("name", "")
-
-        if not self._is_tool_allowed(tool_name):
-            log.info("mcp: blocked tool '%s'", tool_name)
-            return [
-                Finding(
-                    detector="mcp",
-                    type="blocked_tool",
-                    severity="high",
-                    location="mcp.tools/call.%s" % tool_name,
-                    value_preview=tool_name,
-                    matched_value=tool_name,
-                    action=self._action,
-                )
-            ]
-
-        arguments = params.get("arguments", {})
-        if not arguments:
-            return []
-
-        # Serialize arguments to text for scanning
-        text = json.dumps(arguments, ensure_ascii=False)
-        text = sanitize_text(text)
-
-        fields = [ScanField(path="mcp.tools/call.%s.arguments" % tool_name, text=text)]
-        findings = []
-        for detector in self._detectors:
-            try:
-                det_findings = detector.scan(fields, self._allowlist)
-                for f in det_findings:
-                    f.location = "mcp.%s" % f.location
-                findings.extend(det_findings)
-            except Exception as e:
-                log.warning("mcp argument detector %s failed: %s", detector.__class__.__name__, e)
-
-        if findings:
-            log.info("mcp: %d finding(s) in tools/call '%s' arguments", len(findings), tool_name)
-
-        return findings
-
-    def scan_response(self, msg: dict, request_method: str = "") -> List[Finding]:
-        """Scan a tool response for secrets and injection in content."""
-        if not self._scan_responses:
-            return []
-
-        result = msg.get("result")
-        if not isinstance(result, dict):
-            return []
-
-        content = result.get("content", [])
-        if not isinstance(content, list):
-            return []
-
-        text = _extract_text_from_content(content)
-        if not text:
-            return []
-
-        text = sanitize_text(text)
-
-        findings = []
-
-        # Secret detection via detectors
-        fields = [ScanField(path="mcp.response.content", text=text)]
-        for detector in self._detectors:
-            try:
-                det_findings = detector.scan(fields, self._allowlist)
-                for f in det_findings:
-                    f.location = "mcp.%s" % f.location
-                findings.extend(det_findings)
-            except Exception as e:
-                log.warning("mcp response detector %s failed: %s", detector.__class__.__name__, e)
-
-        # Injection detection via response scanner
-        if self._response_scanner:
-            try:
-                inj_findings = self._response_scanner._scan_injection_patterns(text)
-                for f in inj_findings:
-                    f.location = "mcp.response.content"
-                findings.extend(inj_findings)
-            except Exception as e:
-                log.warning("mcp injection scan failed: %s", e)
-
-        if findings:
-            log.info("mcp: %d finding(s) in tool response", len(findings))
-
-        return findings
 
 
 async def _run_wrapper(

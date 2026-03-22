@@ -50,6 +50,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_tool_unique
     ON mcp_tool_lists(list_type, tool_name);
 """
 
+_MCP_DETECTED_TOOLS_SCHEMA = """\
+CREATE TABLE IF NOT EXISTS mcp_detected_tools (
+    tool_name TEXT PRIMARY KEY,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    call_count INTEGER NOT NULL DEFAULT 1
+);
+"""
+
 # Community-editable config keys with validation rules
 _VALID_CONFIG_KEYS = {
     "proxy.timeout",
@@ -111,6 +120,7 @@ class AnalyticsStore:
             conn.executescript(_SCHEMA_VERSION)
             conn.executescript(_CONFIG_OVERRIDES_SCHEMA)
             conn.executescript(_MCP_TOOL_LISTS_SCHEMA)
+            conn.executescript(_MCP_DETECTED_TOOLS_SCHEMA)
         # Secure file permissions — same 0o600 as audit JSONL files
         try:
             os.chmod(self._db_path, 0o600)
@@ -494,6 +504,32 @@ class AnalyticsStore:
         if created or deleted:
             log.info("mcp tool lists reconciled: %d created, %d deleted", created, deleted)
         return {"created": created, "deleted": deleted}
+
+    # --- MCP detected tools tracking ---
+
+    def record_mcp_tool_seen(self, tool_name):
+        """Record a tool call seen through the proxy. Upserts call_count."""
+        if not tool_name:
+            return
+        now = self._now()
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO mcp_detected_tools (tool_name, first_seen, last_seen, call_count) "
+                    "VALUES (?, ?, ?, 1) "
+                    "ON CONFLICT(tool_name) DO UPDATE SET "
+                    "last_seen = excluded.last_seen, call_count = call_count + 1",
+                    (tool_name, now, now),
+                )
+        log.debug("mcp tool seen: %s", tool_name)
+
+    def get_mcp_detected_tools(self):
+        """Return all detected MCP tools with call counts."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT tool_name, first_seen, last_seen, call_count FROM mcp_detected_tools ORDER BY call_count DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     # --- Private helper kept for backward compat (used by channels internally) ---
 

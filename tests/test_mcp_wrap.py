@@ -4,7 +4,7 @@ import unittest
 
 from lumen_argus.allowlist import AllowlistMatcher
 from lumen_argus.detectors.secrets import SecretsDetector
-from lumen_argus.mcp_wrap import MCPScanner, _extract_text_from_content
+from lumen_argus.mcp_scanner import MCPScanner, extract_text_from_content
 from lumen_argus.response_scanner import ResponseScanner
 
 
@@ -13,18 +13,18 @@ class TestExtractTextFromContent(unittest.TestCase):
 
     def test_text_content(self):
         content = [{"type": "text", "text": "hello world"}]
-        self.assertEqual(_extract_text_from_content(content), "hello world")
+        self.assertEqual(extract_text_from_content(content), "hello world")
 
     def test_multiple_text(self):
         content = [
             {"type": "text", "text": "line 1"},
             {"type": "text", "text": "line 2"},
         ]
-        self.assertEqual(_extract_text_from_content(content), "line 1\nline 2")
+        self.assertEqual(extract_text_from_content(content), "line 1\nline 2")
 
     def test_image_skipped(self):
         content = [{"type": "image", "data": "base64data", "mimeType": "image/png"}]
-        self.assertEqual(_extract_text_from_content(content), "")
+        self.assertEqual(extract_text_from_content(content), "")
 
     def test_mixed_content(self):
         content = [
@@ -32,14 +32,14 @@ class TestExtractTextFromContent(unittest.TestCase):
             {"type": "image", "data": "..."},
             {"type": "text", "text": "done"},
         ]
-        self.assertEqual(_extract_text_from_content(content), "result:\ndone")
+        self.assertEqual(extract_text_from_content(content), "result:\ndone")
 
     def test_empty_content(self):
-        self.assertEqual(_extract_text_from_content([]), "")
+        self.assertEqual(extract_text_from_content([]), "")
 
     def test_empty_text_skipped(self):
         content = [{"type": "text", "text": ""}]
-        self.assertEqual(_extract_text_from_content(content), "")
+        self.assertEqual(extract_text_from_content(content), "")
 
 
 class TestMCPScannerRequest(unittest.TestCase):

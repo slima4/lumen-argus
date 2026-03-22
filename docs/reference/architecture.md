@@ -144,17 +144,29 @@ Async mode (community): response is forwarded immediately, scanned in background
 
 ### MCP Scanning
 
-**Module:** `lumen_argus/mcp_wrap.py`
+**Modules:** `lumen_argus/mcp_scanner.py` (shared), `lumen_argus/mcp_wrap.py` (stdio relay)
 
-The `MCPScanner` scans MCP stdio traffic bidirectionally. The `mcp-wrap` CLI command spawns the real MCP server as a subprocess and relays newline-delimited JSON-RPC messages, scanning `tools/call` arguments (outbound) and `result.content` text (inbound).
+The `MCPScanner` (in `mcp_scanner.py`) is shared between two MCP scanning paths:
 
+**1. HTTP proxy MCP scanning (enterprise/k8s):**
+The proxy automatically detects MCP `tools/call` JSON-RPC in HTTP request bodies via `detect_mcp_request()`. When detected:
+- Checks tool against allow/block lists → blocks with JSON-RPC error if denied
+- Scans tool arguments with existing detectors
+- Tracks tool usage in `mcp_detected_tools` table (name, call count, first/last seen)
+- Scans response `result.content` text via `detect_mcp_response()`
+- No developer-side config needed — works automatically for MCP over HTTP
+
+**2. stdio MCP scanning (local development):**
+The `mcp-wrap` CLI wraps stdio MCP servers as a subprocess relay, scanning JSON-RPC messages bidirectionally.
+
+Both paths share:
 - **Request scanning**: serializes tool arguments to text, runs existing detectors
 - **Response scanning**: extracts text from `content[]` array, runs detectors + injection patterns
-- **Tool allow/block lists**: `mcp.allowed_tools` and `mcp.blocked_tools` in config
-- **Block action**: returns JSON-RPC error (`-32600`) instead of forwarding to subprocess
+- **Tool allow/block lists**: `mcp.allowed_tools` / `mcp.blocked_tools` in config + DB (`mcp_tool_lists` table)
+- **Block action**: returns JSON-RPC error (`-32600`)
 - Findings have `mcp.` location prefix (e.g., `mcp.tools/call.write_file.arguments`)
 
-Controlled by `mcp_arguments` and `mcp_responses` pipeline stages (enabled by default). MCP over HTTP already passes through the main proxy — `mcp-wrap` covers the stdio transport gap.
+Controlled by `mcp_arguments` and `mcp_responses` pipeline stages (enabled by default).
 
 ### WebSocket Proxy
 
