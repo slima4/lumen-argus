@@ -130,9 +130,28 @@ def main(argv=None):
     validate_parser = rules_sub.add_parser("validate", help="Validate rules JSON file")
     validate_parser.add_argument("--file", type=str, required=True, help="JSON file to validate")
 
+    # mcp-wrap subcommand
+    mcp_parser = subparsers.add_parser(
+        "mcp-wrap",
+        help="Wrap an MCP server with DLP scanning (stdio transport)",
+    )
+    mcp_parser.add_argument("--config", type=str, default=None, help="Config file path")
+    mcp_parser.add_argument(
+        "--log-level",
+        type=str,
+        default="warning",
+        choices=["debug", "info", "warning", "error"],
+        help="Log level (default: warning)",
+    )
+    mcp_parser.add_argument(
+        "server_command",
+        nargs=argparse.REMAINDER,
+        help="MCP server command (after --)",
+    )
+
     args = parser.parse_args(argv)
 
-    if args.command in ("scan", "logs", "rules"):
+    if args.command in ("scan", "logs", "rules", "mcp-wrap"):
         # Set up minimal logging for non-serve commands so config
         # warnings (log.warning) display cleanly on stderr.
         _handler = logging.StreamHandler(sys.stderr)
@@ -143,6 +162,8 @@ def main(argv=None):
             _run_scan(args)
         elif args.command == "rules":
             _run_rules(args)
+        elif args.command == "mcp-wrap":
+            _run_mcp_wrap(args)
         else:
             _run_logs(args)
         return
@@ -912,6 +933,72 @@ def _run_rules(args):
             sys.exit(1)
         else:
             print("  %d rules validated, 0 errors" % len(rules))
+
+
+def _run_mcp_wrap(args):
+    """Run the MCP stdio wrapper."""
+    import asyncio
+
+    from lumen_argus.allowlist import AllowlistMatcher
+    from lumen_argus.config import load_config
+    from lumen_argus.mcp_wrap import MCPScanner, _run_wrapper
+
+    # Parse server command (strip leading --)
+    cmd = args.server_command
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+    if not cmd:
+        print("Error: No MCP server command provided. Usage: lumen-argus mcp-wrap -- <command>", file=sys.stderr)
+        sys.exit(1)
+
+    # Set log level for mcp-wrap
+    log_level = getattr(logging, args.log_level.upper())
+    logging.getLogger().setLevel(log_level)
+
+    # Load config
+    config = load_config(config_path=args.config)
+
+    # Build detectors (lightweight — no DB, no rules engine, just hardcoded patterns)
+    from lumen_argus.detectors.secrets import SecretsDetector
+    from lumen_argus.detectors.pii import PIIDetector
+
+    detectors = []
+    if config.secrets.enabled:
+        detectors.append(SecretsDetector(entropy_threshold=config.entropy_threshold))
+    if config.pii.enabled:
+        detectors.append(PIIDetector())
+
+    allowlist = AllowlistMatcher(
+        secrets=config.allowlist.secrets,
+        pii=config.allowlist.pii,
+        paths=config.allowlist.paths,
+    )
+
+    # Build response scanner for injection detection in tool responses
+    response_scanner = None
+    if config.pipeline.mcp_responses.enabled:
+        from lumen_argus.response_scanner import ResponseScanner
+
+        response_scanner = ResponseScanner(scan_secrets=False, scan_injection=True)
+
+    # Parse allow/block lists from config
+    mcp_cfg = getattr(config, "mcp", None)
+    allowed_tools = set(mcp_cfg.allowed_tools) if mcp_cfg and mcp_cfg.allowed_tools else None
+    blocked_tools = set(mcp_cfg.blocked_tools) if mcp_cfg and mcp_cfg.blocked_tools else None
+
+    scanner = MCPScanner(
+        detectors=detectors,
+        allowlist=allowlist,
+        response_scanner=response_scanner,
+        scan_arguments=config.pipeline.mcp_arguments.enabled,
+        scan_responses=config.pipeline.mcp_responses.enabled,
+        allowed_tools=allowed_tools,
+        blocked_tools=blocked_tools,
+        action=config.pipeline.mcp_arguments.action or config.default_action,
+    )
+
+    exit_code = asyncio.run(_run_wrapper(cmd, scanner))
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

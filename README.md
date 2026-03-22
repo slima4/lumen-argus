@@ -37,6 +37,7 @@ lumen-argus sits between your AI tool and the provider, scanning every outbound 
 - **34+ secret patterns** with Shannon entropy analysis
 - **Encoding-aware scanning** — catches base64, hex, URL, Unicode encoded secrets
 - **Response scanning** — detect secrets and prompt injection in API responses (async, zero latency)
+- **MCP proxy** — wrap stdio MCP servers with DLP scanning (`lumen-argus mcp-wrap`)
 - **8 PII detectors** with validation (Luhn, SSN ranges, IBAN checksums)
 - **Proprietary code** detection (file patterns + keyword matching)
 - **< 50ms scanning overhead** for typical payloads
@@ -141,6 +142,28 @@ API responses are scanned asynchronously for secrets and prompt injection — ze
 | **Injection** | 10 community + Pro extended | Detects prompt injection (e.g., "ignore previous instructions", `<system>` tags, exfiltration attempts) |
 
 Injection patterns are stored as rules in the DB (detector=`injection`) — visible and configurable from the Rules dashboard page. Enable via Pipeline page: toggle `Response Secrets` and/or `Response Injection` stages.
+
+### MCP Server Scanning
+
+Wrap any stdio MCP server with DLP scanning — tool call arguments and responses are scanned bidirectionally:
+
+```bash
+# Instead of running the MCP server directly:
+lumen-argus mcp-wrap -- npx @modelcontextprotocol/server-filesystem /path
+```
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "lumen-argus",
+      "args": ["mcp-wrap", "--", "npx", "@modelcontextprotocol/server-filesystem", "/path"]
+    }
+  }
+}
+```
+
+Configurable tool allow/block lists via `mcp:` config section. MCP over HTTP already works through the proxy — `mcp-wrap` covers the stdio transport gap.
 
 ## Rules Engine
 

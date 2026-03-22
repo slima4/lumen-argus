@@ -220,9 +220,16 @@ class TestPipelineAPI(unittest.TestCase):
     def test_get_pipeline_unavailable_stages(self):
         status, body = handle_community_api("/api/v1/pipeline", "GET", b"", self.store, config=self.config)
         data = json.loads(body)
-        # MCP/WebSocket stages are not yet available
-        mcp = next(s for s in data["stages"] if s["name"] == "mcp_arguments")
-        self.assertFalse(mcp["available"])
+        # WebSocket stages are not yet available
+        ws = next(s for s in data["stages"] if s["name"] == "websocket_outbound")
+        self.assertFalse(ws["available"])
+
+    def test_get_pipeline_mcp_stages_available(self):
+        status, body = handle_community_api("/api/v1/pipeline", "GET", b"", self.store, config=self.config)
+        data = json.loads(body)
+        mcp_args = next(s for s in data["stages"] if s["name"] == "mcp_arguments")
+        self.assertTrue(mcp_args["available"])
+        self.assertTrue(mcp_args["enabled"])  # enabled by default
 
     def test_get_pipeline_response_stages_available(self):
         status, body = handle_community_api("/api/v1/pipeline", "GET", b"", self.store, config=self.config)

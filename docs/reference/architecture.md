@@ -142,6 +142,20 @@ Response findings are recorded to the analytics store and audit log with `respon
 
 Async mode (community): response is forwarded immediately, scanned in background thread, findings recorded post-hoc. Pro adds buffered/blocking mode and custom injection patterns via rules engine.
 
+### MCP Scanning
+
+**Module:** `lumen_argus/mcp_wrap.py`
+
+The `MCPScanner` scans MCP stdio traffic bidirectionally. The `mcp-wrap` CLI command spawns the real MCP server as a subprocess and relays newline-delimited JSON-RPC messages, scanning `tools/call` arguments (outbound) and `result.content` text (inbound).
+
+- **Request scanning**: serializes tool arguments to text, runs existing detectors
+- **Response scanning**: extracts text from `content[]` array, runs detectors + injection patterns
+- **Tool allow/block lists**: `mcp.allowed_tools` and `mcp.blocked_tools` in config
+- **Block action**: returns JSON-RPC error (`-32600`) instead of forwarding to subprocess
+- Findings have `mcp.` location prefix (e.g., `mcp.tools/call.write_file.arguments`)
+
+Controlled by `mcp_arguments` and `mcp_responses` pipeline stages (enabled by default). MCP over HTTP already passes through the main proxy — `mcp-wrap` covers the stdio transport gap.
+
 ### Within-Request Deduplication
 
 After detection, findings with the same `(detector, type, matched_value)` tuple are collapsed into a single finding with an incremented `count`. This reduces noise from secrets repeated across conversation history.

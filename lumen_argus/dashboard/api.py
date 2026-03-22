@@ -738,19 +738,19 @@ _PIPELINE_STAGES = [
     {
         "name": "mcp_arguments",
         "label": "MCP Arguments",
-        "description": "Scan MCP tool call arguments for sensitive data",
+        "description": "Scan MCP tool call arguments for sensitive data (via mcp-wrap)",
         "group": "protocol",
         "default_enabled": True,
-        "available": False,
+        "available": True,
         "has_sub_detectors": False,
     },
     {
         "name": "mcp_responses",
         "label": "MCP Responses",
-        "description": "Scan MCP tool return values for sensitive data and injection",
+        "description": "Scan MCP tool return values for sensitive data and injection (via mcp-wrap)",
         "group": "protocol",
         "default_enabled": True,
-        "available": False,
+        "available": True,
         "has_sub_detectors": False,
     },
     {

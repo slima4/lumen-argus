@@ -99,6 +99,12 @@ class DedupConfig:
 
 
 @dataclass
+class MCPConfig:
+    allowed_tools: List[str] = field(default_factory=list)  # empty = all allowed
+    blocked_tools: List[str] = field(default_factory=list)  # deny-list
+
+
+@dataclass
 class CustomRuleConfig:
     name: str = ""
     pattern: str = ""  # raw regex string
@@ -162,7 +168,14 @@ _PIPELINE_STAGE_NAMES = {
 }
 
 # Stages that are implemented and available for toggling
-PIPELINE_AVAILABLE_STAGES = {"outbound_dlp", "encoding_decode", "response_secrets", "response_injection"}
+PIPELINE_AVAILABLE_STAGES = {
+    "outbound_dlp",
+    "encoding_decode",
+    "response_secrets",
+    "response_injection",
+    "mcp_arguments",
+    "mcp_responses",
+}
 
 
 @dataclass
@@ -183,6 +196,7 @@ class Config:
     rules: RulesConfig = field(default_factory=RulesConfig)
     dedup: DedupConfig = field(default_factory=DedupConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
     notifications: List[dict] = field(default_factory=list)
 
 
@@ -205,6 +219,7 @@ _KNOWN_TOP_KEYS = {
     "dashboard",
     "analytics",
     "pipeline",
+    "mcp",
     # Pro/Enterprise extension keys
     "license_key",
     "redaction",
@@ -876,6 +891,14 @@ def _apply_config(config: Config, data: dict) -> None:
                     detector=str(rule.get("detector", "custom")),
                 )
             )
+
+    # MCP config
+    mcp_data = data.get("mcp", {})
+    if isinstance(mcp_data, dict):
+        if "allowed_tools" in mcp_data and isinstance(mcp_data["allowed_tools"], list):
+            config.mcp.allowed_tools = [str(t) for t in mcp_data["allowed_tools"]]
+        if "blocked_tools" in mcp_data and isinstance(mcp_data["blocked_tools"], list):
+            config.mcp.blocked_tools = [str(t) for t in mcp_data["blocked_tools"]]
 
     # Pipeline stages
     pipeline = data.get("pipeline", {})

@@ -286,8 +286,8 @@ Per-stage settings. Each stage accepts:
 | `encoding_decode` | Request | `true` | Yes | Decode base64, hex, URL, Unicode before scanning |
 | `response_secrets` | Response | `false` | Yes | Detect secrets in API responses (async, zero latency) |
 | `response_injection` | Response | `false` | Yes | Detect prompt injection in responses (async, zero latency) |
-| `mcp_arguments` | MCP | `true` | Coming soon | Scan MCP tool call arguments |
-| `mcp_responses` | MCP | `true` | Coming soon | Scan MCP tool return values |
+| `mcp_arguments` | MCP | `true` | Yes | Scan MCP tool call arguments (via mcp-wrap) |
+| `mcp_responses` | MCP | `true` | Yes | Scan MCP tool return values (via mcp-wrap) |
 | `websocket_outbound` | WebSocket | `true` | Coming soon | Scan outbound WebSocket frames |
 | `websocket_inbound` | WebSocket | `true` | Coming soon | Scan inbound WebSocket frames |
 
@@ -329,6 +329,25 @@ pipeline:
 
 !!! tip "Dashboard Pipeline page"
     All pipeline settings can be configured from the Pipeline page in the dashboard. Changes are saved to the database and applied immediately via hot-reload.
+
+---
+
+## `mcp`
+
+MCP tool allow/block lists for the `mcp-wrap` CLI command.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `mcp.allowed_tools` | `list[str]` | `[]` | Allowlist of tool names. Empty = all tools allowed. |
+| `mcp.blocked_tools` | `list[str]` | `[]` | Blocklist of tool names. Takes precedence over allowlist. |
+
+```yaml title="Example"
+mcp:
+  allowed_tools: []             # empty = all allowed
+  blocked_tools:
+    - execute_command
+    - run_shell
+```
 
 ---
 
