@@ -220,9 +220,16 @@ class TestPipelineAPI(unittest.TestCase):
     def test_get_pipeline_unavailable_stages(self):
         status, body = handle_community_api("/api/v1/pipeline", "GET", b"", self.store, config=self.config)
         data = json.loads(body)
-        response = next(s for s in data["stages"] if s["name"] == "response_secrets")
-        self.assertFalse(response["available"])
-        self.assertFalse(response["enabled"])
+        # MCP/WebSocket stages are not yet available
+        mcp = next(s for s in data["stages"] if s["name"] == "mcp_arguments")
+        self.assertFalse(mcp["available"])
+
+    def test_get_pipeline_response_stages_available(self):
+        status, body = handle_community_api("/api/v1/pipeline", "GET", b"", self.store, config=self.config)
+        data = json.loads(body)
+        resp_secrets = next(s for s in data["stages"] if s["name"] == "response_secrets")
+        self.assertTrue(resp_secrets["available"])
+        self.assertFalse(resp_secrets["enabled"])  # disabled by default
 
     def test_put_pipeline_saves_stage_toggle(self):
         changes = {"stages": {"outbound_dlp": {"enabled": False}}}

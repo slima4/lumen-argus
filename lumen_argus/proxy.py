@@ -319,6 +319,7 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
         t0 = time.monotonic()
         body = b""
         resp_size = 0
+        resp_text = ""
         model = ""
         host = ""
         session = SessionContext()
@@ -553,33 +554,82 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                         conn.request(self.command, self.path, body, fwd_headers)
                         resp = conn.getresponse()
 
-                        # Forward response status and headers
-                        self.send_response(resp.status)
+                        # Determine response scanning strategy
+                        _should_scan_response = server.response_scanner is not None
+                        _response_hook = server.extensions.get_response_scan_hook() if server.extensions else None
+
+                        # Collect response headers
                         content_type = ""
+                        resp_headers = []
                         for hdr, val in resp.getheaders():
                             lk = hdr.lower()
                             if lk in _HOP_BY_HOP:
                                 continue
                             if lk == "content-type":
                                 content_type = val
-                            if lk == "content-length" and (is_streaming or "text/event-stream" in content_type):
+                            resp_headers.append((hdr, val))
+
+                        is_sse = is_streaming or "text/event-stream" in content_type
+
+                        # Buffered response scan hook (Pro) — for non-SSE only.
+                        # Reads body before forwarding so it can block the response.
+                        _response_blocked = False
+                        if _response_hook and _should_scan_response and not is_sse:
+                            data = resp.read()
+                            resp_text = data.decode("utf-8", errors="ignore")
+                            try:
+                                hook_action, hook_findings = _response_hook(resp_text, provider, model, session)
+                                if hook_action == "block" and hook_findings:
+                                    log.info(
+                                        "#%d response blocked by scan hook: %d finding(s)",
+                                        request_id,
+                                        len(hook_findings),
+                                    )
+                                    _response_blocked = True
+                                    conn.close()
+                                    # Send block error instead of upstream response
+                                    block_body = build_block_response(hook_findings)
+                                    self.send_response(400)
+                                    self.send_header("Content-Type", "application/json")
+                                    self.send_header("Content-Length", str(len(block_body)))
+                                    self.end_headers()
+                                    self.wfile.write(block_body)
+                                    resp_size = len(block_body)
+                                    resp_text = ""  # hook handled — skip async scan
+                                    break
+                            except Exception as e:
+                                log.warning("#%d response scan hook failed: %s", request_id, e)
+                            # Hook passed — forward the response normally
+                            self.send_response(resp.status)
+                            for hdr, val in resp_headers:
+                                self.send_header(hdr, val)
+                            self.end_headers()
+                            self.wfile.write(data)
+                            resp_size = len(data)
+                            resp_text = ""  # hook handled — skip async scan
+                            server.pool.put(host, port, use_ssl, conn)
+                            break
+
+                        # Standard path — forward response headers then body
+                        self.send_response(resp.status)
+                        for hdr, val in resp_headers:
+                            lk = hdr.lower()
+                            if lk == "content-length" and is_sse:
                                 continue
                             self.send_header(hdr, val)
                         self.end_headers()
 
-                        # Stream or read response body
-                        is_sse = is_streaming or "text/event-stream" in content_type
-
                         if is_sse:
                             # SSE connections cannot be reused
                             try:
-                                resp_size = self._stream_sse(resp)
+                                resp_size, resp_text = self._stream_sse(resp, accumulate=_should_scan_response)
                             finally:
                                 conn.close()
                         else:
                             data = resp.read()
                             self.wfile.write(data)
                             resp_size = len(data)
+                            resp_text = data.decode("utf-8", errors="ignore") if _should_scan_response else ""
                             # Return non-streaming connection to pool for reuse
                             server.pool.put(host, port, use_ssl, conn)
 
@@ -620,6 +670,10 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
                 session,
             )
             server.stats.record(provider, len(body), scan_result)
+
+            # Async response scanning — scan after forwarding (no latency impact)
+            if _should_scan_response and resp_text:
+                self._async_response_scan(server, request_id, resp_text, provider, model, session)
 
         except (BrokenPipeError, ConnectionResetError):
             pass  # Client disconnected
@@ -771,9 +825,18 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
 
         return ctx
 
-    def _stream_sse(self, resp: http.client.HTTPResponse) -> int:
-        """Stream SSE response chunks using read1() for low latency."""
+    def _stream_sse(self, resp: http.client.HTTPResponse, accumulate: bool = False) -> tuple:
+        """Stream SSE response chunks using read1() for low latency.
+
+        Args:
+            resp: Upstream HTTP response to stream.
+            accumulate: If True, collect text content for response scanning.
+
+        Returns:
+            (total_bytes, accumulated_text) — text is empty string if not accumulating.
+        """
         total = 0
+        text_parts = []  # type: list
         while True:
             try:
                 chunk = resp.read1(8192)
@@ -787,7 +850,59 @@ class ArgusProxyHandler(http.server.BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 break
             total += len(chunk)
-        return total
+            if accumulate:
+                text_parts.append(chunk)
+        accumulated = b"".join(text_parts).decode("utf-8", errors="ignore") if accumulate else ""
+        return total, accumulated
+
+    def _async_response_scan(
+        self,
+        server: "ArgusProxyServer",
+        request_id: int,
+        text: str,
+        provider: str,
+        model: str,
+        session: "SessionContext" = None,
+    ) -> None:
+        """Run response scanning in a background thread (async mode)."""
+        import threading as _threading
+
+        def _scan():
+            try:
+                findings = server.response_scanner.scan(text, provider, model)
+                if not findings:
+                    return
+                log.info(
+                    "#%d response scan: %d finding(s)",
+                    request_id,
+                    len(findings),
+                )
+                # Record to analytics store
+                if server.extensions:
+                    store = server.extensions.get_analytics_store()
+                    if store:
+                        store.record_findings(
+                            findings=findings,
+                            provider=provider,
+                            model=model,
+                            session_id=session.session_id if session else "",
+                            account_id=session.account_id if session else "",
+                            source_ip=session.source_ip if session else "",
+                            action="alert",
+                        )
+                # Post-scan hook (notifications, SSE push)
+                post_scan = server.extensions.get_post_scan_hook() if server.extensions else None
+                if post_scan:
+                    resp_result = ScanResult(findings=findings, action="alert")
+                    try:
+                        post_scan(result=resp_result, body=b"", provider=provider, session=session, model=model)
+                    except Exception:
+                        pass
+            except Exception as e:
+                log.warning("#%d response scan failed: %s", request_id, e)
+
+        t = _threading.Thread(target=_scan, daemon=True)
+        t.start()
 
     def _log_audit(
         self,
@@ -886,6 +1001,7 @@ class ArgusProxyServer(http.server.ThreadingHTTPServer):
         self.stats = SessionStats()
         self.start_time = time.monotonic()
         self.extensions = None  # set by cli.py after creation
+        self.response_scanner = None  # set by cli.py when response scanning is enabled
 
         super().__init__((bind, port), ArgusProxyHandler)
 

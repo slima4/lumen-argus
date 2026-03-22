@@ -125,6 +125,23 @@ When the `rules` DB table has rules (auto-imported on first run), the pipeline u
 
 All regex patterns are compiled at load time (startup or SIGHUP reload) to avoid runtime compilation overhead. The `RulesDetector` supports named validators (`luhn`, `ssn_range`, `iban_mod97`, `exclude_private_ips`) and is license-aware — Pro rules (`tier='pro'`) are skipped when no valid license is present.
 
+### Response Scanning
+
+**Module:** `lumen_argus/response_scanner.py`
+
+The `ResponseScanner` scans API response text (model output) after it has been forwarded to the client. Runs asynchronously in a background thread — zero latency impact on the request/response cycle.
+
+Two detection types:
+
+| Type | Detector | Patterns | Description |
+|------|----------|----------|-------------|
+| **Secrets** | Reuses existing detectors (SecretsDetector, PIIDetector, etc.) | All request patterns | Catches secrets leaked from context in model output |
+| **Injection** | Built-in regex patterns | 10 patterns | Detects prompt injection attempts (e.g., "ignore previous instructions") |
+
+Response findings are recorded to the analytics store and audit log with `response.` location prefix (e.g., `response.content`). Controlled by `response_secrets` and `response_injection` pipeline stages — both disabled by default (opt-in).
+
+Async mode (community): response is forwarded immediately, scanned in background thread, findings recorded post-hoc. Pro adds buffered/blocking mode and custom injection patterns via rules engine.
+
 ### Within-Request Deduplication
 
 After detection, findings with the same `(detector, type, matched_value)` tuple are collapsed into a single finding with an incremented `count`. This reduces noise from secrets repeated across conversation history.
@@ -327,6 +344,7 @@ def register(registry):
 | `evaluate` | `(findings: list[Finding], policy: PolicyEngine) -> ActionDecision` | Replaces the default policy evaluation. Used by Pro to support the `redact` action. Falls back to default on exception. |
 | `redact` | `(body: bytes, findings: list[Finding]) -> bytes` | Transforms the request body to redact matched values before forwarding. Pro only. |
 | `config_reload` | `(pipeline: ScannerPipeline) -> None` | Called after SIGHUP config reload. Use for plugin re-initialization. |
+| `response_scan` | `(text: str, provider: str, model: str, session) -> (action, findings)` | Buffered response scanning. Runs INSTEAD of async scan when set. Return `("block", findings)` to reject response with 400. Pro only. |
 
 ### Dashboard extension hooks
 

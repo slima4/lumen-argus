@@ -381,10 +381,10 @@ class TestSanitization(unittest.TestCase):
 
     def test_clean_text_unchanged(self):
         """Normal ASCII text should pass through sanitize unchanged."""
-        from lumen_argus.pipeline import _sanitize_text
+        from lumen_argus.text_utils import sanitize_text
 
         text = "AKIAIOSFODNN7EXAMPLE normal text"
-        self.assertEqual(_sanitize_text(text), text)
+        self.assertEqual(sanitize_text(text), text)
 
 
 if __name__ == "__main__":

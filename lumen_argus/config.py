@@ -112,6 +112,7 @@ class CustomRuleConfig:
 class PipelineStageConfig:
     enabled: bool = True
     action: str = ""  # stage-level action override (Pro only, empty = use default_action)
+    mode: str = ""  # stage-specific mode (e.g., "async" | "buffered" for response stages)
 
 
 @dataclass
@@ -135,8 +136,13 @@ _ENCODING_NAMES = {"base64", "hex", "url", "unicode"}
 class PipelineConfig:
     outbound_dlp: PipelineStageConfig = field(default_factory=PipelineStageConfig)
     encoding_decode: EncodingDecodeConfig = field(default_factory=EncodingDecodeConfig)
-    response_secrets: PipelineStageConfig = field(default_factory=lambda: PipelineStageConfig(enabled=False))
-    response_injection: PipelineStageConfig = field(default_factory=lambda: PipelineStageConfig(enabled=False))
+    response_secrets: PipelineStageConfig = field(
+        default_factory=lambda: PipelineStageConfig(enabled=False, mode="async")
+    )
+    response_injection: PipelineStageConfig = field(
+        default_factory=lambda: PipelineStageConfig(enabled=False, mode="async")
+    )
+    response_max_size: int = 1_048_576  # 1MB cap for response scanning
     mcp_arguments: PipelineStageConfig = field(default_factory=PipelineStageConfig)
     mcp_responses: PipelineStageConfig = field(default_factory=PipelineStageConfig)
     websocket_outbound: PipelineStageConfig = field(default_factory=PipelineStageConfig)
@@ -156,7 +162,7 @@ _PIPELINE_STAGE_NAMES = {
 }
 
 # Stages that are implemented and available for toggling
-PIPELINE_AVAILABLE_STAGES = {"outbound_dlp", "encoding_decode"}
+PIPELINE_AVAILABLE_STAGES = {"outbound_dlp", "encoding_decode", "response_secrets", "response_injection"}
 
 
 @dataclass
@@ -555,7 +561,7 @@ def _validate_config(data: dict, source: str) -> List[str]:
                         % (source, stage_name, ", ".join(sorted(_PIPELINE_STAGE_NAMES)))
                     )
                 elif isinstance(stage_data, dict):
-                    _allowed_stage_keys = {"enabled", "action"}
+                    _allowed_stage_keys = {"enabled", "action", "mode"}
                     if stage_name == "encoding_decode":
                         _allowed_stage_keys |= _ENCODING_NAMES | {
                             "max_depth",
@@ -571,6 +577,17 @@ def _validate_config(data: dict, source: str) -> List[str]:
                             warnings.append(
                                 "%s: pipeline.stages.%s.action '%s' is not valid (expected: %s)"
                                 % (source, stage_name, action, ", ".join(sorted(_VALID_ACTIONS)))
+                            )
+                    if "mode" in stage_data:
+                        mode = str(stage_data["mode"])
+                        if mode not in ("async", "buffered"):
+                            warnings.append(
+                                "%s: pipeline.stages.%s.mode '%s' is not valid (expected: async, buffered)"
+                                % (source, stage_name, mode)
+                            )
+                        elif mode == "buffered" and stage_name in ("response_secrets", "response_injection"):
+                            warnings.append(
+                                "%s: pipeline.stages.%s.mode 'buffered' requires Pro license" % (source, stage_name)
                             )
 
     # Validate allowlists section
@@ -879,6 +896,9 @@ def _apply_config(config: Config, data: dict) -> None:
                     if "action" in stage_data:
                         stage_cfg.action = str(stage_data["action"])
                         log.debug("pipeline stage %s: action=%s", stage_name, stage_cfg.action)
+                    if "mode" in stage_data:
+                        stage_cfg.mode = str(stage_data["mode"])
+                        log.debug("pipeline stage %s: mode=%s", stage_name, stage_cfg.mode)
                     # EncodingDecodeConfig extra fields
                     if stage_name == "encoding_decode" and hasattr(stage_cfg, "base64"):
                         for enc in _ENCODING_NAMES:

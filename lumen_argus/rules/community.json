@@ -1,5 +1,5 @@
 {
-  "version": "0.4.0",
+  "version": "0.5.0",
   "tier": "community",
   "rules": [
     {
@@ -429,6 +429,106 @@
       "severity": "info",
       "description": "Passport Us",
       "tags": [],
+      "validator": "",
+      "entropy_context": false
+    },
+    {
+      "name": "ignore_instructions",
+      "pattern": "(?i)ignore\\s+(all\\s+)?previous\\s+instructions",
+      "detector": "injection",
+      "severity": "high",
+      "description": "Prompt injection: ignore previous instructions",
+      "tags": ["injection", "prompt-injection"],
+      "validator": "",
+      "entropy_context": false
+    },
+    {
+      "name": "ignore_prior",
+      "pattern": "(?i)ignore\\s+(all\\s+)?prior\\s+instructions",
+      "detector": "injection",
+      "severity": "high",
+      "description": "Prompt injection: ignore prior instructions",
+      "tags": ["injection", "prompt-injection"],
+      "validator": "",
+      "entropy_context": false
+    },
+    {
+      "name": "disregard_previous",
+      "pattern": "(?i)disregard\\s+(all\\s+)?previous",
+      "detector": "injection",
+      "severity": "high",
+      "description": "Prompt injection: disregard previous context",
+      "tags": ["injection", "prompt-injection"],
+      "validator": "",
+      "entropy_context": false
+    },
+    {
+      "name": "persona_override",
+      "pattern": "(?i)you\\s+are\\s+now\\s+(a|an)\\s+",
+      "detector": "injection",
+      "severity": "high",
+      "description": "Prompt injection: persona/role override attempt",
+      "tags": ["injection", "jailbreak"],
+      "validator": "",
+      "entropy_context": false
+    },
+    {
+      "name": "system_injection",
+      "pattern": "(?i)system\\s*:\\s*you\\s+are",
+      "detector": "injection",
+      "severity": "high",
+      "description": "Prompt injection: fake system prompt",
+      "tags": ["injection", "prompt-injection"],
+      "validator": "",
+      "entropy_context": false
+    },
+    {
+      "name": "system_tag",
+      "pattern": "(?i)<\\s*system\\s*>",
+      "detector": "injection",
+      "severity": "high",
+      "description": "Prompt injection: system tag injection",
+      "tags": ["injection", "prompt-injection"],
+      "validator": "",
+      "entropy_context": false
+    },
+    {
+      "name": "inst_tag",
+      "pattern": "(?i)\\[INST\\]",
+      "detector": "injection",
+      "severity": "high",
+      "description": "Prompt injection: instruction tag injection",
+      "tags": ["injection", "prompt-injection"],
+      "validator": "",
+      "entropy_context": false
+    },
+    {
+      "name": "execute_command",
+      "pattern": "(?i)execute\\s+the\\s+following\\s+(command|code|script)",
+      "detector": "injection",
+      "severity": "high",
+      "description": "Prompt injection: command execution directive",
+      "tags": ["injection", "code-execution"],
+      "validator": "",
+      "entropy_context": false
+    },
+    {
+      "name": "exfil_curl",
+      "pattern": "(?i)curl\\s+.*\\|\\s*bash",
+      "detector": "injection",
+      "severity": "critical",
+      "description": "Data exfiltration: curl pipe to bash",
+      "tags": ["injection", "exfiltration"],
+      "validator": "",
+      "entropy_context": false
+    },
+    {
+      "name": "exfil_webhook",
+      "pattern": "(?i)(fetch|XMLHttpRequest|sendBeacon)\\s*\\(",
+      "detector": "injection",
+      "severity": "high",
+      "description": "Data exfiltration: web API call attempt",
+      "tags": ["injection", "exfiltration"],
       "validator": "",
       "entropy_context": false
     }

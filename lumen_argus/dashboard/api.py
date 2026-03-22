@@ -720,19 +720,19 @@ _PIPELINE_STAGES = [
     {
         "name": "response_secrets",
         "label": "Response Secrets",
-        "description": "Detect secrets leaked in API responses",
+        "description": "Detect secrets leaked in API responses (async, no latency impact)",
         "group": "response",
         "default_enabled": False,
-        "available": False,
+        "available": True,
         "has_sub_detectors": False,
     },
     {
         "name": "response_injection",
         "label": "Response Injection",
-        "description": "Detect prompt injection patterns in API responses",
+        "description": "Detect prompt injection patterns in API responses (async, no latency impact)",
         "group": "response",
         "default_enabled": False,
-        "available": False,
+        "available": True,
         "has_sub_detectors": False,
     },
     {

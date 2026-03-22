@@ -58,6 +58,7 @@ class ExtensionRegistry:
         self._metrics_hook = None  # type: Optional[Callable]
         self._trace_request_hook = None  # type: Optional[Callable]
         self._license_checker = None  # type: Optional[object]
+        self._response_scan_hook = None  # type: Optional[Callable]
 
     def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
         """Register an additional detector.
@@ -288,6 +289,18 @@ class ExtensionRegistry:
 
     def get_trace_request_hook(self) -> Optional[Callable]:
         return self._trace_request_hook
+
+    def set_response_scan_hook(self, hook: Callable) -> None:
+        """Register: hook(text, provider, model, session) -> (action, findings).
+
+        Pro registers this for buffered/blocking response scanning. When set,
+        runs INSTEAD of community's async scan. If action is "block", proxy
+        returns error to client instead of forwarding the response.
+        """
+        self._response_scan_hook = hook
+
+    def get_response_scan_hook(self) -> Optional[Callable]:
+        return self._response_scan_hook
 
     def set_license_checker(self, checker) -> None:
         """Register a license checker with is_valid() method for rule-tier gating."""

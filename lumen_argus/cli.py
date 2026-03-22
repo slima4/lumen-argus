@@ -362,6 +362,26 @@ def main(argv=None):
         )
         extensions.set_proxy_server(server)
         server.extensions = extensions
+
+        # Response scanner — enabled when either response stage is active
+        resp_secrets = config.pipeline.response_secrets.enabled
+        resp_injection = config.pipeline.response_injection.enabled
+        if resp_secrets or resp_injection:
+            from lumen_argus.response_scanner import ResponseScanner
+
+            server.response_scanner = ResponseScanner(
+                detectors=pipeline._detectors if resp_secrets else [],
+                allowlist=pipeline._allowlist if resp_secrets else None,
+                store=analytics_store,
+                scan_secrets=resp_secrets,
+                scan_injection=resp_injection,
+                max_response_size=config.pipeline.response_max_size,
+            )
+            log.info(
+                "response scanning enabled: secrets=%s injection=%s",
+                resp_secrets,
+                resp_injection,
+            )
     except OSError as e:
         print("Error: Could not bind to %s:%d — %s" % (bind, port, e), file=sys.stderr)
         sys.exit(1)
@@ -642,6 +662,26 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
         )
         server.timeout = new_config.proxy.timeout
         server.retries = new_config.proxy.retries
+
+        # Rebuild response scanner on reload
+        resp_secrets = new_config.pipeline.response_secrets.enabled
+        resp_injection = new_config.pipeline.response_injection.enabled
+        if resp_secrets or resp_injection:
+            from lumen_argus.response_scanner import ResponseScanner
+
+            analytics_store = extensions.get_analytics_store() if extensions else None
+            server.response_scanner = ResponseScanner(
+                detectors=server.pipeline._detectors if resp_secrets else [],
+                allowlist=server.pipeline._allowlist if resp_secrets else None,
+                store=analytics_store,
+                scan_secrets=resp_secrets,
+                scan_injection=resp_injection,
+                max_response_size=new_config.pipeline.response_max_size,
+            )
+            log.info("response scanning reloaded: secrets=%s injection=%s", resp_secrets, resp_injection)
+        else:
+            server.response_scanner = None
+
         if old.proxy.max_connections != new_config.proxy.max_connections:
             log.warning(
                 "proxy.max_connections changed (%d -> %d) — requires restart to take effect",

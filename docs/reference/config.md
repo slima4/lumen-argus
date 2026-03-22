@@ -276,6 +276,7 @@ Per-stage settings. Each stage accepts:
 |-----|------|---------|-------------|
 | `pipeline.stages.<name>.enabled` | `bool` | *(varies)* | Whether the stage is active. |
 | `pipeline.stages.<name>.action` | `str` | `""` | Stage-level action override (Pro). Empty = use `default_action`. |
+| `pipeline.stages.<name>.mode` | `str` | `"async"` | Scanning mode for response stages. `async` (community, zero latency) or `buffered` (Pro, blocks response). |
 
 ### Available stages
 
@@ -283,8 +284,8 @@ Per-stage settings. Each stage accepts:
 |-------|-----------|---------|-----------|-------------|
 | `outbound_dlp` | Request | `true` | Yes | Secret/PII/proprietary detection on outbound requests |
 | `encoding_decode` | Request | `true` | Yes | Decode base64, hex, URL, Unicode before scanning |
-| `response_secrets` | Response | `false` | Coming soon | Detect secrets in API responses |
-| `response_injection` | Response | `false` | Coming soon | Detect prompt injection in responses |
+| `response_secrets` | Response | `false` | Yes | Detect secrets in API responses (async, zero latency) |
+| `response_injection` | Response | `false` | Yes | Detect prompt injection in responses (async, zero latency) |
 | `mcp_arguments` | MCP | `true` | Coming soon | Scan MCP tool call arguments |
 | `mcp_responses` | MCP | `true` | Coming soon | Scan MCP tool return values |
 | `websocket_outbound` | WebSocket | `true` | Coming soon | Scan outbound WebSocket frames |
@@ -319,7 +320,11 @@ pipeline:
       min_decoded_length: 8
       max_decoded_length: 10000
     response_secrets:
-      enabled: false
+      enabled: false           # opt-in: detect secrets in API responses
+      mode: async              # async (community) | buffered (Pro)
+    response_injection:
+      enabled: false           # opt-in: detect prompt injection in responses
+      mode: async
 ```
 
 !!! tip "Dashboard Pipeline page"

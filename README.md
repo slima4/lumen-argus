@@ -36,6 +36,7 @@ lumen-argus sits between your AI tool and the provider, scanning every outbound 
 
 - **34+ secret patterns** with Shannon entropy analysis
 - **Encoding-aware scanning** — catches base64, hex, URL, Unicode encoded secrets
+- **Response scanning** — detect secrets and prompt injection in API responses (async, zero latency)
 - **8 PII detectors** with validation (Luhn, SSN ranges, IBAN checksums)
 - **Proprietary code** detection (file patterns + keyword matching)
 - **< 50ms scanning overhead** for typical payloads
@@ -130,12 +131,23 @@ Secrets hidden behind encoding are decoded before scanning:
 
 Nested encoding supported (e.g., base64 inside URL-encoding, configurable depth). Each encoding type toggleable from the Pipeline dashboard page. Finding locations annotated: `messages[0].content[base64]`.
 
+### Response Scanning
+
+API responses are scanned asynchronously for secrets and prompt injection — zero latency impact on the request/response cycle.
+
+| Detection | Patterns | Description |
+|---|---|---|
+| **Secrets** | Reuses all request detectors | Catches secrets leaked from context in model output |
+| **Injection** | 10 community + Pro extended | Detects prompt injection (e.g., "ignore previous instructions", `<system>` tags, exfiltration attempts) |
+
+Injection patterns are stored as rules in the DB (detector=`injection`) — visible and configurable from the Rules dashboard page. Enable via Pipeline page: toggle `Response Secrets` and/or `Response Injection` stages.
+
 ## Rules Engine
 
 Detection rules are stored in SQLite — manage via CLI or dashboard (Pro). Community rules auto-imported on first run.
 
 ```bash
-lumen-argus rules import              # import 43 community rules
+lumen-argus rules import              # import 53 community rules
 lumen-argus rules import --pro        # import 1,800+ Pro rules (license required)
 lumen-argus rules list                # show loaded rules
 lumen-argus rules export > backup.json  # backup for migration
