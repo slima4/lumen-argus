@@ -170,7 +170,7 @@ The `WebSocketScanner` scans WebSocket text frames bidirectionally. A standalone
 - **SSRF protection**: target URL must use `ws://` or `wss://` scheme
 - Findings have `ws.outbound` or `ws.inbound` location prefix
 
-Controlled by `websocket_outbound` and `websocket_inbound` pipeline stages (enabled by default). Runs in a daemon thread — shuts down with the main process.
+Controlled by `websocket_outbound` and `websocket_inbound` pipeline stages (disabled by default, opt-in). Runs in a daemon thread with `WebSocketProxyHandle` for SIGHUP lifecycle — starts/stops dynamically when toggled from the Pipeline dashboard. Graceful fallback if `websockets` package is not installed.
 
 ### Within-Request Deduplication
 

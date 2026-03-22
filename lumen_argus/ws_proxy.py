@@ -10,6 +10,7 @@ and scans text frames for secrets, PII, and injection patterns. Binary
 frames pass through without scanning.
 
 Integrated into the proxy startup via start_ws_proxy() called from cli.py.
+Supports dynamic start/stop on SIGHUP (Pipeline dashboard toggle).
 """
 
 import asyncio
@@ -22,6 +23,16 @@ from lumen_argus.models import Finding, ScanField
 from lumen_argus.text_utils import sanitize_text
 
 log = logging.getLogger("argus.ws")
+
+# Graceful import — server doesn't crash if websockets not installed
+try:
+    import websockets
+
+    _HAS_WEBSOCKETS = True
+except ImportError:
+    websockets = None  # type: ignore[assignment]
+    _HAS_WEBSOCKETS = False
+    log.warning("websockets package not installed — WebSocket proxy disabled")
 
 
 class WebSocketScanner:
@@ -108,8 +119,6 @@ def _validate_target_url(url: str) -> Optional[str]:
 
 async def _handle_connection(websocket, scanner, allowed_origins):
     """Handle a single WebSocket client connection."""
-    import websockets
-
     # Extract target URL from path query
     path = websocket.request.path if hasattr(websocket, "request") else "/"
     parsed = urlparse(path)
@@ -172,32 +181,76 @@ async def _handle_connection(websocket, scanner, allowed_origins):
             pass
 
 
+class WebSocketProxyHandle:
+    """Handle for a running WebSocket proxy server. Supports stop() for SIGHUP."""
+
+    def __init__(self):
+        self._thread = None  # type: Optional[threading.Thread]
+        self._loop = None  # type: Optional[asyncio.AbstractEventLoop]
+        self._server = None  # type: Optional[object]
+        self._stop_event = None  # type: Optional[asyncio.Event]
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def stop(self) -> None:
+        """Stop the WebSocket proxy server gracefully."""
+        if self._loop and self._stop_event:
+            self._loop.call_soon_threadsafe(self._stop_event.set)
+        if self._thread:
+            self._thread.join(timeout=5)
+            log.info("ws proxy stopped")
+        self._thread = None
+        self._loop = None
+        self._server = None
+        self._stop_event = None
+
+
 def start_ws_proxy(
     bind: str,
     port: int,
     scanner: WebSocketScanner,
     allowed_origins: Optional[List[str]] = None,
-) -> threading.Thread:
+) -> Optional[WebSocketProxyHandle]:
     """Start the WebSocket proxy server in a background daemon thread.
 
-    Returns the thread (for joining on shutdown).
+    Returns a handle with stop() for SIGHUP reload, or None if websockets
+    is not installed.
     """
-    import websockets
+    if not _HAS_WEBSOCKETS:
+        log.warning("cannot start ws proxy: websockets package not installed")
+        return None
+
+    handle = WebSocketProxyHandle()
+    ready = threading.Event()
 
     async def _serve():
-        async def _handler(websocket):
-            await _handle_connection(websocket, scanner, allowed_origins or [])
+        handle._stop_event = asyncio.Event()
+        handle._loop = asyncio.get_running_loop()
+        ready.set()  # signal: loop + stop_event are live
 
-        async with websockets.serve(_handler, bind, port):
-            log.info("ws proxy listening on ws://%s:%d", bind, port)
-            await asyncio.Future()  # run forever
+        async def _handler(ws):
+            await _handle_connection(ws, scanner, allowed_origins or [])
+
+        srv = await websockets.serve(_handler, bind, port)
+        handle._server = srv
+        log.info("ws proxy listening on ws://%s:%d", bind, port)
+
+        # Wait until stop is requested
+        await handle._stop_event.wait()
+        srv.close()
+        await srv.wait_closed()
+        log.debug("ws proxy server closed")
 
     def _run():
         try:
             asyncio.run(_serve())
         except Exception as e:
             log.error("ws proxy failed: %s", e)
+            ready.set()  # unblock caller on error
 
-    thread = threading.Thread(target=_run, daemon=True, name="ws-proxy")
-    thread.start()
-    return thread
+    handle._thread = threading.Thread(target=_run, daemon=True, name="ws-proxy")
+    handle._thread.start()
+    ready.wait(timeout=5)  # wait for loop to be assigned before returning
+    return handle

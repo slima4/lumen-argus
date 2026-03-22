@@ -37,12 +37,13 @@ class TestPipelineConfigDataclasses(unittest.TestCase):
         self.assertFalse(config.pipeline.response_secrets.enabled)
         self.assertFalse(config.pipeline.response_injection.enabled)
 
-    def test_protocol_stages_enabled_by_default(self):
+    def test_protocol_stages_defaults(self):
         config = Config()
         self.assertTrue(config.pipeline.mcp_arguments.enabled)
         self.assertTrue(config.pipeline.mcp_responses.enabled)
-        self.assertTrue(config.pipeline.websocket_outbound.enabled)
-        self.assertTrue(config.pipeline.websocket_inbound.enabled)
+        # WebSocket stages default to disabled (opt-in)
+        self.assertFalse(config.pipeline.websocket_outbound.enabled)
+        self.assertFalse(config.pipeline.websocket_inbound.enabled)
 
     def test_stage_action_empty_by_default(self):
         config = Config()

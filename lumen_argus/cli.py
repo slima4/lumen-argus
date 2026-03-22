@@ -459,10 +459,11 @@ def main(argv=None):
                     )
 
     # --- WebSocket proxy ---
-    ws_enabled = config.pipeline.websocket_outbound.enabled or config.pipeline.websocket_inbound.enabled
-    if ws_enabled:
-        from lumen_argus.ws_proxy import WebSocketScanner, start_ws_proxy
+    from lumen_argus.ws_proxy import WebSocketScanner, start_ws_proxy, _HAS_WEBSOCKETS
 
+    server._ws_handle = None  # WebSocketProxyHandle for SIGHUP start/stop
+    ws_enabled = config.pipeline.websocket_outbound.enabled or config.pipeline.websocket_inbound.enabled
+    if ws_enabled and _HAS_WEBSOCKETS:
         ws_scanner = WebSocketScanner(
             detectors=pipeline._detectors,
             allowlist=pipeline._allowlist,
@@ -471,14 +472,13 @@ def main(argv=None):
             scan_inbound=config.pipeline.websocket_inbound.enabled,
             max_frame_size=config.websocket.max_frame_size,
         )
-        ws_port = config.dashboard.port + 2  # 8083 by default (proxy=8080, dashboard=8081)
-        start_ws_proxy(
+        ws_port = config.dashboard.port + 2  # 8083 by default
+        server._ws_handle = start_ws_proxy(
             bind=bind,
             port=ws_port,
             scanner=ws_scanner,
             allowed_origins=config.websocket.allowed_origins or None,
         )
-        log.info("ws proxy listening on ws://%s:%d", bind, ws_port)
 
     # --- Signal-safe shutdown and reload ---
     #
@@ -724,6 +724,48 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
             log.info("response scanning reloaded: secrets=%s injection=%s", resp_secrets, resp_injection)
         else:
             server.response_scanner = None
+
+        # Rebuild WebSocket proxy on reload (start/stop/restart)
+        from lumen_argus.ws_proxy import WebSocketScanner, start_ws_proxy, _HAS_WEBSOCKETS
+
+        ws_enabled = new_config.pipeline.websocket_outbound.enabled or new_config.pipeline.websocket_inbound.enabled
+        ws_running = hasattr(server, "_ws_handle") and server._ws_handle and server._ws_handle.running
+
+        if ws_enabled and _HAS_WEBSOCKETS:
+            # Stop existing if running (config may have changed)
+            if ws_running:
+                server._ws_handle.stop()
+            ws_scanner = WebSocketScanner(
+                detectors=server.pipeline._detectors,
+                allowlist=server.pipeline._allowlist,
+                response_scanner=server.response_scanner,
+                scan_outbound=new_config.pipeline.websocket_outbound.enabled,
+                scan_inbound=new_config.pipeline.websocket_inbound.enabled,
+                max_frame_size=new_config.websocket.max_frame_size,
+            )
+            ws_port = new_config.dashboard.port + 2
+            server._ws_handle = start_ws_proxy(
+                bind=server.server_address[0],
+                port=ws_port,
+                scanner=ws_scanner,
+                allowed_origins=new_config.websocket.allowed_origins or None,
+            )
+            log.info(
+                "ws proxy reloaded: outbound=%s inbound=%s",
+                new_config.pipeline.websocket_outbound.enabled,
+                new_config.pipeline.websocket_inbound.enabled,
+            )
+        elif ws_enabled and not _HAS_WEBSOCKETS:
+            # WS enabled but package missing — stop stale handle if any
+            if ws_running:
+                server._ws_handle.stop()
+                server._ws_handle = None
+            log.warning("ws proxy enabled but websockets package not installed")
+        elif ws_running:
+            # WS now disabled — stop it
+            server._ws_handle.stop()
+            server._ws_handle = None
+            log.info("ws proxy stopped (disabled via config)")
 
         if old.proxy.max_connections != new_config.proxy.max_connections:
             log.warning(

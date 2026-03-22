@@ -157,8 +157,8 @@ class PipelineConfig:
     response_max_size: int = 1_048_576  # 1MB cap for response scanning
     mcp_arguments: PipelineStageConfig = field(default_factory=PipelineStageConfig)
     mcp_responses: PipelineStageConfig = field(default_factory=PipelineStageConfig)
-    websocket_outbound: PipelineStageConfig = field(default_factory=PipelineStageConfig)
-    websocket_inbound: PipelineStageConfig = field(default_factory=PipelineStageConfig)
+    websocket_outbound: PipelineStageConfig = field(default_factory=lambda: PipelineStageConfig(enabled=False))
+    websocket_inbound: PipelineStageConfig = field(default_factory=lambda: PipelineStageConfig(enabled=False))
 
 
 # All pipeline stage names for validation
