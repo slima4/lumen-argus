@@ -1,237 +1,26 @@
-"""Configuration loading with bundled YAML-subset parser.
-
-Python stdlib has no YAML parser. Rather than requiring PyYAML as a
-dependency, we bundle a minimal recursive-descent parser that handles
-the config schema: mappings, sequences, scalars, comments, and quoted strings.
-No anchors, aliases, or multi-line blocks.
-"""
+"""Configuration loading using PyYAML."""
 
 import logging
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
+
+import yaml
 
 log = logging.getLogger("argus.config")
 
 
 # ---------------------------------------------------------------------------
-# Minimal YAML subset parser
+# YAML parsing
 # ---------------------------------------------------------------------------
 
 
 def _parse_yaml(text: str) -> dict:
-    """Parse a YAML-subset string into a dict.
-
-    Supports:
-    - Mappings (key: value)
-    - Sequences (- item)
-    - Quoted and unquoted scalars
-    - Comments (# ...)
-    - Nested indentation
-    """
-    lines = text.split("\n")
-    result, _ = _parse_mapping(lines, 0, 0)
-    return result
-
-
-def _parse_mapping(lines: list, start: int, indent: int) -> Tuple[dict, int]:
-    """Parse a YAML mapping at the given indentation level."""
-    result = {}
-    i = start
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.lstrip()
-
-        # Skip empty lines and comments
-        if not stripped or stripped.startswith("#"):
-            i += 1
-            continue
-
-        # Calculate indentation
-        current_indent = len(line) - len(stripped)
-        if current_indent < indent:
-            break
-        if current_indent > indent:
-            # This shouldn't happen at the top level — skip
-            i += 1
-            continue
-
-        # Check for sequence item at this level
-        if stripped.startswith("- "):
-            break
-
-        # Parse key: value
-        colon_pos = stripped.find(":")
-        if colon_pos == -1:
-            i += 1
-            continue
-
-        key = stripped[:colon_pos].strip().strip('"').strip("'")
-        rest = stripped[colon_pos + 1 :].strip()
-
-        # Remove inline comments
-        rest = _remove_comment(rest)
-
-        if not rest:
-            # Value is a nested mapping or sequence — look at next line
-            next_i = i + 1
-            while next_i < len(lines):
-                next_stripped = lines[next_i].lstrip()
-                if next_stripped and not next_stripped.startswith("#"):
-                    break
-                next_i += 1
-
-            if next_i < len(lines):
-                next_line = lines[next_i]
-                next_indent = len(next_line) - len(next_line.lstrip())
-                next_stripped = next_line.lstrip()
-
-                if next_indent > current_indent:
-                    if next_stripped.startswith("- "):
-                        val, i = _parse_sequence(lines, next_i, next_indent)
-                        result[key] = val
-                    else:
-                        val, i = _parse_mapping(lines, next_i, next_indent)
-                        result[key] = val
-                else:
-                    result[key] = None
-                    i += 1
-            else:
-                result[key] = None
-                i += 1
-        else:
-            result[key] = _parse_scalar(rest)
-            i += 1
-
-    return result, i
-
-
-def _parse_sequence(lines: list, start: int, indent: int) -> Tuple[list, int]:
-    """Parse a YAML sequence at the given indentation level."""
-    result = []
-    i = start
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.lstrip()
-
-        if not stripped or stripped.startswith("#"):
-            i += 1
-            continue
-
-        current_indent = len(line) - len(stripped)
-        if current_indent < indent:
-            break
-        if current_indent > indent:
-            i += 1
-            continue
-
-        if not stripped.startswith("- "):
-            break
-
-        item_text = stripped[2:].strip()
-        item_text = _remove_comment(item_text)
-
-        if ":" in item_text and not item_text.startswith('"') and not item_text.startswith("'"):
-            # Inline mapping in sequence: - key: value
-            # Check if there are more indented lines (nested mapping)
-            next_i = i + 1
-            while next_i < len(lines):
-                ns = lines[next_i].lstrip()
-                if ns and not ns.startswith("#"):
-                    break
-                next_i += 1
-
-            if next_i < len(lines):
-                next_indent = len(lines[next_i]) - len(lines[next_i].lstrip())
-                if next_indent >= current_indent + 2:
-                    # Multi-line mapping under sequence item
-                    first_key = item_text[: item_text.index(":")].strip().strip('"').strip("'")
-                    first_val = _parse_scalar(_remove_comment(item_text[item_text.index(":") + 1 :].strip()))
-                    nested, i = _parse_mapping(lines, next_i, next_indent)
-                    nested[first_key] = first_val
-                    # Reorder so first_key is first
-                    ordered = {first_key: first_val}
-                    ordered.update({k: v for k, v in nested.items() if k != first_key})
-                    result.append(ordered)
-                    continue
-
-            # Simple inline mapping
-            colon_pos = item_text.index(":")
-            k = item_text[:colon_pos].strip().strip('"').strip("'")
-            v = _parse_scalar(item_text[colon_pos + 1 :].strip())
-            result.append({k: v})
-            i += 1
-        else:
-            result.append(_parse_scalar(item_text))
-            i += 1
-
-    return result, i
-
-
-def _parse_flow_sequence(text: str) -> Optional[list]:
-    """Parse a YAML flow sequence like [a, b, c]."""
-    text = text.strip()
-    if not text.startswith("[") or not text.endswith("]"):
-        return None
-    inner = text[1:-1].strip()
-    if not inner:
-        return []
-    items = []
-    for item in inner.split(","):
-        items.append(_parse_scalar(item.strip()))
-    return items
-
-
-def _parse_scalar(text: str) -> Any:
-    """Parse a scalar value."""
-    if not text:
-        return None
-
-    # Flow sequence [a, b, c]
-    if text.startswith("[") and text.endswith("]"):
-        result = _parse_flow_sequence(text)
-        if result is not None:
-            return result
-
-    # Quoted string
-    if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
-        return text[1:-1]
-
-    # Boolean
-    lower = text.lower()
-    if lower in ("true", "yes", "on"):
-        return True
-    if lower in ("false", "no", "off"):
-        return False
-    if lower == "null" or lower == "~":
-        return None
-
-    # Number
-    try:
-        if "." in text:
-            return float(text)
-        return int(text)
-    except ValueError:
-        pass
-
-    return text
-
-
-def _remove_comment(text: str) -> str:
-    """Remove trailing inline comment, respecting quoted strings."""
-    in_quote = None
-    for i, c in enumerate(text):
-        if c in ('"', "'") and in_quote is None:
-            in_quote = c
-        elif c == in_quote:
-            in_quote = None
-        elif c == "#" and in_quote is None:
-            # Make sure it's preceded by whitespace
-            if i > 0 and text[i - 1] in (" ", "\t"):
-                return text[:i].rstrip()
-    return text
+    """Parse YAML text into a dict using PyYAML safe_load."""
+    result = yaml.safe_load(text)
+    return result if isinstance(result, dict) else {}
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +109,57 @@ class CustomRuleConfig:
 
 
 @dataclass
+class PipelineStageConfig:
+    enabled: bool = True
+    action: str = ""  # stage-level action override (Pro only, empty = use default_action)
+
+
+@dataclass
+class EncodingDecodeConfig(PipelineStageConfig):
+    """Extended config for the encoding_decode pipeline stage."""
+
+    base64: bool = True
+    hex: bool = True
+    url: bool = True
+    unicode: bool = True
+    max_depth: int = 2  # nested encoding layers (base64 inside URL-encoding)
+    min_decoded_length: int = 8  # ignore short decoded strings
+    max_decoded_length: int = 10_000  # cap decoded output size
+
+
+# All encoding names for validation
+_ENCODING_NAMES = {"base64", "hex", "url", "unicode"}
+
+
+@dataclass
+class PipelineConfig:
+    outbound_dlp: PipelineStageConfig = field(default_factory=PipelineStageConfig)
+    encoding_decode: EncodingDecodeConfig = field(default_factory=EncodingDecodeConfig)
+    response_secrets: PipelineStageConfig = field(default_factory=lambda: PipelineStageConfig(enabled=False))
+    response_injection: PipelineStageConfig = field(default_factory=lambda: PipelineStageConfig(enabled=False))
+    mcp_arguments: PipelineStageConfig = field(default_factory=PipelineStageConfig)
+    mcp_responses: PipelineStageConfig = field(default_factory=PipelineStageConfig)
+    websocket_outbound: PipelineStageConfig = field(default_factory=PipelineStageConfig)
+    websocket_inbound: PipelineStageConfig = field(default_factory=PipelineStageConfig)
+
+
+# All pipeline stage names for validation
+_PIPELINE_STAGE_NAMES = {
+    "outbound_dlp",
+    "encoding_decode",
+    "response_secrets",
+    "response_injection",
+    "mcp_arguments",
+    "mcp_responses",
+    "websocket_outbound",
+    "websocket_inbound",
+}
+
+# Stages that are implemented and available for toggling
+PIPELINE_AVAILABLE_STAGES = {"outbound_dlp", "encoding_decode"}
+
+
+@dataclass
 class Config:
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     default_action: str = "alert"
@@ -336,6 +176,7 @@ class Config:
     analytics: AnalyticsConfig = field(default_factory=AnalyticsConfig)
     rules: RulesConfig = field(default_factory=RulesConfig)
     dedup: DedupConfig = field(default_factory=DedupConfig)
+    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     notifications: List[dict] = field(default_factory=list)
 
 
@@ -357,6 +198,7 @@ _KNOWN_TOP_KEYS = {
     "custom_rules",
     "dashboard",
     "analytics",
+    "pipeline",
     # Pro/Enterprise extension keys
     "license_key",
     "redaction",
@@ -698,6 +540,39 @@ def _validate_config(data: dict, source: str) -> List[str]:
                 except (ValueError, TypeError):
                     warnings.append("%s: dedup.%s must be an integer" % (source, int_key))
 
+    # Validate pipeline section
+    pipeline = data.get("pipeline", {})
+    if isinstance(pipeline, dict):
+        for key in pipeline:
+            if key not in ("stages",):
+                warnings.append("%s: unknown key 'pipeline.%s'" % (source, key))
+        stages = pipeline.get("stages", {})
+        if isinstance(stages, dict):
+            for stage_name, stage_data in stages.items():
+                if stage_name not in _PIPELINE_STAGE_NAMES:
+                    warnings.append(
+                        "%s: unknown pipeline stage '%s' (expected: %s)"
+                        % (source, stage_name, ", ".join(sorted(_PIPELINE_STAGE_NAMES)))
+                    )
+                elif isinstance(stage_data, dict):
+                    _allowed_stage_keys = {"enabled", "action"}
+                    if stage_name == "encoding_decode":
+                        _allowed_stage_keys |= _ENCODING_NAMES | {
+                            "max_depth",
+                            "min_decoded_length",
+                            "max_decoded_length",
+                        }
+                    for key in stage_data:
+                        if key not in _allowed_stage_keys:
+                            warnings.append("%s: unknown key 'pipeline.stages.%s.%s'" % (source, stage_name, key))
+                    if "action" in stage_data:
+                        action = str(stage_data["action"])
+                        if action not in _VALID_ACTIONS:
+                            warnings.append(
+                                "%s: pipeline.stages.%s.action '%s' is not valid (expected: %s)"
+                                % (source, stage_name, action, ", ".join(sorted(_VALID_ACTIONS)))
+                            )
+
     # Validate allowlists section
     al = data.get("allowlists", {})
     if isinstance(al, dict):
@@ -715,38 +590,6 @@ def _validate_config(data: dict, source: str) -> List[str]:
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
-
-
-def _check_unsupported_yaml(text: str, source: str) -> List[str]:
-    """Detect unsupported YAML syntax and return warnings."""
-    warnings = []  # type: List[str]
-    for lineno, line in enumerate(text.split("\n"), 1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        # Block scalars (| or >)
-        if re.match(r"^[^#]*:\s*[|>]\s*$", stripped):
-            warnings.append(
-                "%s line %d: multi-line block scalars (| or >) are not supported, "
-                "use quoted strings instead" % (source, lineno)
-            )
-        # Anchors and aliases
-        if re.match(r"^[^#]*[&*]\w+", stripped) and not stripped.startswith("-"):
-            # Avoid false positives on glob patterns in allowlists
-            colon_pos = stripped.find(":")
-            if colon_pos == -1 or stripped.find("&") < colon_pos or stripped.find("*") < colon_pos:
-                pass  # could be an anchor in a key position — unlikely in our schema
-        # Flow mappings {key: value}
-        colon_pos = stripped.find(":")
-        if colon_pos != -1:
-            value = stripped[colon_pos + 1 :].strip()
-            value = _remove_comment(value)
-            if value.startswith("{") and value.endswith("}"):
-                warnings.append(
-                    "%s line %d: flow mappings ({...}) are not supported, "
-                    "use indented key: value pairs instead" % (source, lineno)
-                )
-    return warnings
 
 
 _DEFAULT_CONFIG = """\
@@ -844,8 +687,6 @@ def load_config(
     if global_path.exists():
         try:
             text = global_path.read_text(encoding="utf-8")
-            for w in _check_unsupported_yaml(text, str(global_path)):
-                _warn(w)
             data = _parse_yaml(text)
             for w in _validate_config(data, str(global_path)):
                 _warn(w)
@@ -863,8 +704,6 @@ def load_config(
     if proj.exists():
         try:
             text = proj.read_text(encoding="utf-8")
-            for w in _check_unsupported_yaml(text, str(proj)):
-                _warn(w)
             data = _parse_yaml(text)
             for w in _validate_config(data, str(proj)):
                 _warn(w)
@@ -1020,6 +859,37 @@ def _apply_config(config: Config, data: dict) -> None:
                     detector=str(rule.get("detector", "custom")),
                 )
             )
+
+    # Pipeline stages
+    pipeline = data.get("pipeline", {})
+    if isinstance(pipeline, dict):
+        stages = pipeline.get("stages", {})
+        if isinstance(stages, dict):
+            for stage_name, stage_data in stages.items():
+                if stage_name not in _PIPELINE_STAGE_NAMES:
+                    log.debug("skipping unknown pipeline stage: %s", stage_name)
+                    continue
+                stage_cfg = getattr(config.pipeline, stage_name, None)
+                if stage_cfg is None:
+                    continue
+                if isinstance(stage_data, dict):
+                    if "enabled" in stage_data:
+                        stage_cfg.enabled = bool(stage_data["enabled"])
+                        log.debug("pipeline stage %s: enabled=%s", stage_name, stage_cfg.enabled)
+                    if "action" in stage_data:
+                        stage_cfg.action = str(stage_data["action"])
+                        log.debug("pipeline stage %s: action=%s", stage_name, stage_cfg.action)
+                    # EncodingDecodeConfig extra fields
+                    if stage_name == "encoding_decode" and hasattr(stage_cfg, "base64"):
+                        for enc in _ENCODING_NAMES:
+                            if enc in stage_data:
+                                setattr(stage_cfg, enc, bool(stage_data[enc]))
+                        if "max_depth" in stage_data:
+                            stage_cfg.max_depth = int(stage_data["max_depth"])
+                        if "min_decoded_length" in stage_data:
+                            stage_cfg.min_decoded_length = int(stage_data["min_decoded_length"])
+                        if "max_decoded_length" in stage_data:
+                            stage_cfg.max_decoded_length = int(stage_data["max_decoded_length"])
 
     # Notifications (optional — reconciled to DB on startup)
     notifications = data.get("notifications", [])

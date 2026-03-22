@@ -141,10 +141,10 @@ custom_rules:
         data = _parse_yaml("""
 custom_rules:
   - name: rule_a
-    pattern: "aaa_\\w+"
+    pattern: 'aaa_\\w+'
     severity: high
   - name: rule_b
-    pattern: "bbb_\\w+"
+    pattern: 'bbb_\\w+'
     severity: critical
     action: block
 """)
@@ -169,7 +169,7 @@ custom_rules:
     def test_missing_name(self):
         data = _parse_yaml("""
 custom_rules:
-  - pattern: "tok_\\w+"
+  - pattern: 'tok_\\w+'
 """)
         warnings = _validate_config(data, "test")
         self.assertTrue(any("missing required 'name'" in w for w in warnings))
@@ -195,7 +195,7 @@ custom_rules:
         data = _parse_yaml("""
 custom_rules:
   - name: tok
-    pattern: "tok_\\w+"
+    pattern: 'tok_\\w+'
     severity: extreme
 """)
         warnings = _validate_config(data, "test")
@@ -205,7 +205,7 @@ custom_rules:
         data = _parse_yaml("""
 custom_rules:
   - name: tok
-    pattern: "tok_\\w+"
+    pattern: 'tok_\\w+'
     action: destroy
 """)
         warnings = _validate_config(data, "test")
@@ -215,7 +215,7 @@ custom_rules:
         data = _parse_yaml("""
 custom_rules:
   - name: tok
-    pattern: "tok_\\w+"
+    pattern: 'tok_\\w+'
     bogus: true
 """)
         warnings = _validate_config(data, "test")

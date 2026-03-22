@@ -2,7 +2,12 @@
 
 import unittest
 
-from lumen_argus.config import _parse_yaml, _validate_config, _check_unsupported_yaml, Config, load_config
+from lumen_argus.config import (
+    _parse_yaml,
+    _validate_config,
+    Config,
+    load_config,
+)
 
 
 class TestYAMLParser(unittest.TestCase):
@@ -250,33 +255,33 @@ names: ["hello", "world"]
         self.assertEqual(result["names"], ["hello", "world"])
 
 
-class TestUnsupportedYAMLDetection(unittest.TestCase):
-    def test_block_scalar_warned(self):
+class TestPyYAMLFeatures(unittest.TestCase):
+    """Tests for full YAML features via PyYAML."""
+
+    def test_block_scalar(self):
         yaml = "description: |\n  multi\n  line\n"
-        warnings = _check_unsupported_yaml(yaml, "test")
-        self.assertTrue(any("block scalar" in w for w in warnings))
+        result = _parse_yaml(yaml)
+        self.assertIn("multi", result["description"])
+        self.assertIn("line", result["description"])
 
-    def test_folded_scalar_warned(self):
-        yaml = "description: >\n  folded\n  text\n"
-        warnings = _check_unsupported_yaml(yaml, "test")
-        self.assertTrue(any("block scalar" in w for w in warnings))
-
-    def test_flow_mapping_warned(self):
+    def test_flow_mapping(self):
         yaml = "proxy: {port: 8080, bind: localhost}\n"
-        warnings = _check_unsupported_yaml(yaml, "test")
-        self.assertTrue(any("flow mapping" in w for w in warnings))
+        result = _parse_yaml(yaml)
+        self.assertEqual(result["proxy"]["port"], 8080)
 
-    def test_normal_config_no_warnings(self):
-        yaml = """
-proxy:
-  port: 8080
-  bind: "127.0.0.1"
-allowlists:
-  secrets:
-    - "AKIAIOSFODNN7EXAMPLE"
-"""
-        warnings = _check_unsupported_yaml(yaml, "test")
-        self.assertEqual(len(warnings), 0)
+    def test_anchors_and_aliases(self):
+        yaml = "defaults: &defaults\n  action: alert\nsecrets:\n  <<: *defaults\n  enabled: true\n"
+        result = _parse_yaml(yaml)
+        self.assertEqual(result["secrets"]["action"], "alert")
+        self.assertTrue(result["secrets"]["enabled"])
+
+    def test_empty_yaml_returns_empty_dict(self):
+        result = _parse_yaml("")
+        self.assertEqual(result, {})
+
+    def test_null_yaml_returns_empty_dict(self):
+        result = _parse_yaml("---\n")
+        self.assertEqual(result, {})
 
 
 class TestLoggingConfigValidation(unittest.TestCase):
