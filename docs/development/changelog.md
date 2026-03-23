@@ -16,8 +16,7 @@ All notable changes to lumen-argus are documented here.
   `--env KEY=VALUE` to add more, `--no-env-filter` to disable
 - Config: `mcp.env_filter`, `mcp.env_allowlist` in YAML
 - `--action` flag to override default action per invocation
-- `mcp-wrap` retained as deprecated alias (prints warning, same behavior)
-- Old `mcp_scanner.py` and `mcp_wrap.py` are backward-compatible import shims
+- Removed `mcp_scanner.py` and `mcp_wrap.py` (replaced by `lumen_argus/mcp/` package)
 
 ### Rules Performance Optimization (Phase 1)
 

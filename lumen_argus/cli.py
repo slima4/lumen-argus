@@ -180,28 +180,9 @@ def main(argv=None):
         help="MCP server command (after --)",
     )
 
-    # mcp-wrap — deprecated alias for backward compatibility
-    mcp_wrap_parser = subparsers.add_parser(
-        "mcp-wrap",
-        help="(deprecated) Use 'lumen-argus mcp' instead",
-    )
-    mcp_wrap_parser.add_argument("--config", type=str, default=None, help="Config file path")
-    mcp_wrap_parser.add_argument(
-        "--log-level",
-        type=str,
-        default="warning",
-        choices=["debug", "info", "warning", "error"],
-        help="Log level (default: warning)",
-    )
-    mcp_wrap_parser.add_argument(
-        "server_command",
-        nargs=argparse.REMAINDER,
-        help="MCP server command (after --)",
-    )
-
     args = parser.parse_args(argv)
 
-    if args.command in ("scan", "logs", "rules", "mcp", "mcp-wrap"):
+    if args.command in ("scan", "logs", "rules", "mcp"):
         # Set up minimal logging for non-serve commands so config
         # warnings (log.warning) display cleanly on stderr.
         _handler = logging.StreamHandler(sys.stderr)
@@ -212,14 +193,6 @@ def main(argv=None):
             _run_scan(args)
         elif args.command == "rules":
             _run_rules(args)
-        elif args.command == "mcp-wrap":
-            print(
-                "WARNING: 'mcp-wrap' is deprecated. Use 'lumen-argus mcp -- <command>' instead.",
-                file=sys.stderr,
-            )
-            # Preserve old behavior: no env filter in deprecated alias
-            args.no_env_filter = True
-            _run_mcp(args)
         elif args.command == "mcp":
             _run_mcp(args)
         else:

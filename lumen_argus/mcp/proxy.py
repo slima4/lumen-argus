@@ -5,7 +5,7 @@ modes. Each mode calls a specific entry point that sets up the appropriate
 transports and then runs the shared scanning loop.
 
 Modes:
-- run_stdio_proxy: stdio subprocess (replaces mcp_wrap.py)
+- run_stdio_proxy: stdio subprocess
 - run_http_bridge: stdio client -> HTTP upstream
 - run_http_listener: HTTP listener -> HTTP upstream (reverse proxy)
 - run_ws_bridge: stdio client -> WebSocket upstream
