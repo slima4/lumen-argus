@@ -784,6 +784,22 @@ async def _do_forward(
                     scan_result.findings.extend(mcp_findings)
                     log.info("#%d MCP argument scan: %d finding(s) in '%s'", request_id, len(mcp_findings), tool_name)
 
+                # Record MCP argument findings to analytics store
+                # (pipeline.scan() already called record_findings() before MCP scanning,
+                # so MCP findings need their own explicit write)
+                if mcp_findings and server.extensions:
+                    _s = server.extensions.get_analytics_store()
+                    if _s:
+                        try:
+                            _s.record_findings(
+                                findings=mcp_findings,
+                                provider=provider,
+                                model=model,
+                                session=session,
+                            )
+                        except Exception:
+                            pass
+
                 # Log tool call (allowed/alert)
                 if server.extensions:
                     _s = server.extensions.get_analytics_store()
