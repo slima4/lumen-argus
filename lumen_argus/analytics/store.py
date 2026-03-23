@@ -117,6 +117,7 @@ _VALID_CONFIG_KEYS = {
     "pipeline.stages.mcp_responses.enabled",
     "pipeline.stages.websocket_outbound.enabled",
     "pipeline.stages.websocket_inbound.enabled",
+    "pipeline.parallel_batching",
 }
 
 _VALID_ACTIONS = {"log", "alert", "block"}
@@ -480,6 +481,10 @@ class AnalyticsStore:
         ):
             if value not in _VALID_ACTIONS:
                 raise ValueError("action must be one of: %s" % ", ".join(sorted(_VALID_ACTIONS)))
+        elif key == "pipeline.parallel_batching":
+            if value.lower() not in ("true", "false"):
+                raise ValueError("parallel_batching must be true or false")
+            value = value.lower()
         elif key.endswith(".enabled") or key.endswith((".base64", ".hex", ".url", ".unicode")):
             if value.lower() not in ("true", "false"):
                 raise ValueError("%s must be true or false" % key)

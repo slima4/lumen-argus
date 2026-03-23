@@ -17,7 +17,9 @@ All notable changes to lumen-argus are documented here.
 - Benchmark: 184KB/53 rules: 236ms → 36ms (under 50ms target)
 - Parallel rule batching: when enabled (Pro toggle) and candidates > 50, groups rules
   by detector category and evaluates concurrently via ThreadPoolExecutor
-- `RulesDetector.set_parallel(bool)` for runtime toggle from Pro Pipeline page
+- `RulesDetector.set_parallel(bool)` for runtime toggle from Pipeline page
+- Pipeline page: "Parallel rule evaluation" toggle in Advanced section
+- Config: `pipeline.parallel_batching` in YAML + DB overrides, applied at startup and SIGHUP
 
 ## 0.5.0 (2026-03-22)
 

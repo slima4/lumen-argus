@@ -933,10 +933,18 @@ def _handle_pipeline_get(config, store=None) -> tuple:
 
         stages.append(stage)
 
+    # Parallel batching toggle
+    parallel_key = "pipeline.parallel_batching"
+    if parallel_key in overrides:
+        parallel_batching = overrides[parallel_key].lower() == "true"
+    else:
+        parallel_batching = config.pipeline.parallel_batching
+
     return _json_response(
         200,
         {
             "default_action": default_action,
+            "parallel_batching": parallel_batching,
             "stages": stages,
         },
     )
@@ -965,6 +973,16 @@ def _handle_pipeline_update(body: bytes, config, store) -> tuple:
 
     errors = []
     applied = {}
+
+    # Handle parallel_batching
+    if "parallel_batching" in changes:
+        try:
+            store.set_config_override("pipeline.parallel_batching", str(changes["parallel_batching"]).lower())
+            applied["parallel_batching"] = changes["parallel_batching"]
+            log.info("pipeline config saved: parallel_batching = %s", changes["parallel_batching"])
+        except ValueError as e:
+            log.warning("pipeline config rejected: parallel_batching = %s (%s)", changes["parallel_batching"], e)
+            errors.append({"key": "parallel_batching", "error": str(e)})
 
     # Handle default_action
     if "default_action" in changes:

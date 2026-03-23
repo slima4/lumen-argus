@@ -336,6 +336,8 @@ def main(argv=None):
                     config.pii.enabled = value.lower() == "true"
                 elif key == "detectors.proprietary.enabled":
                     config.proprietary.enabled = value.lower() == "true"
+                elif key == "pipeline.parallel_batching":
+                    config.pipeline.parallel_batching = value.lower() == "true"
                 elif key.startswith("pipeline.stages."):
                     parts = key.split(".")
                     stage_name = parts[2]
@@ -362,6 +364,12 @@ def main(argv=None):
         dedup_config=asdict(config.dedup),
         pipeline_config=_build_pipeline_config(config),
     )
+
+    # Apply parallel batching toggle to RulesDetector
+    # (applied out-of-band from _build_pipeline_config — parallel_batching
+    # is a detector-level setting, not a pipeline stage config)
+    if pipeline._rules_detector:
+        pipeline._rules_detector.set_parallel(config.pipeline.parallel_batching)
 
     # --- Build response scanner ---
     response_scanner = None
@@ -694,6 +702,8 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
                         new_config.pii.enabled = value.lower() == "true"
                     elif key == "detectors.proprietary.enabled":
                         new_config.proprietary.enabled = value.lower() == "true"
+                    elif key == "pipeline.parallel_batching":
+                        new_config.pipeline.parallel_batching = value.lower() == "true"
                     elif key.startswith("pipeline.stages."):
                         parts = key.split(".")
                         stage_name = parts[2]
@@ -729,6 +739,13 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
         )
         server.timeout = new_config.proxy.timeout
         server.retries = new_config.proxy.retries
+
+        # Apply parallel batching toggle on reload.
+        # Applied out-of-band after pipeline.reload() — brief window where
+        # new rules use old parallel setting. Not correctness-critical since
+        # parallel mode only affects performance, not scan results.
+        if server.pipeline._rules_detector:
+            server.pipeline._rules_detector.set_parallel(new_config.pipeline.parallel_batching)
 
         # Rebuild response scanner on reload
         resp_secrets = new_config.pipeline.response_secrets.enabled

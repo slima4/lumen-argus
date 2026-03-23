@@ -60,6 +60,31 @@ function loadPipeline(){
       el.appendChild(card);
     }
 
+    /* Advanced settings */
+    var advCard=document.createElement('div');advCard.className='pipeline-group';
+    var advLabel=document.createElement('div');advLabel.className='pipeline-group-label';
+    advLabel.textContent='Advanced';advCard.appendChild(advLabel);
+
+    var parRow=document.createElement('div');parRow.className='pipeline-stage';
+    var parTop=document.createElement('div');parTop.className='pipeline-stage-top';
+    var parToggle=document.createElement('label');parToggle.className='pipeline-toggle';
+    var parCb=document.createElement('input');parCb.type='checkbox';
+    parCb.checked=!!data.parallel_batching;
+    parCb.setAttribute('data-config-key','parallel_batching');
+    parCb.setAttribute('data-original',String(!!data.parallel_batching));
+    var parSlider=document.createElement('span');parSlider.className='pipeline-slider';
+    parToggle.appendChild(parCb);parToggle.appendChild(parSlider);
+    parTop.appendChild(parToggle);
+    var parLabel=document.createElement('div');parLabel.className='pipeline-stage-info';
+    var parName=document.createElement('div');parName.className='pipeline-stage-name';
+    parName.textContent='Parallel rule evaluation';
+    var parDesc=document.createElement('div');parDesc.className='pipeline-stage-desc';
+    parDesc.textContent='Evaluate candidate rules in parallel threads (experimental)';
+    parLabel.appendChild(parName);parLabel.appendChild(parDesc);
+    parTop.appendChild(parLabel);
+    parRow.appendChild(parTop);advCard.appendChild(parRow);
+    el.appendChild(advCard);
+
     /* Save button */
     var saveBar=document.createElement('div');saveBar.className='pipeline-save-bar';
     var saveBtn=document.createElement('button');saveBtn.className='btn btn-primary';
@@ -243,7 +268,13 @@ function _savePipeline(statusEl){
   }
   if(Object.keys(encChanges).length)changes.encoding_settings=encChanges;
 
-  if(!changes.default_action&&!changes.stages&&!changes.detectors&&!changes.encoding_settings){
+  /* Parallel batching toggle */
+  var parCb=document.querySelector('input[data-config-key="parallel_batching"]');
+  if(parCb&&String(parCb.checked)!==parCb.getAttribute('data-original')){
+    changes.parallel_batching=parCb.checked;
+  }
+
+  if(!changes.default_action&&!changes.stages&&!changes.detectors&&!changes.encoding_settings&&!('parallel_batching' in changes)){
     statusEl.textContent='No changes';statusEl.style.color='var(--text-muted)';return;
   }
 

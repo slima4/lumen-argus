@@ -159,6 +159,7 @@ class PipelineConfig:
     mcp_responses: PipelineStageConfig = field(default_factory=PipelineStageConfig)
     websocket_outbound: PipelineStageConfig = field(default_factory=lambda: PipelineStageConfig(enabled=False))
     websocket_inbound: PipelineStageConfig = field(default_factory=lambda: PipelineStageConfig(enabled=False))
+    parallel_batching: bool = False
 
 
 # All pipeline stage names for validation
