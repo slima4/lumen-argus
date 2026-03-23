@@ -606,11 +606,12 @@ class ScannerPipeline:
             stage_timings=stage_timings,
         )
 
-        # Commit fingerprint hashes only if request is NOT blocked.
-        # Blocked content must be re-scanned on retry to prevent bypass.
-        # On block, store pending_hashes on the result so the proxy can
-        # commit them later if history stripping succeeds.
-        if pending_hashes and result.action != "block":
+        # Commit fingerprint hashes only for safe pass-through actions.
+        # - block: must re-scan on retry to prevent bypass
+        # - redact: next request contains ORIGINAL text in conversation history
+        #   (Claude Code re-sends the unredacted user input), must re-scan
+        # On block, store pending_hashes so the proxy can commit after strip.
+        if pending_hashes and result.action not in ("block", "redact"):
             self._fingerprint.commit_hashes(pending_hashes)
         elif pending_hashes and result.action == "block":
             result._pending_hashes = pending_hashes
