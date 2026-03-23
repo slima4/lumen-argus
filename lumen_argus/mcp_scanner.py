@@ -174,7 +174,7 @@ class MCPScanner:
         text = json.dumps(arguments, ensure_ascii=False)
         text = sanitize_text(text)
 
-        fields = [ScanField(path="mcp.tools/call.%s.arguments" % tool_name, text=text)]
+        fields = [ScanField(path="tools/call.%s.arguments" % tool_name, text=text)]
         findings = []
         for detector in self._detectors:
             try:
@@ -198,7 +198,7 @@ class MCPScanner:
         text = json.dumps(arguments, ensure_ascii=False)
         text = sanitize_text(text)
 
-        fields = [ScanField(path="mcp.tools/call.%s.arguments" % tool_name, text=text)]
+        fields = [ScanField(path="tools/call.%s.arguments" % tool_name, text=text)]
         findings = []
         for detector in self._detectors:
             try:
@@ -241,7 +241,7 @@ class MCPScanner:
         text = sanitize_text(text)
         findings = []
 
-        fields = [ScanField(path="mcp.response.content", text=text)]
+        fields = [ScanField(path="response.content", text=text)]
         for detector in self._detectors:
             try:
                 det_findings = detector.scan(fields, self._allowlist)
