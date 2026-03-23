@@ -326,8 +326,10 @@ class ExtensionRegistry:
         """Register a rule metrics collector for Pro performance dashboard.
 
         Collector interface: collector.record(rule_name: str, elapsed_ms: float)
+        MUST be thread-safe — record() is called from ThreadPoolExecutor
+        workers when parallel rule batching is enabled.
         Pro creates a RuleMetricsCollector with in-memory aggregation
-        and periodic async flush to the rule_metrics table.
+        (protected by threading.Lock) and periodic async flush.
         """
         self._rule_metrics_collector = collector
 

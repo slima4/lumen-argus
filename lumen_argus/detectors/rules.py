@@ -132,6 +132,9 @@ class RulesDetector(BaseDetector):
         self._license = license_checker
         self._metrics = metrics_collector
         self._parallel = parallel
+        self._pool = None  # type: ThreadPoolExecutor | None
+        if parallel:
+            self._pool = ThreadPoolExecutor(max_workers=4)
         self._compiled_rules = []  # type: list
         self._accelerator = AhoCorasickAccelerator()
         # In-memory hit count accumulation: {rule_name: count}
@@ -218,11 +221,12 @@ class RulesDetector(BaseDetector):
 
     def _record_hit(self, rule_name):
         """Accumulate a hit in memory. Flush periodically."""
+        should_flush = False
         with self._hit_counts_lock:
             self._hit_counts[rule_name] = self._hit_counts.get(rule_name, 0) + 1
-
-        # Check if flush is due (outside lock to avoid holding it during I/O)
-        if time.monotonic() - self._last_flush >= _HIT_COUNT_FLUSH_INTERVAL:
+            if time.monotonic() - self._last_flush >= _HIT_COUNT_FLUSH_INTERVAL:
+                should_flush = True
+        if should_flush:
             self._flush_hit_counts()
 
     def set_parallel(self, enabled: bool) -> None:
@@ -230,6 +234,11 @@ class RulesDetector(BaseDetector):
 
         Pro toggles this via the Pipeline dashboard page.
         """
+        if enabled and self._pool is None:
+            self._pool = ThreadPoolExecutor(max_workers=4)
+        elif not enabled and self._pool is not None:
+            self._pool.shutdown(wait=False)
+            self._pool = None
         self._parallel = enabled
         log.info("parallel rule evaluation: %s", "enabled" if enabled else "disabled")
 
@@ -365,9 +374,12 @@ class RulesDetector(BaseDetector):
         Performance path:
         1. Pre-filter: Aho-Corasick narrows candidates per field
         2. Hot-first: rules sorted by hit_count DESC (set at reload)
-        3. Early termination: stop on first match for block action
+        3. Early termination: stop on first match for block action (sequential),
+           or skip remaining fields after block detected (parallel)
         4. Parallel batching: when enabled and candidates > threshold,
-           group by detector category and evaluate concurrently
+           group by detector category and evaluate concurrently.
+           Note: parallel early termination is post-hoc — all groups for the
+           current field run to completion before block is detected.
         """
         findings = []
         compiled_rules = self._compiled_rules  # snapshot for thread safety
@@ -425,6 +437,9 @@ class RulesDetector(BaseDetector):
         Python's re module releases the GIL during C-level regex matching,
         so threading provides real speedup for regex evaluation.
         Free-threaded Python 3.13+ gives full parallelism.
+
+        Note: all groups run to completion — early termination is post-hoc
+        (block detected after groups finish, prevents scanning next field).
         """
         groups = {}  # type: dict
         for idx in candidates:
@@ -436,18 +451,16 @@ class RulesDetector(BaseDetector):
             groups[det].append(idx)
 
         all_findings = []
-        with ThreadPoolExecutor(max_workers=min(len(groups), 4)) as pool:
-            futures = []
-            for group_indices in groups.values():
-                if group_indices:
-                    futures.append(
-                        pool.submit(self._eval_group, group_indices, compiled_rules, field, allowlist, metrics)
-                    )
-            for f in futures:
-                try:
-                    all_findings.extend(f.result())
-                except Exception as e:
-                    log.warning("parallel rule evaluation failed: %s", e)
+        pool = self._pool
+        futures = []
+        for group_indices in groups.values():
+            if group_indices:
+                futures.append(pool.submit(self._eval_group, group_indices, compiled_rules, field, allowlist, metrics))
+        for f in futures:
+            try:
+                all_findings.extend(f.result())
+            except Exception as e:
+                log.warning("parallel rule evaluation failed: %s", e)
 
         if log.isEnabledFor(logging.DEBUG) and all_findings:
             log.debug(

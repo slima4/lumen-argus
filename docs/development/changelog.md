@@ -15,6 +15,9 @@ All notable changes to lumen-argus are documented here.
 - Pro metrics hook: `extensions.set_rule_metrics_collector(collector)`
 - `pyahocorasick>=2.0` added as dependency (pre-built wheels for all major platforms)
 - Benchmark: 184KB/53 rules: 236ms → 36ms (under 50ms target)
+- Parallel rule batching: when enabled (Pro toggle) and candidates > 50, groups rules
+  by detector category and evaluates concurrently via ThreadPoolExecutor
+- `RulesDetector.set_parallel(bool)` for runtime toggle from Pro Pipeline page
 
 ## 0.5.0 (2026-03-22)
 
