@@ -317,6 +317,7 @@ class ScannerPipeline:
             self._rules_detector = RulesDetector(
                 store=store,
                 license_checker=extensions.get_license_checker() if extensions else None,
+                metrics_collector=extensions.get_rule_metrics_collector() if extensions else None,
             )
             self._detectors.append(self._rules_detector)
             store.set_rules_change_callback(self._rules_detector.on_rules_changed)
