@@ -1,5 +1,5 @@
 {
-  "version": "0.5.0",
+  "version": "0.6.0",
   "tier": "community",
   "rules": [
     {
@@ -308,6 +308,16 @@
       "detector": "secrets",
       "severity": "high",
       "description": "Generic Password",
+      "tags": [],
+      "validator": "",
+      "entropy_context": true
+    },
+    {
+      "name": "generic_password_unquoted",
+      "pattern": "(?i)(?:password|passwd|pwd|pass)\\s*[:=]\\s*(\\S{8,})",
+      "detector": "secrets",
+      "severity": "high",
+      "description": "Generic Password (unquoted) — YAML, ENV, config files",
       "tags": [],
       "validator": "",
       "entropy_context": true

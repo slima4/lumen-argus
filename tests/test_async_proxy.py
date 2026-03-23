@@ -940,13 +940,14 @@ class TestWebSocketPolicyEnforcement(unittest.TestCase):
 
     def test_blocked_event_set_on_block(self):
         """asyncio.Event is set when block is triggered (unit test of the pattern)."""
-        import asyncio as _asyncio
 
-        blocked = _asyncio.Event()
-        self.assertFalse(blocked.is_set())
-        # Simulate block
-        blocked.set()
-        self.assertTrue(blocked.is_set())
+        async def _test():
+            blocked = asyncio.Event()
+            self.assertFalse(blocked.is_set())
+            blocked.set()
+            self.assertTrue(blocked.is_set())
+
+        asyncio.run(_test())
 
 
 class TestAsyncProxySessionExtraction(unittest.TestCase):
