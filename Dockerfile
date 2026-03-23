@@ -5,7 +5,10 @@ WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY lumen_argus/ lumen_argus/
 
-RUN pip install --no-cache-dir --prefix=/install .
+# gcc needed to build pyahocorasick C extension (not in slim image)
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && pip install --no-cache-dir --prefix=/install . \
+    && apt-get purge -y gcc libc6-dev && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # ---- runtime stage ----
 FROM python:3.12-slim
