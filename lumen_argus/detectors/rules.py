@@ -1,7 +1,12 @@
-"""DB-backed rules detector.
+"""DB-backed rules detector with Aho-Corasick pre-filtering.
 
 Loads compiled regex patterns from the rules DB table. Runs alongside
 (or eventually replaces) the hardcoded SecretsDetector and PIIDetector.
+
+Performance layers:
+1. Aho-Corasick pre-filter: O(n) single pass narrows 1,700+ rules to ~15 candidates
+2. Early termination: stop after first match when action is "block"
+3. Hot-first ordering: sort rules by hit_count DESC for faster common matches
 
 License-aware: rules with tier='pro' are skipped when the license
 checker reports invalid/expired.
@@ -9,10 +14,13 @@ checker reports invalid/expired.
 
 import logging
 import re
+import threading
+import time
 from typing import List
 
 from lumen_argus.allowlist import AllowlistMatcher
 from lumen_argus.detectors import BaseDetector
+from lumen_argus.detectors.accelerator import AhoCorasickAccelerator
 from lumen_argus.models import Finding, ScanField
 
 log = logging.getLogger("argus.detectors.rules")
@@ -20,6 +28,9 @@ log = logging.getLogger("argus.detectors.rules")
 # Registry of named validator functions. Validators return True if
 # the match is valid. Referenced by name in the rules DB.
 _VALIDATORS = {}
+
+# Flush hit counts to DB every 60 seconds
+_HIT_COUNT_FLUSH_INTERVAL = 60
 
 
 def register_validator(name, fn):
@@ -103,19 +114,34 @@ class RulesDetector(BaseDetector):
 
     Loads rules from the analytics store, compiles regex patterns,
     and runs them against scan fields. License-aware for Pro rules.
+
+    Performance:
+    - Aho-Corasick pre-filter reduces candidate rules per field by >95%
+    - Hot-first ordering puts frequent matches first
+    - Early termination stops on first match for block actions
+    - In-memory hit count accumulation with periodic batch flush
     """
 
-    def __init__(self, store=None, license_checker=None):
+    def __init__(self, store=None, license_checker=None, metrics_collector=None):
         self._store = store
         self._license = license_checker
+        self._metrics = metrics_collector
         self._compiled_rules = []  # type: list
+        self._accelerator = AhoCorasickAccelerator()
+        # In-memory hit count accumulation: {rule_name: count}
+        self._hit_counts = {}  # type: dict
+        self._hit_counts_lock = threading.Lock()
+        self._last_flush = time.monotonic()
         if store:
             self.reload()
 
     def reload(self):
-        """Reload rules from DB and compile patterns."""
+        """Reload rules from DB, compile patterns, and rebuild accelerator."""
         if not self._store:
             return
+        # Flush pending hit counts before reload
+        self._flush_hit_counts()
+
         rules = self._store.get_active_rules()
         compiled = []
         for r in rules:
@@ -140,10 +166,58 @@ class RulesDetector(BaseDetector):
                     "severity": r["severity"],
                     "action": r.get("action", ""),
                     "validator": validator,
+                    "hit_count": r.get("hit_count", 0),
                 }
             )
+
+        # Hot-first ordering: rules with more hits are evaluated first
+        compiled.sort(key=lambda r: r["hit_count"], reverse=True)
+
+        # Build new accelerator, then swap both atomically.
+        # scan() snapshots both — they must be consistent.
+        new_acc = AhoCorasickAccelerator()
+        new_acc.build(compiled)
+        self._accelerator = new_acc
         self._compiled_rules = compiled
-        log.debug("rules detector: loaded %d rules", len(compiled))
+        log.info(
+            "rules detector: loaded %d rules (accelerator: %s)",
+            len(compiled),
+            "enabled" if self._accelerator.available else "disabled",
+        )
+
+    def _flush_hit_counts(self):
+        """Flush accumulated hit counts to DB in a single batch."""
+        with self._hit_counts_lock:
+            if not self._hit_counts:
+                return
+            snapshot = self._hit_counts
+            self._hit_counts = {}
+            self._last_flush = time.monotonic()
+
+        if not self._store:
+            return
+
+        try:
+            with self._store._lock:
+                conn = self._store._connect()
+                for rule_name, count in snapshot.items():
+                    conn.execute(
+                        "UPDATE rules SET hit_count = hit_count + ? WHERE name = ?",
+                        (count, rule_name),
+                    )
+                conn.commit()
+            log.debug("hit counts flushed: %d rules updated", len(snapshot))
+        except Exception as e:
+            log.warning("hit count flush failed: %s", e)
+
+    def _record_hit(self, rule_name):
+        """Accumulate a hit in memory. Flush periodically."""
+        with self._hit_counts_lock:
+            self._hit_counts[rule_name] = self._hit_counts.get(rule_name, 0) + 1
+
+        # Check if flush is due (outside lock to avoid holding it during I/O)
+        if time.monotonic() - self._last_flush >= _HIT_COUNT_FLUSH_INTERVAL:
+            self._flush_hit_counts()
 
     def on_rules_changed(self, change_type, rule_name=None):
         """Handle rule changes from store callback.
@@ -163,18 +237,30 @@ class RulesDetector(BaseDetector):
             self.reload()
             return
         if change_type == "delete":
-            self._compiled_rules = [r for r in self._compiled_rules if r["name"] != rule_name]
+            new_rules = [r for r in self._compiled_rules if r["name"] != rule_name]
+            new_acc = AhoCorasickAccelerator()
+            new_acc.build(new_rules)
+            self._accelerator = new_acc
+            self._compiled_rules = new_rules
             return
         # "create" or "update" — fetch and compile just this one rule
         if not self._store:
             return
         rule = self._store.get_rule_by_name(rule_name)
         if rule is None or not rule.get("enabled"):
-            self._compiled_rules = [r for r in self._compiled_rules if r["name"] != rule_name]
+            new_rules = [r for r in self._compiled_rules if r["name"] != rule_name]
+            new_acc = AhoCorasickAccelerator()
+            new_acc.build(new_rules)
+            self._accelerator = new_acc
+            self._compiled_rules = new_rules
             return
         if rule.get("tier") == "pro":
             if self._license is None or not self._license.is_valid():
-                self._compiled_rules = [r for r in self._compiled_rules if r["name"] != rule_name]
+                new_rules = [r for r in self._compiled_rules if r["name"] != rule_name]
+                new_acc = AhoCorasickAccelerator()
+                new_acc.build(new_rules)
+                self._accelerator = new_acc
+                self._compiled_rules = new_rules
                 return
         try:
             compiled = re.compile(rule["pattern"])
@@ -190,6 +276,7 @@ class RulesDetector(BaseDetector):
             "severity": rule["severity"],
             "action": rule.get("action", ""),
             "validator": validator,
+            "hit_count": rule.get("hit_count", 0),
         }
         # Build new list: replace existing or append. Creates a new list
         # object for atomic swap — never mutate in-place during concurrent iteration.
@@ -203,13 +290,45 @@ class RulesDetector(BaseDetector):
                 new_list.append(r)
         if not replaced:
             new_list.append(new_entry)
+        new_acc = AhoCorasickAccelerator()
+        new_acc.build(new_list)
+        self._accelerator = new_acc
         self._compiled_rules = new_list
 
     def scan(self, fields: List[ScanField], allowlist: AllowlistMatcher) -> List[Finding]:
-        """Scan fields against all compiled rules."""
+        """Scan fields against compiled rules with Aho-Corasick pre-filtering.
+
+        Performance path:
+        1. Pre-filter: Aho-Corasick narrows candidates per field
+        2. Hot-first: rules sorted by hit_count DESC (set at reload)
+        3. Early termination: stop on first match for block action
+        """
         findings = []
+        compiled_rules = self._compiled_rules  # snapshot for thread safety
+        accelerator = self._accelerator
+        metrics = self._metrics
+
         for field in fields:
-            for rule in self._compiled_rules:
+            # Pre-filter: get candidate rule indices for this field's text
+            candidates = accelerator.filter(field.text)
+
+            if log.isEnabledFor(logging.DEBUG):
+                ratio = accelerator.filter_ratio(candidates)
+                log.debug(
+                    "pre-filter: %d rules -> %d candidates (%.1f%% filtered) for %s",
+                    len(compiled_rules),
+                    len(candidates),
+                    ratio * 100,
+                    field.path,
+                )
+
+            for idx in candidates:
+                if idx >= len(compiled_rules):
+                    continue
+                rule = compiled_rules[idx]
+
+                t0 = time.monotonic() if metrics else 0
+
                 for match in rule["compiled"].finditer(field.text):
                     # Prefer first capture group (the secret value) over
                     # full match (which may include keyword prefix like "password=")
@@ -236,4 +355,30 @@ class RulesDetector(BaseDetector):
                             action=rule["action"],
                         )
                     )
+                    # Record hit for hot-first ordering
+                    self._record_hit(rule["name"])
+
+                    # Record metrics for Pro performance dashboard
+                    if metrics:
+                        elapsed_ms = (time.monotonic() - t0) * 1000
+                        try:
+                            metrics.record(rule["name"], elapsed_ms)
+                        except Exception:
+                            pass
+
+                    # Early termination: if this rule's action is block,
+                    # no need to check remaining rules for this field
+                    if rule["action"] == "block":
+                        log.debug(
+                            "early termination: block after match on '%s'",
+                            rule["name"],
+                        )
+                        break  # break inner finditer loop
+
+                else:
+                    # finditer loop completed without break — continue to next rule
+                    continue
+                # finditer broke (block match) — break out of candidates loop too
+                break
+
         return findings

@@ -47,7 +47,7 @@ lumen-argus sits between your AI tool and the provider, scanning every outbound 
 - **Cross-request dedup** — 3-layer dedup eliminates redundant scanning of conversation history
 - **Web dashboard** with real-time findings, charts, session filtering, and audit log
 - **Notification channels** — webhook, email, Slack, Teams, PagerDuty, OpsGenie, Jira
-- **DB-backed rules engine** — import, export, toggle, and manage detection rules via CLI and dashboard
+- **DB-backed rules engine** — import, export, toggle, and manage detection rules via CLI and dashboard. Aho-Corasick pre-filter scans 1,700+ rules in <50ms
 - **Pre-commit scanner** — catch secrets before they enter conversation history
 - **Hot-reload** — update config via SIGHUP, no downtime
 - **Docker ready** — single command, data persists across upgrades

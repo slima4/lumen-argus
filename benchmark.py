@@ -582,6 +582,11 @@ def main():
         action="store_true",
         help="Run both payload and dedup benchmarks",
     )
+    parser.add_argument(
+        "--rules",
+        action="store_true",
+        help="Benchmark RulesDetector with Aho-Corasick pre-filter (1700+ rules)",
+    )
     args = parser.parse_args()
 
     run_payload = not args.dedup or args.all
@@ -635,6 +640,80 @@ def main():
                 print("    done: %s" % label)
 
         print(format_results(dedup_results))
+
+    if args.rules or args.all:
+        print("\n  === Rules Engine Benchmark (Aho-Corasick) ===\n")
+        run_rules_benchmark(args.iterations)
+
+
+def run_rules_benchmark(iterations: int = 50):
+    """Benchmark RulesDetector with Aho-Corasick pre-filter."""
+    import os
+    import shutil
+    import tempfile
+
+    from lumen_argus.analytics.store import AnalyticsStore
+    from lumen_argus.detectors.rules import RulesDetector
+    from lumen_argus.models import ScanField
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        store = AnalyticsStore(db_path=os.path.join(tmpdir, "bench.db"))
+
+        # Import community rules
+        rules_path = os.path.join(os.path.dirname(__file__), "lumen_argus", "rules", "community.json")
+        if os.path.exists(rules_path):
+            import json as _json
+
+            with open(rules_path) as f:
+                data = _json.load(f)
+            rules = data.get("rules", data) if isinstance(data, dict) else data
+            result = store.import_rules(rules, tier="community")
+            print("    loaded %d community rules" % result["created"])
+        else:
+            print("    WARNING: community.json not found")
+            return
+
+        detector = RulesDetector(store=store)
+        allowlist = AllowlistMatcher()
+
+        print("    accelerator: %s" % ("enabled" if detector._accelerator.available else "DISABLED"))
+        stats = detector._accelerator.stats
+        print(
+            "    rules: %d total, %d with literals, %d fallback"
+            % (stats["total_rules"], stats["rules_with_literals"], stats["fallback_rules"])
+        )
+
+        # Test with different payload sizes
+        for label, text_size in [("3KB", 3000), ("80KB", 80_000), ("184KB", 184_000)]:
+            text = _random_code(text_size)
+            # Add a detectable secret to measure actual match path
+            text += "\nsk_live_xxxtestvaluehere\n"
+
+            fields = [ScanField(path="messages[0].content", text=text)]
+
+            # Warmup
+            detector.scan(fields, allowlist)
+
+            times = []
+            for _ in range(iterations):
+                t0 = time.monotonic()
+                findings = detector.scan(fields, allowlist)
+                elapsed = (time.monotonic() - t0) * 1000
+                times.append(elapsed)
+
+            med = statistics.median(times)
+            p95 = sorted(times)[int(len(times) * 0.95)]
+            p99 = sorted(times)[int(len(times) * 0.99)]
+            target = "PASS" if med < 50 else "FAIL"
+
+            print(
+                "    %s: median=%.1fms  P95=%.1fms  P99=%.1fms  findings=%d  [%s]"
+                % (label, med, p95, p99, len(findings), target)
+            )
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 if __name__ == "__main__":

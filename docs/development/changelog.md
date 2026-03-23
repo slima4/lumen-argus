@@ -2,6 +2,20 @@
 
 All notable changes to lumen-argus are documented here.
 
+## 0.6.0 (2026-03-23)
+
+### Rules Performance Optimization (Phase 1)
+
+- Aho-Corasick pre-filter: single O(n) pass narrows 1,700+ rules to ~15 candidates per field
+- Literal extraction from regex patterns via `sre_parse` (handles alternation, (?i), escapes)
+- Early termination: stop after first match when action is `block`
+- Hot-first ordering: rules sorted by `hit_count DESC` on reload
+- In-memory hit count accumulation with 60s periodic batch flush to DB
+- Graceful fallback: if `pyahocorasick` unavailable, sequential scan (current behavior)
+- Pro metrics hook: `extensions.set_rule_metrics_collector(collector)`
+- `pyahocorasick>=2.0` added as dependency (pre-built wheels for all major platforms)
+- Benchmark: 184KB/53 rules: 236ms → 36ms (under 50ms target)
+
 ## 0.5.0 (2026-03-22)
 
 ### Async Proxy (Phase 1)

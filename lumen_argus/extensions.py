@@ -60,6 +60,7 @@ class ExtensionRegistry:
         self._license_checker = None  # type: Optional[object]
         self._response_scan_hook = None  # type: Optional[Callable]
         self._ws_connection_hook = None  # type: Optional[Callable]
+        self._rule_metrics_collector = None  # type: Optional[object]
 
     def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
         """Register an additional detector.
@@ -320,6 +321,18 @@ class ExtensionRegistry:
 
     def get_ws_connection_hook(self) -> Optional[Callable]:
         return self._ws_connection_hook
+
+    def set_rule_metrics_collector(self, collector) -> None:
+        """Register a rule metrics collector for Pro performance dashboard.
+
+        Collector interface: collector.record(rule_name: str, elapsed_ms: float)
+        Pro creates a RuleMetricsCollector with in-memory aggregation
+        and periodic async flush to the rule_metrics table.
+        """
+        self._rule_metrics_collector = collector
+
+    def get_rule_metrics_collector(self):
+        return self._rule_metrics_collector
 
     def set_license_checker(self, checker) -> None:
         """Register a license checker with is_valid() method for rule-tier gating."""
