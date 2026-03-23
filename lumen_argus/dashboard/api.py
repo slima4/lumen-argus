@@ -12,6 +12,7 @@ import signal
 import time
 
 from lumen_argus import __version__
+from lumen_argus.log_utils import sanitize_user_input
 
 log = logging.getLogger("argus.dashboard.api")
 
@@ -193,6 +194,10 @@ def _handle_config_update(body: bytes, config, store) -> tuple:
     if not isinstance(changes, dict) or not changes:
         log.debug("PUT /api/v1/config: empty or non-object body")
         return _json_response(400, {"error": "expected a JSON object with settings to update"})
+
+    # Sanitize all user input at the boundary — downstream code (logging,
+    # validation, storage) works with clean data, no per-call escaping.
+    changes = sanitize_user_input(changes)
 
     if not store:
         log.error("PUT /api/v1/config: analytics store not available")
@@ -456,10 +461,11 @@ def _handle_license_activation(body: bytes) -> tuple:
     except (json.JSONDecodeError, ValueError):
         return _json_response(400, {"error": "invalid JSON"})
 
+    data = sanitize_user_input(data)
     key = data.get("key", "").strip()
     if not key:
         return _json_response(400, {"error": "license key is required"})
-    if len(key) > 4096 or "\n" in key or "\r" in key:
+    if len(key) > 4096:
         return _json_response(400, {"error": "invalid license key format"})
 
     # Save to ~/.lumen-argus/license.key
@@ -570,7 +576,7 @@ def _handle_notifications(path, method, body, store, extensions, request_user=""
     # POST /api/v1/notifications/channels
     if path == "/api/v1/notifications/channels" and method == "POST":
         try:
-            data = json.loads(body)
+            data = sanitize_user_input(json.loads(body))
         except (json.JSONDecodeError, ValueError):
             return _json_response(400, {"error": "invalid JSON"})
         if not isinstance(data, dict):
@@ -608,7 +614,7 @@ def _handle_notifications(path, method, body, store, extensions, request_user=""
     # POST /api/v1/notifications/channels/batch
     if path == "/api/v1/notifications/channels/batch" and method == "POST":
         try:
-            data = json.loads(body)
+            data = sanitize_user_input(json.loads(body))
         except (json.JSONDecodeError, ValueError):
             return _json_response(400, {"error": "invalid JSON"})
         action = data.get("action", "")
@@ -649,7 +655,7 @@ def _handle_notifications(path, method, body, store, extensions, request_user=""
         # PUT /api/v1/notifications/channels/:id
         if method == "PUT" and sub is None:
             try:
-                data = json.loads(body)
+                data = sanitize_user_input(json.loads(body))
             except (json.JSONDecodeError, ValueError):
                 return _json_response(400, {"error": "invalid JSON"})
             if not isinstance(data, dict):
@@ -952,6 +958,9 @@ def _handle_pipeline_update(body: bytes, config, store) -> tuple:
         log.debug("PUT /api/v1/pipeline: empty or non-object body")
         return _json_response(400, {"error": "expected JSON object"})
 
+    # Sanitize all user input at the boundary
+    changes = sanitize_user_input(changes)
+
     log.debug("PUT /api/v1/pipeline: %d section(s) requested: %s", len(changes), list(changes.keys()))
 
     errors = []
@@ -1095,7 +1104,7 @@ def _handle_mcp_tools_add(body: bytes, store) -> tuple:
         return _json_response(500, {"error": "analytics store not available"})
 
     try:
-        data = json.loads(body)
+        data = sanitize_user_input(json.loads(body))
     except (json.JSONDecodeError, UnicodeDecodeError):
         log.debug("POST /api/v1/mcp/tools: invalid JSON body")
         return _json_response(400, {"error": "invalid JSON"})

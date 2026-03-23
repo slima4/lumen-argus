@@ -49,8 +49,8 @@ def build_ssl_context(ca_bundle: str = "", verify_ssl: bool = True) -> ssl.SSLCo
     if not verify_ssl:
         log.warning("TLS certificate verification is disabled — do not use in production")
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        ctx.check_hostname = False  # NOSONAR — intentional: user explicitly set verify_ssl=false
+        ctx.verify_mode = ssl.CERT_NONE  # NOSONAR
         return ctx
 
     ctx = ssl.create_default_context()

@@ -559,7 +559,7 @@ def main(argv=None):
         def _reload():
             # Run reload in thread pool to avoid blocking event loop
             # with file I/O (YAML load) and SQLite reads (config overrides).
-            asyncio.ensure_future(
+            task = asyncio.ensure_future(
                 asyncio.to_thread(
                     _do_reload,
                     server,
@@ -572,6 +572,8 @@ def main(argv=None):
                     log,
                 )
             )
+            server._background_tasks.add(task)
+            task.add_done_callback(server._background_tasks.discard)
 
         loop.add_signal_handler(signal.SIGINT, _shutdown)
         loop.add_signal_handler(signal.SIGTERM, _shutdown)

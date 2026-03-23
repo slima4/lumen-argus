@@ -11,6 +11,35 @@ from lumen_argus.provider import DEFAULT_UPSTREAMS
 
 
 # ---------------------------------------------------------------------------
+# Input sanitization — log injection prevention (OWASP / Sonar S5145)
+# ---------------------------------------------------------------------------
+
+_CONTROL_CHAR_RE = re.compile(r"[\r\n\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _strip_control_chars(value: str) -> str:
+    """Strip control characters that enable log injection / CRLF attacks."""
+    return _CONTROL_CHAR_RE.sub("", value)
+
+
+def sanitize_user_input(data):
+    """Recursively sanitize user-controlled data at the API boundary.
+
+    Strips control characters from all string keys and values in dicts,
+    lists, and scalar strings. Non-string scalars pass through unchanged.
+    Call once at the entry point — all downstream code (logging, storage,
+    validation) then works with clean data.
+    """
+    if isinstance(data, dict):
+        return {_strip_control_chars(str(k)): sanitize_user_input(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [sanitize_user_input(item) for item in data]
+    if isinstance(data, str):
+        return _strip_control_chars(data)
+    return data
+
+
+# ---------------------------------------------------------------------------
 # Secure rotating file handler and setup
 # ---------------------------------------------------------------------------
 
