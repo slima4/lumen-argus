@@ -128,10 +128,10 @@ def main(argv=None):
     validate_parser = rules_sub.add_parser("validate", help="Validate rules JSON file")
     validate_parser.add_argument("--file", type=str, required=True, help="JSON file to validate")
 
-    # mcp-wrap subcommand
+    # mcp subcommand — unified MCP proxy with multiple transport modes
     mcp_parser = subparsers.add_parser(
-        "mcp-wrap",
-        help="Wrap an MCP server with DLP scanning (stdio transport)",
+        "mcp",
+        help="MCP scanning proxy (stdio, HTTP, WebSocket transport modes)",
     )
     mcp_parser.add_argument("--config", type=str, default=None, help="Config file path")
     mcp_parser.add_argument(
@@ -142,6 +142,58 @@ def main(argv=None):
         help="Log level (default: warning)",
     )
     mcp_parser.add_argument(
+        "--upstream",
+        type=str,
+        default=None,
+        help="Upstream MCP server URL (http://, https://, ws://, wss://)",
+    )
+    mcp_parser.add_argument(
+        "--listen",
+        type=str,
+        default=None,
+        help="Listen address for HTTP reverse proxy mode (HOST:PORT)",
+    )
+    mcp_parser.add_argument(
+        "--action",
+        type=str,
+        default=None,
+        choices=["block", "alert", "log"],
+        help="Override default action for findings",
+    )
+    mcp_parser.add_argument(
+        "--env",
+        type=str,
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Pass additional env var to subprocess (repeatable)",
+    )
+    mcp_parser.add_argument(
+        "--no-env-filter",
+        action="store_true",
+        default=False,
+        help="Disable environment variable restriction for subprocess mode",
+    )
+    mcp_parser.add_argument(
+        "server_command",
+        nargs=argparse.REMAINDER,
+        help="MCP server command (after --)",
+    )
+
+    # mcp-wrap — deprecated alias for backward compatibility
+    mcp_wrap_parser = subparsers.add_parser(
+        "mcp-wrap",
+        help="(deprecated) Use 'lumen-argus mcp' instead",
+    )
+    mcp_wrap_parser.add_argument("--config", type=str, default=None, help="Config file path")
+    mcp_wrap_parser.add_argument(
+        "--log-level",
+        type=str,
+        default="warning",
+        choices=["debug", "info", "warning", "error"],
+        help="Log level (default: warning)",
+    )
+    mcp_wrap_parser.add_argument(
         "server_command",
         nargs=argparse.REMAINDER,
         help="MCP server command (after --)",
@@ -149,7 +201,7 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
 
-    if args.command in ("scan", "logs", "rules", "mcp-wrap"):
+    if args.command in ("scan", "logs", "rules", "mcp", "mcp-wrap"):
         # Set up minimal logging for non-serve commands so config
         # warnings (log.warning) display cleanly on stderr.
         _handler = logging.StreamHandler(sys.stderr)
@@ -161,7 +213,15 @@ def main(argv=None):
         elif args.command == "rules":
             _run_rules(args)
         elif args.command == "mcp-wrap":
-            _run_mcp_wrap(args)
+            print(
+                "WARNING: 'mcp-wrap' is deprecated. Use 'lumen-argus mcp -- <command>' instead.",
+                file=sys.stderr,
+            )
+            # Preserve old behavior: no env filter in deprecated alias
+            args.no_env_filter = True
+            _run_mcp(args)
+        elif args.command == "mcp":
+            _run_mcp(args)
         else:
             _run_logs(args)
         return
@@ -468,7 +528,7 @@ def main(argv=None):
     mcp_args_enabled = config.pipeline.mcp_arguments.enabled
     mcp_resp_enabled = config.pipeline.mcp_responses.enabled
     if mcp_args_enabled or mcp_resp_enabled:
-        from lumen_argus.mcp_scanner import MCPScanner
+        from lumen_argus.mcp.scanner import MCPScanner
 
         mcp_cfg = getattr(config, "mcp", None)
         allowed_tools = set(mcp_cfg.allowed_tools) if mcp_cfg and mcp_cfg.allowed_tools else set()
@@ -770,7 +830,7 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
         mcp_args_enabled = new_config.pipeline.mcp_arguments.enabled
         mcp_resp_enabled = new_config.pipeline.mcp_responses.enabled
         if mcp_args_enabled or mcp_resp_enabled:
-            from lumen_argus.mcp_scanner import MCPScanner as _MCPScanner
+            from lumen_argus.mcp.scanner import MCPScanner as _MCPScanner
 
             mcp_cfg = getattr(new_config, "mcp", None)
             allowed_tools = set(mcp_cfg.allowed_tools) if mcp_cfg and mcp_cfg.allowed_tools else set()
@@ -1051,26 +1111,38 @@ def _run_rules(args):
             print("  %d rules validated, 0 errors" % len(rules))
 
 
-def _run_mcp_wrap(args):
-    """Run the MCP stdio wrapper."""
+def _run_mcp(args):
+    """Run the unified MCP scanning proxy."""
     import asyncio
 
     log = logging.getLogger("argus.mcp")
 
     from lumen_argus.allowlist import AllowlistMatcher
     from lumen_argus.config import load_config
-    from lumen_argus.mcp_scanner import MCPScanner
-    from lumen_argus.mcp_wrap import _run_wrapper
+    from lumen_argus.mcp.scanner import MCPScanner
 
-    # Parse server command (strip leading --)
+    # Determine transport mode from flags
+    upstream = getattr(args, "upstream", None)
+    listen = getattr(args, "listen", None)
     cmd = args.server_command
     if cmd and cmd[0] == "--":
         cmd = cmd[1:]
-    if not cmd:
-        print("Error: No MCP server command provided. Usage: lumen-argus mcp-wrap -- <command>", file=sys.stderr)
+
+    # Validate mode
+    if listen and not upstream:
+        print("Error: --listen requires --upstream", file=sys.stderr)
+        sys.exit(1)
+    if not upstream and not cmd:
+        print(
+            "Error: Provide a server command (lumen-argus mcp -- <command>) or --upstream URL",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if upstream and cmd:
+        print("Error: Cannot use both --upstream and a server command", file=sys.stderr)
         sys.exit(1)
 
-    # Set log level for mcp-wrap
+    # Set log level
     log_level = getattr(logging, args.log_level.upper())
     logging.getLogger().setLevel(log_level)
 
@@ -1078,8 +1150,8 @@ def _run_mcp_wrap(args):
     config = load_config(config_path=args.config)
 
     # Build detectors (lightweight — no DB, no rules engine, just hardcoded patterns)
-    from lumen_argus.detectors.secrets import SecretsDetector
     from lumen_argus.detectors.pii import PIIDetector
+    from lumen_argus.detectors.secrets import SecretsDetector
 
     detectors = []
     if config.secrets.enabled:
@@ -1122,10 +1194,14 @@ def _run_mcp_wrap(args):
                 mcp_cfg.blocked_tools if mcp_cfg else [],
             )
         except Exception as e:
-            log.warning("mcp-wrap: could not load tool lists from DB: %s", e)
+            log.warning("mcp: could not load tool lists from DB: %s", e)
 
     allowed_tools = allowed_tools or None
     blocked_tools = blocked_tools or None
+
+    # Determine action (CLI flag > config)
+    action_override = getattr(args, "action", None)
+    action = action_override or config.pipeline.mcp_arguments.action or config.default_action
 
     scanner = MCPScanner(
         detectors=detectors,
@@ -1135,11 +1211,58 @@ def _run_mcp_wrap(args):
         scan_responses=config.pipeline.mcp_responses.enabled,
         allowed_tools=allowed_tools,
         blocked_tools=blocked_tools,
-        action=config.pipeline.mcp_arguments.action or config.default_action,
+        action=action,
     )
 
-    exit_code = asyncio.run(_run_wrapper(cmd, scanner))
-    sys.exit(exit_code)
+    # Dispatch to appropriate transport mode
+    if cmd:
+        # Stdio subprocess mode
+        from lumen_argus.mcp.proxy import run_stdio_proxy
+
+        env = None
+        no_env_filter = getattr(args, "no_env_filter", False)
+        if not no_env_filter:
+            from lumen_argus.mcp.env_filter import filter_env
+
+            extra_vars = {}
+            for item in getattr(args, "env", []):
+                if "=" in item:
+                    k, v = item.split("=", 1)
+                    extra_vars[k] = v
+            env_allowlist = getattr(mcp_cfg, "env_allowlist", []) if mcp_cfg else []
+            env = filter_env(extra_vars=extra_vars, config_allowlist=env_allowlist)
+
+        exit_code = asyncio.run(run_stdio_proxy(cmd, scanner, env=env))
+        sys.exit(exit_code)
+
+    elif listen:
+        # HTTP reverse proxy mode
+        from lumen_argus.mcp.proxy import run_http_listener
+
+        # Parse listen address
+        if ":" in listen:
+            parts = listen.rsplit(":", 1)
+            host = parts[0] or "127.0.0.1"
+            port = int(parts[1])
+        else:
+            host = "127.0.0.1"
+            port = int(listen)
+
+        asyncio.run(run_http_listener(host, port, upstream, scanner))
+
+    elif upstream.startswith("ws://") or upstream.startswith("wss://"):
+        # WebSocket bridge mode
+        from lumen_argus.mcp.proxy import run_ws_bridge
+
+        exit_code = asyncio.run(run_ws_bridge(upstream, scanner))
+        sys.exit(exit_code)
+
+    else:
+        # HTTP bridge mode (stdio client -> HTTP upstream)
+        from lumen_argus.mcp.proxy import run_http_bridge
+
+        exit_code = asyncio.run(run_http_bridge(upstream, scanner))
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":

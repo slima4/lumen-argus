@@ -4,6 +4,21 @@ All notable changes to lumen-argus are documented here.
 
 ## 0.6.0 (2026-03-23)
 
+### MCP Proxy Unification (Phase 1)
+
+- Unified `lumen-argus mcp` subcommand replaces `mcp-wrap` with flag-based transport modes
+- Stdio subprocess mode: `lumen-argus mcp -- <command>` (replaces `mcp-wrap`)
+- HTTP bridge mode: `lumen-argus mcp --upstream http://...` (stdio client, HTTP upstream)
+- HTTP reverse proxy mode: `lumen-argus mcp --listen :8089 --upstream http://...`
+- WebSocket bridge mode: `lumen-argus mcp --upstream ws://...`
+- New `lumen_argus/mcp/` package with transport abstraction (scanner, transport, proxy, env_filter)
+- Environment variable restriction for subprocess mode — safe vars only by default,
+  `--env KEY=VALUE` to add more, `--no-env-filter` to disable
+- Config: `mcp.env_filter`, `mcp.env_allowlist` in YAML
+- `--action` flag to override default action per invocation
+- `mcp-wrap` retained as deprecated alias (prints warning, same behavior)
+- Old `mcp_scanner.py` and `mcp_wrap.py` are backward-compatible import shims
+
 ### Rules Performance Optimization (Phase 1)
 
 - Aho-Corasick pre-filter: single O(n) pass narrows 1,700+ rules to ~15 candidates per field

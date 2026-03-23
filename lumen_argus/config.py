@@ -102,6 +102,8 @@ class DedupConfig:
 class MCPConfig:
     allowed_tools: List[str] = field(default_factory=list)  # empty = all allowed
     blocked_tools: List[str] = field(default_factory=list)  # deny-list
+    env_filter: bool = True  # restrict subprocess environment
+    env_allowlist: List[str] = field(default_factory=list)  # additional safe vars
 
 
 @dataclass
@@ -909,6 +911,10 @@ def _apply_config(config: Config, data: dict) -> None:
             config.mcp.allowed_tools = [str(t) for t in mcp_data["allowed_tools"]]
         if "blocked_tools" in mcp_data and isinstance(mcp_data["blocked_tools"], list):
             config.mcp.blocked_tools = [str(t) for t in mcp_data["blocked_tools"]]
+        if "env_filter" in mcp_data:
+            config.mcp.env_filter = bool(mcp_data["env_filter"])
+        if "env_allowlist" in mcp_data and isinstance(mcp_data["env_allowlist"], list):
+            config.mcp.env_allowlist = [str(v) for v in mcp_data["env_allowlist"]]
 
     # Pipeline stages
     pipeline = data.get("pipeline", {})

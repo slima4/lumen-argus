@@ -37,7 +37,7 @@ lumen-argus sits between your AI tool and the provider, scanning every outbound 
 - **34+ secret patterns** with Shannon entropy analysis
 - **Encoding-aware scanning** — catches base64, hex, URL, Unicode encoded secrets
 - **Response scanning** — detect secrets and prompt injection in API responses (async, zero latency)
-- **MCP proxy** — wrap stdio MCP servers with DLP scanning (`lumen-argus mcp-wrap`)
+- **MCP proxy** — scan MCP traffic across stdio, HTTP, and WebSocket transports (`lumen-argus mcp`)
 - **WebSocket proxy** — bidirectional frame scanning on same port (opt-in, `ws://localhost:8080/ws?url=ws://target`)
 - **8 PII detectors** with validation (Luhn, SSN ranges, IBAN checksums)
 - **Proprietary code** detection (file patterns + keyword matching)
@@ -151,8 +151,14 @@ Injection patterns are stored as rules in the DB (detector=`injection`) — visi
 Wrap any stdio MCP server with DLP scanning — tool call arguments and responses are scanned bidirectionally:
 
 ```bash
-# Instead of running the MCP server directly:
-lumen-argus mcp-wrap -- npx @modelcontextprotocol/server-filesystem /path
+# Stdio subprocess — wrap a local MCP server
+lumen-argus mcp -- npx @modelcontextprotocol/server-filesystem /path
+
+# HTTP bridge — stdio client, HTTP upstream
+lumen-argus mcp --upstream http://localhost:3000/mcp
+
+# HTTP reverse proxy — scan MCP traffic centrally
+lumen-argus mcp --listen :8089 --upstream http://mcp-server:3000
 ```
 
 ```json
@@ -160,13 +166,13 @@ lumen-argus mcp-wrap -- npx @modelcontextprotocol/server-filesystem /path
   "mcpServers": {
     "filesystem": {
       "command": "lumen-argus",
-      "args": ["mcp-wrap", "--", "npx", "@modelcontextprotocol/server-filesystem", "/path"]
+      "args": ["mcp", "--", "npx", "@modelcontextprotocol/server-filesystem", "/path"]
     }
   }
 }
 ```
 
-Configurable tool allow/block lists via `mcp:` config section or dashboard API. MCP over HTTP is automatically detected and scanned by the proxy — no config needed. `mcp-wrap` covers the stdio transport gap for local MCP servers.
+Configurable tool allow/block lists via `mcp:` config section or dashboard API. MCP over HTTP is automatically detected and scanned by the main proxy — no config needed. `lumen-argus mcp` covers all other transports: stdio subprocess for local MCP servers, HTTP bridge for remote servers, and HTTP reverse proxy for centralized enterprise scanning.
 
 ## Rules Engine
 

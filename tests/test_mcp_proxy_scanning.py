@@ -8,7 +8,7 @@ import unittest
 from lumen_argus.allowlist import AllowlistMatcher
 from lumen_argus.analytics.store import AnalyticsStore
 from lumen_argus.detectors.secrets import SecretsDetector
-from lumen_argus.mcp_scanner import (
+from lumen_argus.mcp.scanner import (
     MCPScanner,
     detect_mcp_request,
     detect_mcp_response,
@@ -248,7 +248,7 @@ class TestDetectToolsList(unittest.TestCase):
     """Test tools/list response detection."""
 
     def test_tools_list_detected(self):
-        from lumen_argus.mcp_scanner import detect_mcp_tools_list_response
+        from lumen_argus.mcp.scanner import detect_mcp_tools_list_response
 
         body = json.dumps(
             {
@@ -269,19 +269,19 @@ class TestDetectToolsList(unittest.TestCase):
         self.assertEqual(tools[0]["description"], "Read a file")
 
     def test_non_tools_list_returns_none(self):
-        from lumen_argus.mcp_scanner import detect_mcp_tools_list_response
+        from lumen_argus.mcp.scanner import detect_mcp_tools_list_response
 
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": []}}).encode()
         self.assertIsNone(detect_mcp_tools_list_response(body))
 
     def test_detect_mcp_method(self):
-        from lumen_argus.mcp_scanner import detect_mcp_method
+        from lumen_argus.mcp.scanner import detect_mcp_method
 
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode()
         self.assertEqual(detect_mcp_method(body), "tools/list")
 
     def test_detect_mcp_method_non_jsonrpc(self):
-        from lumen_argus.mcp_scanner import detect_mcp_method
+        from lumen_argus.mcp.scanner import detect_mcp_method
 
         body = json.dumps({"model": "test"}).encode()
         self.assertIsNone(detect_mcp_method(body))

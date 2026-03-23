@@ -4,7 +4,7 @@ import unittest
 
 from lumen_argus.allowlist import AllowlistMatcher
 from lumen_argus.detectors.secrets import SecretsDetector
-from lumen_argus.mcp_scanner import MCPScanner, extract_text_from_content
+from lumen_argus.mcp.scanner import MCPScanner, extract_text_from_content
 from lumen_argus.response_scanner import ResponseScanner
 
 

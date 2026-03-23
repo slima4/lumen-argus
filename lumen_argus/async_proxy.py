@@ -782,7 +782,7 @@ async def _do_forward(
         _mcp_info = None
         _mcp_method = None
         if body and server.mcp_scanner:
-            from lumen_argus.mcp_scanner import detect_mcp_method, detect_mcp_request
+            from lumen_argus.mcp.scanner import detect_mcp_method, detect_mcp_request
 
             _mcp_method = detect_mcp_method(body)
             _mcp_info = detect_mcp_request(body) if _mcp_method == "tools/call" else None
@@ -1213,7 +1213,7 @@ async def _do_forward(
 
         # MCP response scanning
         if _mcp_info and server.mcp_scanner and resp_text:
-            from lumen_argus.mcp_scanner import detect_mcp_response
+            from lumen_argus.mcp.scanner import detect_mcp_response
 
             mcp_resp = detect_mcp_response(resp_text.encode("utf-8", errors="ignore"))
             if mcp_resp and mcp_resp.get("content"):
@@ -1235,7 +1235,7 @@ async def _do_forward(
 
         # MCP tools/list response — capture tool descriptions
         if _mcp_method == "tools/list" and server.mcp_scanner and resp_text:
-            from lumen_argus.mcp_scanner import detect_mcp_tools_list_response
+            from lumen_argus.mcp.scanner import detect_mcp_tools_list_response
 
             tools_meta = detect_mcp_tools_list_response(resp_text.encode("utf-8", errors="ignore"))
             if tools_meta and server.extensions:
