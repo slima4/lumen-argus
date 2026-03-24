@@ -134,9 +134,11 @@ Async mode (community): response is forwarded immediately, scanned in background
 
 ### MCP Scanning
 
-**Modules:** `lumen_argus/mcp_scanner.py` (shared), `lumen_argus/mcp_wrap.py` (stdio relay)
+**Package:** `lumen_argus/mcp/` — unified scanning proxy with 4 transport modes.
 
-The `MCPScanner` (in `mcp_scanner.py`) is shared between two MCP scanning paths:
+**Modules:** `scanner.py` (MCPScanner), `proxy.py` (transport loops), `transport.py` (StdioTransport, HTTPClientTransport, WebSocketClientTransport), `request_tracker.py`, `tool_scanner.py`, `session_binding.py`, `env_filter.py`.
+
+The `MCPScanner` is shared between two MCP scanning paths:
 
 **1. HTTP proxy MCP scanning (enterprise/k8s):**
 The proxy automatically detects MCP `tools/call` JSON-RPC in HTTP request bodies via `detect_mcp_request()`. When detected:
@@ -146,8 +148,18 @@ The proxy automatically detects MCP `tools/call` JSON-RPC in HTTP request bodies
 - Scans response `result.content` text via `detect_mcp_response()`
 - No developer-side config needed — works automatically for MCP over HTTP
 
-**2. stdio MCP scanning (local development):**
-The `mcp-wrap` CLI wraps stdio MCP servers as a subprocess relay, scanning JSON-RPC messages bidirectionally.
+**2. `lumen-argus mcp` — 4 transport modes:**
+- **Stdio subprocess** (`-- cmd`): spawns MCP server as child process, relays stdin/stdout with scanning. Restricted environment (safe vars only).
+- **HTTP bridge** (`--upstream http://...`): stdio client → HTTP upstream.
+- **HTTP reverse proxy** (`--listen :PORT --upstream http://...`): accepts HTTP POST, forwards to upstream.
+- **WebSocket bridge** (`--upstream ws://...`): stdio client → WebSocket upstream.
+
+**Security layers** (all modes):
+- **Confused deputy protection**: tracks outbound request IDs, rejects unsolicited responses (FIFO eviction at 10K)
+- **Tool description poisoning detection**: 7 pattern categories scanned on `tools/list` response
+- **Tool drift detection**: SHA-256 baselines in `mcp_tool_baselines` DB table, detects definition changes
+- **Session binding** (opt-in): validates `tools/call` against tool inventory from first `tools/list`
+- **Environment restriction** (stdio only): strips sensitive vars from child process environment
 
 Both paths share:
 - **Request scanning**: serializes tool arguments to text, runs existing detectors

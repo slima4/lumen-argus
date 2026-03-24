@@ -286,8 +286,8 @@ Per-stage settings. Each stage accepts:
 | `encoding_decode` | Request | `true` | Yes | Decode base64, hex, URL, Unicode before scanning |
 | `response_secrets` | Response | `false` | Yes | Detect secrets in API responses (async, zero latency) |
 | `response_injection` | Response | `false` | Yes | Detect prompt injection in responses (async, zero latency) |
-| `mcp_arguments` | MCP | `true` | Yes | Scan MCP tool call arguments (via mcp-wrap) |
-| `mcp_responses` | MCP | `true` | Yes | Scan MCP tool return values (via mcp-wrap) |
+| `mcp_arguments` | MCP | `true` | Yes | Scan MCP tool call arguments (via lumen-argus mcp) |
+| `mcp_responses` | MCP | `true` | Yes | Scan MCP tool return values (via lumen-argus mcp) |
 | `websocket_outbound` | WebSocket | `false` | Yes | Scan outbound WebSocket frames (opt-in, same port) |
 | `websocket_inbound` | WebSocket | `false` | Yes | Scan inbound WebSocket frames (opt-in, same port) |
 
@@ -352,12 +352,21 @@ websocket:
 
 ## `mcp`
 
-MCP tool allow/block lists for the `mcp-wrap` CLI command.
+MCP scanning proxy configuration for `lumen-argus mcp`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `mcp.allowed_tools` | `list[str]` | `[]` | Allowlist of tool names. Empty = all tools allowed. |
 | `mcp.blocked_tools` | `list[str]` | `[]` | Blocklist of tool names. Takes precedence over allowlist. |
+| `mcp.env_filter` | `bool` | `true` | Restrict subprocess environment to safe vars only. |
+| `mcp.env_allowlist` | `list[str]` | `[]` | Additional env vars to pass through when env_filter is enabled. |
+| `mcp.request_tracking` | `bool` | `true` | Confused deputy protection — track outbound request IDs. |
+| `mcp.unsolicited_response_action` | `str` | `"warn"` | Action on unsolicited response: `warn` or `block`. |
+| `mcp.scan_tool_descriptions` | `bool` | `true` | Scan tool descriptions for poisoning patterns. |
+| `mcp.detect_drift` | `bool` | `true` | Track tool definition changes via SHA-256 baselines. |
+| `mcp.drift_action` | `str` | `"alert"` | Action on tool drift: `alert` or `block`. |
+| `mcp.session_binding` | `bool` | `false` | Validate tools/call against first tools/list inventory (opt-in). |
+| `mcp.unknown_tool_action` | `str` | `"warn"` | Action on unknown tool: `warn` or `block`. |
 
 ```yaml title="Example"
 mcp:
@@ -365,6 +374,12 @@ mcp:
   blocked_tools:
     - execute_command
     - run_shell
+  env_filter: true
+  request_tracking: true
+  scan_tool_descriptions: true
+  detect_drift: true
+  drift_action: alert
+  session_binding: false
 ```
 
 ---

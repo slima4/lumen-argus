@@ -148,7 +148,7 @@ Injection patterns are stored as rules in the DB (detector=`injection`) — visi
 
 ### MCP Server Scanning
 
-Wrap any stdio MCP server with DLP scanning — tool call arguments and responses are scanned bidirectionally:
+Wrap any MCP server with DLP scanning — tool call arguments and responses are scanned bidirectionally across 4 transport modes:
 
 ```bash
 # Stdio subprocess — wrap a local MCP server
@@ -159,6 +159,9 @@ lumen-argus mcp --upstream http://localhost:3000/mcp
 
 # HTTP reverse proxy — scan MCP traffic centrally
 lumen-argus mcp --listen :8089 --upstream http://mcp-server:3000
+
+# WebSocket bridge — stdio client, WS upstream
+lumen-argus mcp --upstream ws://localhost:9000/mcp
 ```
 
 ```json
@@ -172,7 +175,14 @@ lumen-argus mcp --listen :8089 --upstream http://mcp-server:3000
 }
 ```
 
-Configurable tool allow/block lists via `mcp:` config section or dashboard API. MCP over HTTP is automatically detected and scanned by the main proxy — no config needed. `lumen-argus mcp` covers all other transports: stdio subprocess for local MCP servers, HTTP bridge for remote servers, and HTTP reverse proxy for centralized enterprise scanning.
+**Security layers** (all enabled by default):
+- **Tool description poisoning detection** — 7 pattern categories (injection tags, file exfiltration, cross-tool manipulation, dangerous exec, download+exec, script injection, command injection)
+- **Tool drift detection** — SHA-256 baselines detect definition changes between sessions (rug-pull prevention)
+- **Confused deputy protection** — tracks outbound request IDs, rejects unsolicited responses
+- **Session binding** — validates `tools/call` against tool inventory from first `tools/list` (opt-in)
+- **Environment restriction** — subprocess mode strips secrets from child process environment
+
+Configurable tool allow/block lists via `mcp:` config section or dashboard API. MCP over HTTP is automatically detected and scanned by the main proxy — no config needed. `lumen-argus mcp` covers all other transports: stdio subprocess for local MCP servers, HTTP bridge for remote servers, HTTP reverse proxy for centralized enterprise scanning, and WebSocket bridge for WS-based MCP servers.
 
 ## Rules Engine
 
