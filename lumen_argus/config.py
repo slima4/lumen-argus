@@ -100,6 +100,13 @@ class DedupConfig:
 
 
 @dataclass
+class AdaptiveEnforcementConfig:
+    enabled: bool = False
+    escalation_threshold: float = 5.0
+    decay_per_clean: float = 0.5
+
+
+@dataclass
 class MCPConfig:
     allowed_tools: List[str] = field(default_factory=list)  # empty = all allowed
     blocked_tools: List[str] = field(default_factory=list)  # deny-list
@@ -112,6 +119,12 @@ class MCPConfig:
     drift_action: str = "alert"  # alert|block
     session_binding: bool = False  # tool inventory validation (opt-in)
     unknown_tool_action: str = "warn"  # warn|block
+    # Pro: policy rules for tool call validation
+    tool_policies: List[dict] = field(default_factory=list)
+    # Pro: adaptive enforcement config
+    adaptive_enforcement: AdaptiveEnforcementConfig = field(default_factory=AdaptiveEnforcementConfig)
+    # Pro: custom chain detection patterns
+    chain_signatures: List[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -939,6 +952,23 @@ def _apply_config(config: Config, data: dict) -> None:
             config.mcp.session_binding = bool(mcp_data["session_binding"])
         if "unknown_tool_action" in mcp_data:
             config.mcp.unknown_tool_action = str(mcp_data["unknown_tool_action"])
+        if "tool_policies" in mcp_data:
+            policies = mcp_data["tool_policies"]
+            if isinstance(policies, list):
+                config.mcp.tool_policies = [p for p in policies if isinstance(p, dict)]
+        if "adaptive_enforcement" in mcp_data:
+            ae = mcp_data["adaptive_enforcement"]
+            if isinstance(ae, dict):
+                if "enabled" in ae:
+                    config.mcp.adaptive_enforcement.enabled = bool(ae["enabled"])
+                if "escalation_threshold" in ae:
+                    config.mcp.adaptive_enforcement.escalation_threshold = float(ae["escalation_threshold"])
+                if "decay_per_clean" in ae:
+                    config.mcp.adaptive_enforcement.decay_per_clean = float(ae["decay_per_clean"])
+        if "chain_signatures" in mcp_data:
+            chains = mcp_data["chain_signatures"]
+            if isinstance(chains, list):
+                config.mcp.chain_signatures = [c for c in chains if isinstance(c, dict)]
 
     # Pipeline stages
     pipeline = data.get("pipeline", {})
