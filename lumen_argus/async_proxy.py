@@ -355,6 +355,7 @@ async def _handle_metrics(request: web.Request) -> web.Response:
     server = request.app[_PROXY_KEY]
     text = server.stats.prometheus_metrics(
         active_requests=server.active_requests,
+        active_ws_connections=server.active_ws_connections,
     )
     metrics_hook = server.extensions.get_metrics_hook() if server.extensions else None
     if metrics_hook:

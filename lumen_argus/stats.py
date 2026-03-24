@@ -68,7 +68,7 @@ class SessionStats:
         """Escape a Prometheus label value."""
         return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
-    def prometheus_metrics(self, active_requests: int = 0) -> str:
+    def prometheus_metrics(self, active_requests: int = 0, active_ws_connections: int = 0) -> str:
         """Return stats in Prometheus exposition format (plain text)."""
         with self._lock:
             lines = []
@@ -77,6 +77,11 @@ class SessionStats:
             lines.append("# HELP lumen_argus_active_requests Current in-flight requests")
             lines.append("# TYPE lumen_argus_active_requests gauge")
             lines.append("lumen_argus_active_requests %d" % active_requests)
+
+            # Active WebSocket connections gauge
+            lines.append("# HELP lumen_argus_ws_active_connections Current active WebSocket connections")
+            lines.append("# TYPE lumen_argus_ws_active_connections gauge")
+            lines.append("lumen_argus_ws_active_connections %d" % active_ws_connections)
 
             # Request counters by action
             lines.append("# HELP lumen_argus_requests_total Total proxied requests by action")
