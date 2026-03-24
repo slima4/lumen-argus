@@ -4,7 +4,6 @@ import json
 import os
 import shutil
 import tempfile
-import time
 import unittest
 
 from lumen_argus.analytics.store import AnalyticsStore
@@ -540,11 +539,30 @@ class TestPipelineRulesIntegration(unittest.TestCase):
         self.assertIn("test_key", types)
 
 
+def _patch_reload_event(detector):
+    """Patch a RulesDetector's reload() to signal a threading.Event on each call.
+
+    Returns (event, original_reload). Call event.wait(timeout) to block until
+    the next reload completes, then event.clear() before triggering another.
+    """
+    import threading as _threading
+
+    event = _threading.Event()
+    original = detector.reload
+
+    def _signalling_reload():
+        original()
+        event.set()
+
+    detector.reload = _signalling_reload
+    return event, original
+
+
 class TestRulesChangeCallback(unittest.TestCase):
     """Test live rule updates via store callback.
 
-    Uses a short rebuild_delay (0.05s) so tests complete quickly.
-    The _wait_rebuild() helper waits for the debounced async rebuild.
+    Uses a short rebuild_delay (0.05s) and threading.Event synchronization
+    so tests are deterministic regardless of CI runner speed.
     """
 
     _REBUILD_DELAY = 0.05
@@ -559,14 +577,16 @@ class TestRulesChangeCallback(unittest.TestCase):
             tier="community",
         )
         self.detector = RulesDetector(store=self.store, rebuild_delay=self._REBUILD_DELAY)
+        self._reload_event, self._original_reload = _patch_reload_event(self.detector)
         self.store.set_rules_change_callback(self.detector.on_rules_changed)
 
     def tearDown(self):
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _wait_rebuild(self):
-        """Wait for debounced rebuild to complete."""
-        time.sleep(self._REBUILD_DELAY * 8)
+        """Wait for debounced rebuild to complete (deterministic)."""
+        self.assertTrue(self._reload_event.wait(timeout=5.0), "rebuild did not complete")
+        self._reload_event.clear()
 
     def test_update_rule_action_takes_effect_after_rebuild(self):
         """Changing a rule's action via API is reflected after async rebuild."""
@@ -743,10 +763,10 @@ class TestDebouncedRebuild(unittest.TestCase):
 
     def test_on_rules_changed_schedules_async_rebuild(self):
         """on_rules_changed() returns immediately, rebuild happens after delay."""
-        det = RulesDetector(store=self.store, rebuild_delay=0.1)
+        det = RulesDetector(store=self.store, rebuild_delay=0.05)
+        reload_event, _ = _patch_reload_event(det)
         initial_rules = det._compiled_rules
 
-        # Add a new rule to the DB
         self.store.create_rule(
             {
                 "name": "r2",
@@ -761,19 +781,18 @@ class TestDebouncedRebuild(unittest.TestCase):
         det.on_rules_changed("create", "r2")
 
         # Rules should still be the old set immediately after
-        # (rebuild is scheduled, not executed yet)
         self.assertEqual(len(det._compiled_rules), len(initial_rules))
 
-        # Wait for debounce + rebuild to complete
-        time.sleep(0.5)
+        # Wait for rebuild to complete (deterministic)
+        self.assertTrue(reload_event.wait(timeout=5.0), "rebuild did not complete")
         names = [r["name"] for r in det._compiled_rules]
         self.assertIn("r2", names)
 
     def test_debounce_coalesces_rapid_changes(self):
         """Multiple rapid on_rules_changed() calls result in a single rebuild."""
-        det = RulesDetector(store=self.store, rebuild_delay=0.2)
+        det = RulesDetector(store=self.store, rebuild_delay=0.1)
+        reload_event, _ = _patch_reload_event(det)
 
-        # Add several rules to DB
         for i in range(5):
             self.store.create_rule(
                 {
@@ -785,34 +804,39 @@ class TestDebouncedRebuild(unittest.TestCase):
                 }
             )
 
-        # Fire 5 changes in rapid succession
+        # Fire 5 changes in rapid succession — debounce resets timer each time
         for i in range(5):
             det.on_rules_changed("create", "rapid_%d" % i)
 
         # Wait for single coalesced rebuild
-        time.sleep(0.8)
+        self.assertTrue(reload_event.wait(timeout=5.0), "rebuild did not complete")
         names = [r["name"] for r in det._compiled_rules]
         for i in range(5):
             self.assertIn("rapid_%d" % i, names)
 
     def test_dirty_during_rebuild_triggers_second_rebuild(self):
         """If _dirty is set during rebuild, another rebuild is scheduled."""
+        import threading as _threading
+
         det = RulesDetector(store=self.store, rebuild_delay=0.05)
 
-        # Patch reload to be slow so we can set _dirty during it
         original_reload = det.reload
         reload_count = {"n": 0}
+        in_first_reload = _threading.Event()
+        continue_first_reload = _threading.Event()
+        second_reload_done = _threading.Event()
 
-        def slow_reload():
+        def gated_reload():
             reload_count["n"] += 1
-            original_reload()
             if reload_count["n"] == 1:
-                # Simulate a change arriving during the first rebuild
-                time.sleep(0.05)
+                in_first_reload.set()
+                continue_first_reload.wait(timeout=5.0)
+            original_reload()
+            if reload_count["n"] >= 2:
+                second_reload_done.set()
 
-        det.reload = slow_reload
+        det.reload = gated_reload
 
-        # Add rule to DB
         self.store.create_rule(
             {
                 "name": "dirty_test",
@@ -825,14 +849,19 @@ class TestDebouncedRebuild(unittest.TestCase):
 
         # Trigger first rebuild
         det.on_rules_changed("create", "dirty_test")
-        time.sleep(0.1)
 
-        # Set dirty while first rebuild is (probably) running
-        det._dirty = True
-        det._schedule_rebuild()
+        # Wait until the first rebuild is running
+        self.assertTrue(in_first_reload.wait(timeout=5.0), "first rebuild did not start")
 
-        # Wait for both rebuilds to complete
-        time.sleep(0.8)
+        # Set dirty while rebuild is guaranteed to be in progress
+        with det._debounce_lock:
+            det._dirty = True
+
+        # Let the first rebuild finish — it will see _dirty and reschedule
+        continue_first_reload.set()
+
+        # Wait for second rebuild to complete (deterministic)
+        self.assertTrue(second_reload_done.wait(timeout=5.0), "second rebuild did not complete")
         self.assertGreaterEqual(reload_count["n"], 2)
 
     def test_configurable_delay(self):

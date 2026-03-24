@@ -484,8 +484,6 @@ async def run_http_listener(
     # Run until cancelled
     try:
         await asyncio.Event().wait()
-    except asyncio.CancelledError:
-        pass
     finally:
         await upstream.close()
         await runner.cleanup()
@@ -622,10 +620,7 @@ async def run_ws_bridge(
             )
             for task in pending:
                 task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+            await asyncio.gather(*pending, return_exceptions=True)
 
     log.info("mcp: WebSocket bridge closed")
     return 0
