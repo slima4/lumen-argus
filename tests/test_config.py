@@ -224,6 +224,79 @@ detectors:
         warnings = _validate_config(data, "test")
         self.assertEqual(len(warnings), 0)
 
+    def test_unknown_mcp_key(self):
+        data = {"mcp": {"allowed_tools": [], "magic_mode": True}}
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("mcp.magic_mode" in w for w in warnings))
+
+    def test_valid_mcp_keys(self):
+        data = {
+            "mcp": {
+                "allowed_tools": [],
+                "blocked_tools": [],
+                "env_filter": True,
+                "env_allowlist": [],
+                "request_tracking": True,
+                "unsolicited_response_action": "warn",
+                "scan_tool_descriptions": True,
+                "detect_drift": True,
+                "drift_action": "alert",
+                "session_binding": False,
+                "unknown_tool_action": "warn",
+                "tool_policies": [],
+                "adaptive_enforcement": {"enabled": False},
+                "chain_signatures": [],
+            }
+        }
+        warnings = _validate_config(data, "test")
+        self.assertEqual(len(warnings), 0)
+
+    def test_invalid_mcp_action(self):
+        data = {"mcp": {"drift_action": "nuke"}}
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("drift_action" in w and "nuke" in w for w in warnings))
+
+    def test_mcp_action_values_restricted(self):
+        """unsolicited_response_action and unknown_tool_action only accept warn/block."""
+        data = {"mcp": {"unsolicited_response_action": "alert"}}
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("unsolicited_response_action" in w for w in warnings))
+
+        data = {"mcp": {"unknown_tool_action": "log"}}
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("unknown_tool_action" in w for w in warnings))
+
+    def test_mcp_drift_action_restricted(self):
+        """drift_action only accepts alert/block."""
+        data = {"mcp": {"drift_action": "warn"}}
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("drift_action" in w for w in warnings))
+
+    def test_unknown_adaptive_enforcement_key(self):
+        data = {"mcp": {"adaptive_enforcement": {"enabled": True, "magic": 42}}}
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("adaptive_enforcement.magic" in w for w in warnings))
+
+    def test_unknown_websocket_key(self):
+        data = {"websocket": {"max_frame_size": 1024, "compression": True}}
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("websocket.compression" in w for w in warnings))
+
+    def test_valid_websocket_keys(self):
+        data = {"websocket": {"max_frame_size": 1024, "allowed_origins": []}}
+        warnings = _validate_config(data, "test")
+        self.assertEqual(len(warnings), 0)
+
+    def test_unknown_rules_key(self):
+        data = {"rules": {"auto_import": True, "max_rules": 9999}}
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("rules.max_rules" in w for w in warnings))
+
+    def test_valid_rules_keys(self):
+        data = {"rules": {"auto_import": True, "rebuild_delay_seconds": 2.0}}
+        warnings = _validate_config(data, "test")
+        self.assertEqual(len(warnings), 0)
+
 
 class TestFlowSequences(unittest.TestCase):
     def test_flow_sequence_parsed(self):

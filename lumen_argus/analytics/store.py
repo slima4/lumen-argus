@@ -19,6 +19,9 @@ from pathlib import Path
 from lumen_argus.analytics.findings import FindingsRepository, _SCHEMA
 from lumen_argus.analytics.rules import RulesRepository, _RULES_SCHEMA
 from lumen_argus.analytics.channels import ChannelsRepository, _NOTIFICATION_SCHEMA
+from lumen_argus.analytics.config_overrides import ConfigOverridesRepository, _CONFIG_OVERRIDES_SCHEMA
+from lumen_argus.analytics.mcp_tool_lists import MCPToolListsRepository, _MCP_TOOL_LISTS_SCHEMA
+from lumen_argus.analytics.ws_connections import WebSocketConnectionsRepository, _WS_CONNECTIONS_SCHEMA
 
 log = logging.getLogger("argus.analytics")
 
@@ -30,26 +33,6 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 """
 
-_CONFIG_OVERRIDES_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS config_overrides (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-"""
-
-_MCP_TOOL_LISTS_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS mcp_tool_lists (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    list_type TEXT NOT NULL,
-    tool_name TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT 'api',
-    created_at TEXT NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_tool_unique
-    ON mcp_tool_lists(list_type, tool_name);
-"""
-
 _MCP_DETECTED_TOOLS_SCHEMA = """\
 CREATE TABLE IF NOT EXISTS mcp_detected_tools (
     tool_name TEXT PRIMARY KEY,
@@ -59,22 +42,6 @@ CREATE TABLE IF NOT EXISTS mcp_detected_tools (
     last_seen TEXT NOT NULL,
     call_count INTEGER NOT NULL DEFAULT 1
 );
-"""
-
-_WS_CONNECTIONS_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS ws_connections (
-    id TEXT PRIMARY KEY,
-    target_url TEXT NOT NULL,
-    origin TEXT NOT NULL DEFAULT '',
-    connected_at REAL NOT NULL,
-    disconnected_at REAL,
-    duration_seconds REAL,
-    frames_sent INTEGER NOT NULL DEFAULT 0,
-    frames_received INTEGER NOT NULL DEFAULT 0,
-    findings_count INTEGER NOT NULL DEFAULT 0,
-    close_code INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_ws_conn_at ON ws_connections(connected_at);
 """
 
 _MCP_TOOL_CALLS_SCHEMA = """\
@@ -103,37 +70,6 @@ CREATE TABLE IF NOT EXISTS mcp_tool_baselines (
 );
 """
 
-# Community-editable config keys with validation rules
-_VALID_CONFIG_KEYS = {
-    "proxy.timeout",
-    "proxy.retries",
-    "default_action",
-    "detectors.secrets.enabled",
-    "detectors.pii.enabled",
-    "detectors.proprietary.enabled",
-    "detectors.secrets.action",
-    "detectors.pii.action",
-    "detectors.proprietary.action",
-    "pipeline.stages.outbound_dlp.enabled",
-    "pipeline.stages.encoding_decode.enabled",
-    "pipeline.stages.encoding_decode.base64",
-    "pipeline.stages.encoding_decode.hex",
-    "pipeline.stages.encoding_decode.url",
-    "pipeline.stages.encoding_decode.unicode",
-    "pipeline.stages.encoding_decode.max_depth",
-    "pipeline.stages.encoding_decode.min_decoded_length",
-    "pipeline.stages.encoding_decode.max_decoded_length",
-    "pipeline.stages.response_secrets.enabled",
-    "pipeline.stages.response_injection.enabled",
-    "pipeline.stages.mcp_arguments.enabled",
-    "pipeline.stages.mcp_responses.enabled",
-    "pipeline.stages.websocket_outbound.enabled",
-    "pipeline.stages.websocket_inbound.enabled",
-    "pipeline.parallel_batching",
-}
-
-_VALID_ACTIONS = {"log", "alert", "block"}
-
 
 class AnalyticsStore:
     """Thread-safe SQLite store for finding history and trend queries.
@@ -153,6 +89,9 @@ class AnalyticsStore:
         self.findings = FindingsRepository(self)
         self.rules = RulesRepository(self)
         self.channels = ChannelsRepository(self)
+        self.config_overrides = ConfigOverridesRepository(self)
+        self.mcp_tool_lists = MCPToolListsRepository(self)
+        self.ws_connections = WebSocketConnectionsRepository(self)
 
     def _ensure_db(self) -> None:
         """Create the database and schema if they don't exist."""
@@ -367,285 +306,54 @@ class AnalyticsStore:
     def reconcile_yaml_channels(self, yaml_channels, channel_limit=None):
         return self.channels.reconcile_yaml(yaml_channels, channel_limit=channel_limit)
 
-    # --- WebSocket connections ---
+    # --- WebSocket connections facade ---
 
     def record_ws_connection_open(self, connection_id, target_url, origin, timestamp):
-        """Record a new WebSocket connection."""
-        with self._lock:
-            with self._connect() as conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO ws_connections (id, target_url, origin, connected_at) VALUES (?, ?, ?, ?)",
-                    (connection_id, target_url, origin or "", timestamp),
-                )
-        log.debug("ws connection open: %s -> %s", connection_id[:8], target_url)
+        return self.ws_connections.record_open(connection_id, target_url, origin, timestamp)
 
     def record_ws_connection_close(
         self, connection_id, timestamp, duration, frames_sent, frames_received, findings_count, close_code
     ):
-        """Update a WebSocket connection record on close."""
-        with self._lock:
-            with self._connect() as conn:
-                conn.execute(
-                    "UPDATE ws_connections SET disconnected_at = ?, duration_seconds = ?, "
-                    "frames_sent = ?, frames_received = ?, findings_count = findings_count + ?, "
-                    "close_code = ? WHERE id = ?",
-                    (timestamp, duration, frames_sent, frames_received, findings_count, close_code, connection_id),
-                )
-        log.debug(
-            "ws connection close: %s (%.1fs, %d/%d frames)", connection_id[:8], duration, frames_sent, frames_received
+        return self.ws_connections.record_close(
+            connection_id, timestamp, duration, frames_sent, frames_received, findings_count, close_code
         )
 
     def increment_ws_findings(self, connection_id, count):
-        """Increment findings count for a WebSocket connection."""
-        if count <= 0:
-            return
-        with self._lock:
-            with self._connect() as conn:
-                conn.execute(
-                    "UPDATE ws_connections SET findings_count = findings_count + ? WHERE id = ?",
-                    (count, connection_id),
-                )
+        return self.ws_connections.increment_findings(connection_id, count)
 
     def get_ws_connections(self, limit=50, offset=0):
-        """Return recent WebSocket connections, newest first."""
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id, target_url, origin, connected_at, disconnected_at, "
-                "duration_seconds, frames_sent, frames_received, findings_count, close_code "
-                "FROM ws_connections ORDER BY connected_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
-        return [dict(r) for r in rows]
+        return self.ws_connections.get_connections(limit=limit, offset=offset)
 
     def get_ws_stats(self, days=7):
-        """Return aggregate WebSocket stats for the given period."""
-        cutoff = time.time() - (days * 86400)
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) as total_connections, "
-                "COALESCE(SUM(frames_sent), 0) as total_frames_sent, "
-                "COALESCE(SUM(frames_received), 0) as total_frames_received, "
-                "COALESCE(AVG(duration_seconds), 0) as avg_duration, "
-                "COALESCE(SUM(findings_count), 0) as total_findings "
-                "FROM ws_connections WHERE connected_at >= ?",
-                (cutoff,),
-            ).fetchone()
-        return (
-            dict(row)
-            if row
-            else {
-                "total_connections": 0,
-                "total_frames_sent": 0,
-                "total_frames_received": 0,
-                "avg_duration": 0,
-                "total_findings": 0,
-            }
-        )
+        return self.ws_connections.get_stats(days=days)
 
     def cleanup_ws_connections(self, retention_days=365):
-        """Delete WebSocket connection records older than retention_days."""
-        cutoff = time.time() - (retention_days * 86400)
-        with self._lock:
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    "DELETE FROM ws_connections WHERE connected_at < ?",
-                    (cutoff,),
-                )
-                deleted = cursor.rowcount
-        if deleted:
-            log.info("ws connections cleanup: %d entries deleted (older than %d days)", deleted, retention_days)
-        return deleted
+        return self.ws_connections.cleanup(retention_days=retention_days)
 
-    # --- Config overrides ---
+    # --- Config overrides facade ---
 
     def get_config_overrides(self):
-        """Return all config overrides as a dict."""
-        with self._connect() as conn:
-            rows = conn.execute("SELECT key, value FROM config_overrides").fetchall()
-        overrides = {row["key"]: row["value"] for row in rows}
-        log.debug("loaded %d config override(s) from DB", len(overrides))
-        return overrides
+        return self.config_overrides.get_all()
 
     def set_config_override(self, key, value):
-        """Set a config override. Validates key and value."""
-        if key not in _VALID_CONFIG_KEYS:
-            raise ValueError("Invalid config key: %s" % key)
-
-        value = str(value)
-        if key == "proxy.timeout":
-            try:
-                v = int(value)
-            except (ValueError, TypeError):
-                raise ValueError("timeout must be an integer (1-300)")
-            if v < 1 or v > 300:
-                raise ValueError("timeout must be 1-300")
-        elif key == "proxy.retries":
-            try:
-                v = int(value)
-            except (ValueError, TypeError):
-                raise ValueError("retries must be an integer (0-10)")
-            if v < 0 or v > 10:
-                raise ValueError("retries must be 0-10")
-        elif key in (
-            "default_action",
-            "detectors.secrets.action",
-            "detectors.pii.action",
-            "detectors.proprietary.action",
-        ):
-            if value not in _VALID_ACTIONS:
-                raise ValueError("action must be one of: %s" % ", ".join(sorted(_VALID_ACTIONS)))
-        elif key == "pipeline.parallel_batching":
-            if value.lower() not in ("true", "false"):
-                raise ValueError("parallel_batching must be true or false")
-            value = value.lower()
-        elif key.endswith(".enabled") or key.endswith((".base64", ".hex", ".url", ".unicode")):
-            if value.lower() not in ("true", "false"):
-                raise ValueError("%s must be true or false" % key)
-            value = value.lower()  # normalize
-        elif key == "pipeline.stages.encoding_decode.max_depth":
-            try:
-                v = int(value)
-            except (ValueError, TypeError):
-                raise ValueError("max_depth must be an integer (1-5)")
-            if v < 1 or v > 5:
-                raise ValueError("max_depth must be 1-5")
-        elif key == "pipeline.stages.encoding_decode.min_decoded_length":
-            try:
-                v = int(value)
-            except (ValueError, TypeError):
-                raise ValueError("min_decoded_length must be an integer (1-100)")
-            if v < 1 or v > 100:
-                raise ValueError("min_decoded_length must be 1-100")
-        elif key == "pipeline.stages.encoding_decode.max_decoded_length":
-            try:
-                v = int(value)
-            except (ValueError, TypeError):
-                raise ValueError("max_decoded_length must be an integer (100-1000000)")
-            if v < 100 or v > 1_000_000:
-                raise ValueError("max_decoded_length must be 100-1000000")
-
-        now = self._now()
-        with self._lock:
-            with self._connect() as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO config_overrides (key, value, updated_at) VALUES (?, ?, ?)",
-                    (key, value, now),
-                )
-        log.debug("config override stored: %s = %s", key, value)
+        return self.config_overrides.set(key, value)
 
     def delete_config_override(self, key):
-        """Delete a config override (revert to YAML default)."""
-        with self._lock:
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    "DELETE FROM config_overrides WHERE key = ?",
-                    (key,),
-                )
-                deleted = cursor.rowcount > 0
-        if deleted:
-            log.info("config override deleted: %s (reverted to YAML default)", key)
-        return deleted
+        return self.config_overrides.delete(key)
 
-    # --- MCP tool lists ---
+    # --- MCP tool lists facade ---
 
     def get_mcp_tool_lists(self):
-        """Return MCP tool lists: {"allowed": [...], "blocked": [...]}."""
-        log.debug("loading MCP tool lists from DB")
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id, list_type, tool_name, source, created_at FROM mcp_tool_lists ORDER BY id"
-            ).fetchall()
-        result = {"allowed": [], "blocked": []}
-        for row in rows:
-            entry = {
-                "id": row["id"],
-                "tool_name": row["tool_name"],
-                "source": row["source"],
-                "created_at": row["created_at"],
-            }
-            lt = row["list_type"]
-            if lt in result:
-                result[lt].append(entry)
-        return result
+        return self.mcp_tool_lists.get_lists()
 
     def add_mcp_tool_entry(self, list_type, tool_name):
-        """Add a tool to the allowed or blocked list. Returns the new entry ID."""
-        if list_type not in ("allowed", "blocked"):
-            raise ValueError("list_type must be 'allowed' or 'blocked'")
-        if not tool_name or not tool_name.strip():
-            raise ValueError("tool_name must not be empty")
-        tool_name = tool_name.strip()
-        now = self._now()
-        with self._lock:
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    "INSERT OR IGNORE INTO mcp_tool_lists (list_type, tool_name, source, created_at) "
-                    "VALUES (?, ?, 'api', ?)",
-                    (list_type, tool_name, now),
-                )
-                entry_id = cursor.lastrowid if cursor.rowcount > 0 else None
-        if entry_id:
-            log.info("mcp tool list: added '%s' to %s list (id=%d)", tool_name, list_type, entry_id)
-        else:
-            log.debug("mcp tool list: '%s' already in %s list (ignored)", tool_name, list_type)
-        return entry_id
+        return self.mcp_tool_lists.add_entry(list_type, tool_name)
 
     def delete_mcp_tool_entry(self, entry_id):
-        """Remove an MCP tool list entry by ID. Returns True if deleted."""
-        with self._lock:
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    "DELETE FROM mcp_tool_lists WHERE id = ? AND source = 'api'",
-                    (entry_id,),
-                )
-                deleted = cursor.rowcount > 0
-        if deleted:
-            log.info("mcp tool list: deleted entry %d", entry_id)
-        return deleted
+        return self.mcp_tool_lists.delete_entry(entry_id)
 
     def reconcile_mcp_tool_lists(self, yaml_allowed, yaml_blocked):
-        """Reconcile YAML tool lists with DB entries.
-
-        YAML entries are authoritative for source='config'. API entries untouched.
-        Same pattern as reconcile_yaml_channels.
-        """
-        now = self._now()
-        created = 0
-        deleted = 0
-        with self._lock:
-            with self._connect() as conn:
-                # Get current config-sourced entries
-                existing = conn.execute(
-                    "SELECT id, list_type, tool_name FROM mcp_tool_lists WHERE source = 'config'"
-                ).fetchall()
-                existing_set = {(r["list_type"], r["tool_name"]): r["id"] for r in existing}
-
-                # Build target set from YAML
-                target = set()
-                for t in yaml_allowed or []:
-                    target.add(("allowed", str(t)))
-                for t in yaml_blocked or []:
-                    target.add(("blocked", str(t)))
-
-                # Delete entries not in YAML
-                for key, eid in existing_set.items():
-                    if key not in target:
-                        conn.execute("DELETE FROM mcp_tool_lists WHERE id = ?", (eid,))
-                        deleted += 1
-
-                # Create entries in YAML but not in DB
-                for lt, tn in target:
-                    if (lt, tn) not in existing_set:
-                        conn.execute(
-                            "INSERT OR IGNORE INTO mcp_tool_lists "
-                            "(list_type, tool_name, source, created_at) VALUES (?, ?, 'config', ?)",
-                            (lt, tn, now),
-                        )
-                        created += 1
-
-        if created or deleted:
-            log.info("mcp tool lists reconciled: %d created, %d deleted", created, deleted)
-        return {"created": created, "deleted": deleted}
+        return self.mcp_tool_lists.reconcile(yaml_allowed, yaml_blocked)
 
     # --- MCP detected tools tracking ---
 

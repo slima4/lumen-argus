@@ -641,6 +641,65 @@ def _validate_config(data: dict, source: str) -> List[str]:
             if val is not None and not isinstance(val, list):
                 warnings.append("%s: allowlists.%s must be a list" % (source, list_key))
 
+    # Validate MCP section
+    mcp = data.get("mcp", {})
+    if isinstance(mcp, dict):
+        _known_mcp_keys = {
+            "allowed_tools",
+            "blocked_tools",
+            "env_filter",
+            "env_allowlist",
+            "request_tracking",
+            "unsolicited_response_action",
+            "scan_tool_descriptions",
+            "detect_drift",
+            "drift_action",
+            "session_binding",
+            "unknown_tool_action",
+            "tool_policies",
+            "adaptive_enforcement",
+            "chain_signatures",
+        }
+        for key in mcp:
+            if key not in _known_mcp_keys:
+                warnings.append("%s: unknown key 'mcp.%s'" % (source, key))
+        # Validate action fields — each has different valid values
+        _mcp_action_values = {
+            "unsolicited_response_action": {"warn", "block"},
+            "drift_action": {"alert", "block"},
+            "unknown_tool_action": {"warn", "block"},
+        }
+        for action_key, valid_vals in _mcp_action_values.items():
+            if action_key in mcp:
+                val = str(mcp[action_key])
+                if val not in valid_vals:
+                    warnings.append(
+                        "%s: mcp.%s '%s' is not valid (expected: %s)"
+                        % (source, action_key, val, ", ".join(sorted(valid_vals)))
+                    )
+        ae = mcp.get("adaptive_enforcement", {})
+        if isinstance(ae, dict):
+            _known_ae_keys = {"enabled", "escalation_threshold", "decay_per_clean"}
+            for key in ae:
+                if key not in _known_ae_keys:
+                    warnings.append("%s: unknown key 'mcp.adaptive_enforcement.%s'" % (source, key))
+
+    # Validate WebSocket section
+    ws = data.get("websocket", {})
+    if isinstance(ws, dict):
+        _known_ws_keys = {"max_frame_size", "allowed_origins"}
+        for key in ws:
+            if key not in _known_ws_keys:
+                warnings.append("%s: unknown key 'websocket.%s'" % (source, key))
+
+    # Validate rules section
+    rules = data.get("rules", {})
+    if isinstance(rules, dict):
+        _known_rules_keys = {"auto_import", "rebuild_delay_seconds"}
+        for key in rules:
+            if key not in _known_rules_keys:
+                warnings.append("%s: unknown key 'rules.%s'" % (source, key))
+
     return warnings
 
 

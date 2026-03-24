@@ -62,6 +62,109 @@ def _signal_escalation(escalation_fn, signal_type: str, session_id: str, details
         return None
 
 
+def _jsonrpc_error(msg_id, message: str) -> dict:
+    """Build a JSON-RPC 2.0 error response."""
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "error": {"code": -32600, "message": message},
+    }
+
+
+def _check_tools_call(
+    msg: dict,
+    scanner: MCPScanner,
+    action: str,
+    policy_engine,
+    escalation_fn,
+    session_id: str = "",
+) -> Optional[dict]:
+    """Validate a tools/call request: session binding → policy engine → scanner.
+
+    Returns a JSON-RPC error dict if the call should be blocked, or None if
+    it should be forwarded. Fires escalation signals as side effects.
+
+    All 4 transport modes call this for tools/call requests.
+    """
+    msg_id = msg.get("id")
+    tool_name = msg.get("params", {}).get("name", "")
+    arguments = msg.get("params", {}).get("arguments", {})
+
+    # Session binding check
+    if scanner.session_binding and not scanner.session_binding.validate_tool(tool_name):
+        _signal_escalation(escalation_fn, "unknown_tool", session_id, {"tool": tool_name})
+        if scanner.session_binding.should_block:
+            return _jsonrpc_error(msg_id, "Tool '%s' not in session baseline" % tool_name)
+
+    # Pro policy engine check
+    policy_findings = _run_policy_engine(policy_engine, tool_name, arguments)
+    if policy_findings and any(f.action == "block" for f in policy_findings):
+        _signal_escalation(escalation_fn, "block", session_id, {"tool": tool_name})
+        return _jsonrpc_error(msg_id, "Request blocked by policy: %s" % policy_findings[0].type)
+
+    # Scanner check
+    findings = scanner.scan_request(msg)
+    if findings and action == "block":
+        _signal_escalation(escalation_fn, "block", session_id, {"tool": tool_name})
+        return _jsonrpc_error(msg_id, "Request blocked by lumen-argus: sensitive data detected")
+
+    # Not blocked — signal near_miss or clean
+    if findings:
+        _signal_escalation(escalation_fn, "near_miss", session_id, {"tool": tool_name})
+    else:
+        _signal_escalation(escalation_fn, "clean", session_id, {"tool": tool_name})
+    return None
+
+
+def _handle_response(
+    msg: dict,
+    pending_requests: dict,
+    scanner: MCPScanner,
+    escalation_fn,
+    session_id: str = "",
+) -> bool:
+    """Process an MCP response: confused deputy check, response scan, tools/list handling.
+
+    Returns True if the response should be forwarded, False if it should be dropped.
+
+    All 4 transport modes call this for response messages.
+    """
+    msg_id = msg.get("id")
+
+    # Confused deputy check
+    if scanner.request_tracker and "result" in msg:
+        if not scanner.request_tracker.validate(msg_id):
+            if scanner.request_tracker.should_block:
+                return False  # drop unsolicited response
+
+    if "result" in msg:
+        req_method = pending_requests.pop(msg_id, "")
+        if req_method == "tools/call":
+            findings = scanner.scan_response(msg, req_method)
+            if findings:
+                log.debug("mcp response findings: %d", len(findings))
+        elif req_method == "tools/list":
+            tools = msg.get("result", {}).get("tools", [])
+            if isinstance(tools, list):
+                log.debug("mcp: tools/list response: %d tools", len(tools))
+                tl_findings = scanner.process_tools_list(tools)
+                for f in tl_findings:
+                    if f.type == "tool_drift":
+                        _signal_escalation(escalation_fn, "drift", session_id, {"tool": f.location.rsplit(".", 1)[-1]})
+
+    return True  # forward
+
+
+def _track_outbound(msg: dict, pending_requests: dict, scanner: MCPScanner) -> None:
+    """Track an outbound request for confused deputy protection and method correlation."""
+    method = msg.get("method", "")
+    msg_id = msg.get("id")
+    if msg_id is not None and method:
+        pending_requests[msg_id] = method
+    if scanner.request_tracker:
+        scanner.request_tracker.track(msg_id)
+
+
 # Maximum request body size for HTTP listener mode (10 MB).
 _MAX_BODY_SIZE = 10 * 1024 * 1024
 
@@ -136,69 +239,15 @@ async def run_stdio_proxy(
                     continue
 
                 method = m.get("method", "")
-                msg_id = m.get("id")
 
                 if method == "tools/call":
-                    # Session binding check
-                    tool_name = m.get("params", {}).get("name", "")
-                    arguments = m.get("params", {}).get("arguments", {})
-                    if scanner.session_binding and not scanner.session_binding.validate_tool(tool_name):
-                        _signal_escalation(escalation_fn, "unknown_tool", "", {"tool": tool_name})
-                        if scanner.session_binding.should_block:
-                            error_resp = {
-                                "jsonrpc": "2.0",
-                                "id": msg_id,
-                                "error": {
-                                    "code": -32600,
-                                    "message": "Tool '%s' not in session baseline" % tool_name,
-                                },
-                            }
-                            await _write_stdout(json.dumps(error_resp).encode() + b"\n")
-                            continue
-
-                    # Pro policy engine check
-                    policy_findings = _run_policy_engine(policy_engine, tool_name, arguments)
-                    if policy_findings and any(f.action == "block" for f in policy_findings):
-                        _signal_escalation(escalation_fn, "block", "", {"tool": tool_name})
-                        error_resp = {
-                            "jsonrpc": "2.0",
-                            "id": msg_id,
-                            "error": {
-                                "code": -32600,
-                                "message": "Request blocked by policy: %s" % policy_findings[0].type,
-                            },
-                        }
-                        await _write_stdout(json.dumps(error_resp).encode() + b"\n")
+                    error = _check_tools_call(m, scanner, action, policy_engine, escalation_fn)
+                    if error:
+                        await _write_stdout(json.dumps(error).encode() + b"\n")
                         continue
 
-                    findings = scanner.scan_request(m)
-                    if findings and action == "block":
-                        _signal_escalation(escalation_fn, "block", "", {"tool": tool_name})
-                        error_resp = {
-                            "jsonrpc": "2.0",
-                            "id": msg_id,
-                            "error": {
-                                "code": -32600,
-                                "message": "Request blocked by lumen-argus: sensitive data detected",
-                            },
-                        }
-                        await _write_stdout(json.dumps(error_resp).encode() + b"\n")
-                    else:
-                        if findings:
-                            _signal_escalation(escalation_fn, "near_miss", "", {"tool": tool_name})
-                        else:
-                            _signal_escalation(escalation_fn, "clean", "", {"tool": tool_name})
-                        if msg_id is not None:
-                            pending_requests[msg_id] = "tools/call"
-                        if scanner.request_tracker:
-                            scanner.request_tracker.track(msg_id)
-                        forward.append(m)
-                else:
-                    if msg_id is not None and method:
-                        pending_requests[msg_id] = method
-                    if scanner.request_tracker:
-                        scanner.request_tracker.track(msg_id)
-                    forward.append(m)
+                _track_outbound(m, pending_requests, scanner)
+                forward.append(m)
 
             if forward:
                 if len(forward) == 1 and not isinstance(msg, list):
@@ -231,28 +280,8 @@ async def run_stdio_proxy(
                 await _write_stdout(line)
                 continue
 
-            msg_id = msg.get("id")
-
-            # Confused deputy check
-            if scanner.request_tracker and "result" in msg:
-                if not scanner.request_tracker.validate(msg_id):
-                    if scanner.request_tracker.should_block:
-                        continue  # drop unsolicited response
-
-            if "result" in msg:
-                req_method = pending_requests.pop(msg_id, "")
-                if req_method == "tools/call":
-                    findings = scanner.scan_response(msg, req_method)
-                    if findings:
-                        log.debug("mcp response findings: %d", len(findings))
-                elif req_method == "tools/list":
-                    tools = msg.get("result", {}).get("tools", [])
-                    if isinstance(tools, list):
-                        log.debug("mcp: tools/list response: %d tools", len(tools))
-                        tl_findings = scanner.process_tools_list(tools)
-                        for f in tl_findings:
-                            if f.type == "tool_drift":
-                                _signal_escalation(escalation_fn, "drift", "", {"tool": f.location.rsplit(".", 1)[-1]})
+            if not _handle_response(msg, pending_requests, scanner, escalation_fn):
+                continue  # drop unsolicited response
 
             await _write_stdout(line)
 
@@ -318,65 +347,15 @@ async def run_http_bridge(
                 # Scan outbound
                 if isinstance(msg, dict):
                     method = msg.get("method", "")
-                    msg_id = msg.get("id")
 
                     if method == "tools/call":
-                        tool_name = msg.get("params", {}).get("name", "")
-                        arguments = msg.get("params", {}).get("arguments", {})
-                        if scanner.session_binding and not scanner.session_binding.validate_tool(tool_name):
-                            _signal_escalation(escalation_fn, "unknown_tool", "", {"tool": tool_name})
-                            if scanner.session_binding.should_block:
-                                error_resp = {
-                                    "jsonrpc": "2.0",
-                                    "id": msg_id,
-                                    "error": {
-                                        "code": -32600,
-                                        "message": "Tool '%s' not in session baseline" % tool_name,
-                                    },
-                                }
-                                sys.stdout.buffer.write(json.dumps(error_resp).encode() + b"\n")
-                                sys.stdout.buffer.flush()
-                                continue
-
-                        # Pro policy engine check
-                        policy_findings = _run_policy_engine(policy_engine, tool_name, arguments)
-                        if policy_findings and any(f.action == "block" for f in policy_findings):
-                            _signal_escalation(escalation_fn, "block", "", {"tool": tool_name})
-                            error_resp = {
-                                "jsonrpc": "2.0",
-                                "id": msg_id,
-                                "error": {
-                                    "code": -32600,
-                                    "message": "Request blocked by policy: %s" % policy_findings[0].type,
-                                },
-                            }
-                            sys.stdout.buffer.write(json.dumps(error_resp).encode() + b"\n")
+                        error = _check_tools_call(msg, scanner, action, policy_engine, escalation_fn)
+                        if error:
+                            sys.stdout.buffer.write(json.dumps(error).encode() + b"\n")
                             sys.stdout.buffer.flush()
                             continue
 
-                        findings = scanner.scan_request(msg)
-                        if findings and action == "block":
-                            _signal_escalation(escalation_fn, "block", "", {"tool": tool_name})
-                            error_resp = {
-                                "jsonrpc": "2.0",
-                                "id": msg_id,
-                                "error": {
-                                    "code": -32600,
-                                    "message": "Request blocked by lumen-argus: sensitive data detected",
-                                },
-                            }
-                            sys.stdout.buffer.write(json.dumps(error_resp).encode() + b"\n")
-                            sys.stdout.buffer.flush()
-                            continue
-                        if findings:
-                            _signal_escalation(escalation_fn, "near_miss", "", {"tool": tool_name})
-                        else:
-                            _signal_escalation(escalation_fn, "clean", "", {"tool": tool_name})
-
-                    if msg_id is not None and method:
-                        pending_requests[msg_id] = method
-                    if scanner.request_tracker:
-                        scanner.request_tracker.track(msg_id)
+                    _track_outbound(msg, pending_requests, scanner)
 
                 # POST to upstream
                 resp_data = await transport.send_and_receive(data)
@@ -388,28 +367,7 @@ async def run_http_bridge(
                 try:
                     resp_msg = json.loads(resp_data)
                     if isinstance(resp_msg, dict):
-                        resp_id = resp_msg.get("id")
-                        # Confused deputy check
-                        if scanner.request_tracker and "result" in resp_msg:
-                            if not scanner.request_tracker.validate(resp_id):
-                                if scanner.request_tracker.should_block:
-                                    should_forward = False
-                        if "result" in resp_msg and should_forward:
-                            req_method = pending_requests.pop(resp_id, "")
-                            if req_method == "tools/call":
-                                findings = scanner.scan_response(resp_msg, req_method)
-                                if findings:
-                                    log.debug("mcp response findings: %d", len(findings))
-                            elif req_method == "tools/list":
-                                tools = resp_msg.get("result", {}).get("tools", [])
-                                if isinstance(tools, list):
-                                    log.debug("mcp: tools/list response: %d tools", len(tools))
-                                    tl_findings = scanner.process_tools_list(tools)
-                                    for f in tl_findings:
-                                        if f.type == "tool_drift":
-                                            _signal_escalation(
-                                                escalation_fn, "drift", "", {"tool": f.location.rsplit(".", 1)[-1]}
-                                            )
+                        should_forward = _handle_response(resp_msg, pending_requests, scanner, escalation_fn)
                 except (json.JSONDecodeError, ValueError):
                     pass
 
@@ -493,58 +451,16 @@ async def run_http_listener(
             )
 
         # Scan request
-        msg_id = msg.get("id") if isinstance(msg, dict) else None
         method = msg.get("method", "") if isinstance(msg, dict) else ""
+        pending_requests = {}  # single request/response — local scope
 
         if isinstance(msg, dict) and method == "tools/call":
-            tool_name = msg.get("params", {}).get("name", "")
-            arguments = msg.get("params", {}).get("arguments", {})
-            if scanner.session_binding and not scanner.session_binding.validate_tool(tool_name):
-                _signal_escalation(escalation_fn, "unknown_tool", session_id, {"tool": tool_name})
-                if scanner.session_binding.should_block:
-                    return web.json_response(
-                        {
-                            "jsonrpc": "2.0",
-                            "id": msg_id,
-                            "error": {"code": -32600, "message": "Tool '%s' not in session baseline" % tool_name},
-                        },
-                        status=400,
-                    )
+            error = _check_tools_call(msg, scanner, action, policy_engine, escalation_fn, session_id)
+            if error:
+                return web.json_response(error, status=400)
 
-            # Pro policy engine check
-            policy_findings = _run_policy_engine(policy_engine, tool_name, arguments)
-            if policy_findings and any(f.action == "block" for f in policy_findings):
-                _signal_escalation(escalation_fn, "block", session_id, {"tool": tool_name})
-                return web.json_response(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": msg_id,
-                        "error": {"code": -32600, "message": "Request blocked by policy: %s" % policy_findings[0].type},
-                    },
-                    status=400,
-                )
-
-            findings = scanner.scan_request(msg)
-            if findings and action == "block":
-                _signal_escalation(escalation_fn, "block", session_id, {"tool": tool_name})
-                return web.json_response(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": msg_id,
-                        "error": {
-                            "code": -32600,
-                            "message": "Request blocked by lumen-argus: sensitive data detected",
-                        },
-                    },
-                    status=400,
-                )
-            if findings:
-                _signal_escalation(escalation_fn, "near_miss", session_id, {"tool": tool_name})
-            else:
-                _signal_escalation(escalation_fn, "clean", session_id, {"tool": tool_name})
-
-        if scanner.request_tracker:
-            scanner.request_tracker.track(msg_id)
+        if isinstance(msg, dict):
+            _track_outbound(msg, pending_requests, scanner)
 
         # Forward to upstream
         resp_data = await upstream.send_and_receive(body)
@@ -555,30 +471,12 @@ async def run_http_listener(
         try:
             resp_msg = json.loads(resp_data)
             if isinstance(resp_msg, dict):
-                resp_id = resp_msg.get("id")
-                if scanner.request_tracker and "result" in resp_msg:
-                    if not scanner.request_tracker.validate(resp_id):
-                        if scanner.request_tracker.should_block:
-                            return web.json_response(
-                                {
-                                    "jsonrpc": "2.0",
-                                    "id": resp_id,
-                                    "error": {"code": -32600, "message": "Unsolicited response rejected"},
-                                },
-                                status=400,
-                            )
-                if "result" in resp_msg:
-                    if method == "tools/call":
-                        scanner.scan_response(resp_msg, method)
-                    elif method == "tools/list":
-                        tools = resp_msg.get("result", {}).get("tools", [])
-                        if isinstance(tools, list):
-                            tl_findings = scanner.process_tools_list(tools)
-                            for f in tl_findings:
-                                if f.type == "tool_drift":
-                                    _signal_escalation(
-                                        escalation_fn, "drift", session_id, {"tool": f.location.rsplit(".", 1)[-1]}
-                                    )
+                should_forward = _handle_response(resp_msg, pending_requests, scanner, escalation_fn, session_id)
+                if not should_forward:
+                    return web.json_response(
+                        _jsonrpc_error(resp_msg.get("id"), "Unsolicited response rejected"),
+                        status=400,
+                    )
         except (json.JSONDecodeError, ValueError):
             pass
 
@@ -659,65 +557,15 @@ async def run_ws_bridge(
 
                     if isinstance(msg, dict):
                         method = msg.get("method", "")
-                        msg_id = msg.get("id")
 
                         if method == "tools/call":
-                            tool_name = msg.get("params", {}).get("name", "")
-                            arguments = msg.get("params", {}).get("arguments", {})
-                            if scanner.session_binding and not scanner.session_binding.validate_tool(tool_name):
-                                _signal_escalation(escalation_fn, "unknown_tool", "", {"tool": tool_name})
-                                if scanner.session_binding.should_block:
-                                    error_resp = {
-                                        "jsonrpc": "2.0",
-                                        "id": msg_id,
-                                        "error": {
-                                            "code": -32600,
-                                            "message": "Tool '%s' not in session baseline" % tool_name,
-                                        },
-                                    }
-                                    sys.stdout.buffer.write(json.dumps(error_resp).encode() + b"\n")
-                                    sys.stdout.buffer.flush()
-                                    continue
-
-                            # Pro policy engine check
-                            policy_findings = _run_policy_engine(policy_engine, tool_name, arguments)
-                            if policy_findings and any(f.action == "block" for f in policy_findings):
-                                _signal_escalation(escalation_fn, "block", "", {"tool": tool_name})
-                                error_resp = {
-                                    "jsonrpc": "2.0",
-                                    "id": msg_id,
-                                    "error": {
-                                        "code": -32600,
-                                        "message": "Request blocked by policy: %s" % policy_findings[0].type,
-                                    },
-                                }
-                                sys.stdout.buffer.write(json.dumps(error_resp).encode() + b"\n")
+                            error = _check_tools_call(msg, scanner, action, policy_engine, escalation_fn)
+                            if error:
+                                sys.stdout.buffer.write(json.dumps(error).encode() + b"\n")
                                 sys.stdout.buffer.flush()
                                 continue
 
-                            findings = scanner.scan_request(msg)
-                            if findings and action == "block":
-                                _signal_escalation(escalation_fn, "block", "", {"tool": tool_name})
-                                error_resp = {
-                                    "jsonrpc": "2.0",
-                                    "id": msg_id,
-                                    "error": {
-                                        "code": -32600,
-                                        "message": "Request blocked by lumen-argus: sensitive data detected",
-                                    },
-                                }
-                                sys.stdout.buffer.write(json.dumps(error_resp).encode() + b"\n")
-                                sys.stdout.buffer.flush()
-                                continue
-                            if findings:
-                                _signal_escalation(escalation_fn, "near_miss", "", {"tool": tool_name})
-                            else:
-                                _signal_escalation(escalation_fn, "clean", "", {"tool": tool_name})
-
-                        if msg_id is not None and method:
-                            pending_requests[msg_id] = method
-                        if scanner.request_tracker:
-                            scanner.request_tracker.track(msg_id)
+                        _track_outbound(msg, pending_requests, scanner)
 
                     await ws_transport.write_message(data)
 
@@ -730,38 +578,17 @@ async def run_ws_bridge(
                     if data is None:
                         break
                     line_str = data.decode("utf-8", errors="ignore")
-                    blocked = False
 
                     try:
                         msg = json.loads(line_str)
                         if isinstance(msg, dict):
-                            msg_id = msg.get("id")
-                            if scanner.request_tracker and "result" in msg:
-                                if not scanner.request_tracker.validate(msg_id):
-                                    if scanner.request_tracker.should_block:
-                                        blocked = True
-                            if "result" in msg and not blocked:
-                                req_method = pending_requests.pop(msg_id, "")
-                                if req_method == "tools/call":
-                                    findings = scanner.scan_response(msg, req_method)
-                                    if findings:
-                                        log.debug("mcp response findings: %d", len(findings))
-                                elif req_method == "tools/list":
-                                    tools = msg.get("result", {}).get("tools", [])
-                                    if isinstance(tools, list):
-                                        log.debug("mcp: tools/list response: %d tools", len(tools))
-                                        tl_findings = scanner.process_tools_list(tools)
-                                        for f in tl_findings:
-                                            if f.type == "tool_drift":
-                                                _signal_escalation(
-                                                    escalation_fn, "drift", "", {"tool": f.location.rsplit(".", 1)[-1]}
-                                                )
+                            if not _handle_response(msg, pending_requests, scanner, escalation_fn):
+                                continue  # drop unsolicited response
                     except (json.JSONDecodeError, ValueError):
                         pass
 
-                    if not blocked:
-                        sys.stdout.buffer.write(data + b"\n")
-                        sys.stdout.buffer.flush()
+                    sys.stdout.buffer.write(data + b"\n")
+                    sys.stdout.buffer.flush()
 
             done, pending = await asyncio.wait(
                 [
