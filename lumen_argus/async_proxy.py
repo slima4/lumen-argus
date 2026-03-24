@@ -409,6 +409,8 @@ async def _handle_websocket(request: web.Request, server: "AsyncArgusProxy") -> 
     connection_id = str(uuid.uuid4())
     origin = request.headers.get("Origin", "")
     connect_time = time.time()
+    with server._active_lock:
+        server._active_ws_connections += 1
     frames_sent = 0
     frames_received = 0
     findings_total = 0
@@ -604,6 +606,8 @@ async def _handle_websocket(request: web.Request, server: "AsyncArgusProxy") -> 
         except Exception as e:
             log.debug("ws hook close error: %s", e)
 
+    with server._active_lock:
+        server._active_ws_connections -= 1
     log.debug(
         "ws: connection closed for %s (conn=%s, %.1fs, %d/%d frames, %d findings)",
         target_url,
@@ -1356,6 +1360,7 @@ class AsyncArgusProxy:
         self._ssl_context = ssl_context
         self.max_connections = max_connections
         self._active_requests = 0
+        self._active_ws_connections = 0
         self._active_lock = threading.Lock()  # free-threaded Python safety
         self._background_tasks = set()  # prevent GC of background scan tasks
         self.stats = SessionStats()
@@ -1374,6 +1379,11 @@ class AsyncArgusProxy:
     def active_requests(self) -> int:
         with self._active_lock:
             return self._active_requests
+
+    @property
+    def active_ws_connections(self) -> int:
+        with self._active_lock:
+            return self._active_ws_connections
 
     @property
     def server_address(self) -> tuple:

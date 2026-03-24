@@ -139,6 +139,17 @@ class ExtensionRegistry:
     def get_proxy_server(self) -> Optional[object]:
         return self._proxy_server
 
+    def get_ws_active_count(self) -> int:
+        """Return number of active WebSocket connections.
+
+        Used by Pro metrics for Prometheus gauge. Reads from the proxy
+        server's thread-safe counter rather than internal data structures.
+        """
+        proxy = self._proxy_server
+        if proxy and hasattr(proxy, "active_ws_connections"):
+            return proxy.active_ws_connections
+        return 0
+
     def extra_detectors(self) -> List[BaseDetector]:
         return list(self._detectors)
 
