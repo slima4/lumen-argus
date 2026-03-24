@@ -223,6 +223,48 @@ class TestAnalyticsStore(unittest.TestCase):
         rows, _ = self.store.get_findings_page(limit=1)
         self.assertIsInstance(rows[0], dict)
 
+    def test_get_findings_page_filter_by_action(self):
+        """Filtering by action should return matching rows only."""
+        self._seed_findings()
+        rows, total = self.store.get_findings_page(action="block")
+        self.assertEqual(total, 5)
+        for r in rows:
+            self.assertEqual(r["action_taken"], "block")
+
+    def test_get_findings_page_filter_by_finding_type(self):
+        """Filtering by finding_type should return matching rows only."""
+        self._seed_findings()
+        rows, total = self.store.get_findings_page(finding_type="ssn")
+        self.assertEqual(total, 1)
+        self.assertEqual(rows[0]["finding_type"], "ssn")
+
+    def test_get_findings_page_filter_by_days(self):
+        """Filtering by days should return only recent findings."""
+        self._seed_findings()
+        # All seeded findings are from today, so days=1 should return all
+        rows, total = self.store.get_findings_page(days=1)
+        self.assertEqual(total, 5)
+        # days=0 should be ignored (no filter applied)
+        rows2, total2 = self.store.get_findings_page(days=0)
+        self.assertEqual(total2, 5)
+
+    def test_get_findings_page_filter_by_client_name(self):
+        """Filtering by client_name should return matching rows only."""
+        from lumen_argus.models import SessionContext
+
+        sess = SessionContext(session_id="s1", client_name="claude")
+        self.store.record_findings([_make_finding()], provider="anthropic", model="m", session=sess)
+        sess2 = SessionContext(session_id="s2", client_name="cursor")
+        self.store.record_findings(
+            [_make_finding(type_="github_token")],
+            provider="anthropic",
+            model="m",
+            session=sess2,
+        )
+        rows, total = self.store.get_findings_page(client_name="claude")
+        self.assertEqual(total, 1)
+        self.assertEqual(rows[0]["client_name"], "claude")
+
     # ── get_stats ─────────────────────────────────────────────────
 
     def test_get_stats_empty_db(self):
@@ -297,6 +339,95 @@ class TestAnalyticsStore(unittest.TestCase):
         for entry in stats["daily_trend"]:
             if entry["date"] == today:
                 self.assertEqual(entry["count"], 5)
+
+    def test_get_stats_today_count(self):
+        """today_count should reflect findings from today only."""
+        self._seed_findings()
+        stats = self.store.get_stats()
+        self.assertEqual(stats["today_count"], 5)
+
+    def test_get_stats_today_count_empty(self):
+        """today_count should be 0 on empty DB."""
+        stats = self.store.get_stats()
+        self.assertEqual(stats["today_count"], 0)
+
+    def test_get_stats_last_finding_time(self):
+        """last_finding_time should be the most recent timestamp."""
+        self._seed_findings()
+        stats = self.store.get_stats()
+        self.assertIsNotNone(stats["last_finding_time"])
+
+    def test_get_stats_last_finding_time_empty(self):
+        """last_finding_time should be None on empty DB."""
+        stats = self.store.get_stats()
+        self.assertIsNone(stats["last_finding_time"])
+
+    # ── get_dashboard_sessions ─────────────────────────────────────
+
+    def test_dashboard_sessions_empty(self):
+        """Empty DB returns empty result."""
+        result = self.store.get_dashboard_sessions()
+        self.assertEqual(result["sessions"], [])
+        self.assertEqual(result["total"], 0)
+
+    def test_dashboard_sessions_severity_breakdown(self):
+        """Sessions should include per-severity counts."""
+        from lumen_argus.models import SessionContext
+
+        findings = [
+            _make_finding(severity="critical"),
+            _make_finding(severity="high", type_="github_token"),
+            _make_finding(severity="high", type_="stripe_key"),
+            _make_finding(severity="warning", type_="email", detector="pii"),
+        ]
+        sess = SessionContext(session_id="sess-1")
+        self.store.record_findings(findings, provider="anthropic", model="claude-3", session=sess)
+        result = self.store.get_dashboard_sessions()
+        self.assertEqual(result["total"], 1)
+        sessions = result["sessions"]
+        self.assertEqual(len(sessions), 1)
+        s = sessions[0]
+        self.assertEqual(s["session_id"], "sess-1")
+        self.assertEqual(s["finding_count"], 4)
+        self.assertEqual(s["critical_count"], 1)
+        self.assertEqual(s["high_count"], 2)
+        self.assertEqual(s["warning_count"], 1)
+        self.assertEqual(s["info_count"], 0)
+
+    def test_dashboard_sessions_limit(self):
+        """Should respect the limit parameter."""
+        from lumen_argus.models import SessionContext
+
+        for i in range(3):
+            sess = SessionContext(session_id="sess-%d" % i)
+            self.store.record_findings(
+                [_make_finding()],
+                provider="anthropic",
+                model="claude-3",
+                session=sess,
+            )
+        result = self.store.get_dashboard_sessions(limit=2)
+        self.assertEqual(len(result["sessions"]), 2)
+        self.assertEqual(result["total"], 3)
+
+    def test_dashboard_sessions_ordered_by_last_seen(self):
+        """Sessions should be ordered most recent first."""
+        from lumen_argus.models import SessionContext
+
+        self.store.record_findings(
+            [_make_finding()],
+            provider="a",
+            model="m",
+            session=SessionContext(session_id="old"),
+        )
+        self.store.record_findings(
+            [_make_finding(type_="github_token")],
+            provider="a",
+            model="m",
+            session=SessionContext(session_id="new"),
+        )
+        result = self.store.get_dashboard_sessions()
+        self.assertEqual(result["sessions"][0]["session_id"], "new")
 
     # ── get_total_count ───────────────────────────────────────────
 

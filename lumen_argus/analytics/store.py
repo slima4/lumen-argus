@@ -180,7 +180,18 @@ class AnalyticsStore:
         return self.findings.record(findings, provider=provider, model=model, session=session)
 
     def get_findings_page(
-        self, limit=50, offset=0, severity=None, detector=None, provider=None, session_id=None, account_id=None
+        self,
+        limit=50,
+        offset=0,
+        severity=None,
+        detector=None,
+        provider=None,
+        session_id=None,
+        account_id=None,
+        action=None,
+        finding_type=None,
+        client_name=None,
+        days=None,
     ):
         return self.findings.get_page(
             limit=limit,
@@ -190,6 +201,10 @@ class AnalyticsStore:
             provider=provider,
             session_id=session_id,
             account_id=account_id,
+            action=action,
+            finding_type=finding_type,
+            client_name=client_name,
+            days=days,
         )
 
     def get_finding_by_id(self, finding_id):
@@ -203,6 +218,9 @@ class AnalyticsStore:
 
     def get_sessions(self, limit=50):
         return self.findings.get_sessions(limit=limit)
+
+    def get_dashboard_sessions(self, limit=5, hours=24):
+        return self.findings.get_dashboard_sessions(limit=limit, hours=hours)
 
     def get_account_stats(self, limit=10):
         return self.findings.get_account_stats(limit=limit)

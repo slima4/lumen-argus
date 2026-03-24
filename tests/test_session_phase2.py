@@ -162,6 +162,34 @@ class TestSessionsAPI(unittest.TestCase):
         ):
             self.assertIn(col, f)
 
+    def test_dashboard_sessions_endpoint(self):
+        status, body = self._api("/api/v1/sessions/dashboard")
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(len(data["sessions"]), 1)
+        s = data["sessions"][0]
+        self.assertEqual(s["session_id"], "fp:abc")
+        self.assertEqual(s["finding_count"], 2)
+        self.assertIn("critical_count", s)
+        self.assertIn("high_count", s)
+        self.assertIn("warning_count", s)
+        self.assertIn("info_count", s)
+
+    def test_dashboard_sessions_no_store(self):
+        status, body = handle_community_api("/api/v1/sessions/dashboard", "GET", b"", None)
+        data = json.loads(body)
+        self.assertEqual(data["sessions"], [])
+        self.assertEqual(data["total"], 0)
+
+    def test_stats_includes_today_and_last_finding(self):
+        status, body = self._api("/api/v1/stats")
+        data = json.loads(body)
+        self.assertIn("today_count", data)
+        self.assertIn("last_finding_time", data)
+        self.assertEqual(data["today_count"], 2)
+        self.assertIsNotNone(data["last_finding_time"])
+
 
 if __name__ == "__main__":
     unittest.main()

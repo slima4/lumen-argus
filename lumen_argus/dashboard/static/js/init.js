@@ -2,30 +2,31 @@
    MUST be last — depends on all page modules */
 
 /* Register community nav tabs in order */
-registerPage('dashboard', 'Dashboard', {order: 10, loadFn: function(){}});
+registerPage('dashboard', 'Dashboard', {order: 10, loadFn: loadData});
 registerPage('findings', 'Findings', {order: 15, loadFn: loadFindings});
 registerPage('audit', 'Audit', {order: 60, loadFn: loadAudit});
 registerPage('pipeline', 'Pipeline', {order: 65, loadFn: loadPipeline});
-registerPage('settings', 'Settings', {order: 70, loadFn: loadSettings});
+registerPage('settings', 'Settings', {order: 90, loadFn: loadSettings});
 
 /* Register locked Pro placeholders */
 registerPage('rules', 'Rules', {locked: true, order: 25,
   proDescription: 'Create custom detection rules with regex patterns, keywords, and size limits. Manage rule priorities and per-rule actions.'});
 registerPage('allowlists', 'Allowlists', {locked: true, order: 45,
   proDescription: 'Manage allowlist entries for secrets, PII, and file paths. Test patterns against recent findings before adding.'});
+registerPage('mcp', 'MCP', {locked: true, order: 50,
+  proDescription: 'MCP security dashboard: tool allow/block lists, session escalation, tool call policy rules, chain detection, and drift monitoring.'});
 registerPage('notifications', 'Notifications', {order: 55, loadFn: loadNotifications});
+registerPage('performance', 'Performance', {locked: true, order: 75,
+  proDescription: 'Rule performance analytics: scan time percentiles, per-rule hit rates, pre-filter efficiency, and scan time budget tracking.'});
 
 /* Export helpers */
 function exportFindings(fmt){
   var url='/api/v1/findings/export?format='+fmt;
-  var sevF=document.getElementById('f-sev').value;
-  var detF=document.getElementById('f-det').value;
-  var provF=document.getElementById('f-prov').value;
-  var sessF=document.getElementById('f-sess').value;
-  if(sevF)url+='&severity='+encodeURIComponent(sevF);
-  if(detF)url+='&detector='+encodeURIComponent(detF);
-  if(provF)url+='&provider='+encodeURIComponent(provF);
-  if(sessF)url+='&session_id='+encodeURIComponent(sessF);
+  var filters={severity:'f-sev',detector:'f-det',provider:'f-prov',
+    session_id:'f-sess',action:'f-action',finding_type:'f-type',
+    client:'f-client',days:'f-days'};
+  for(var k in filters){var v=document.getElementById(filters[k]).value;
+    if(v)url+='&'+k+'='+encodeURIComponent(v);}
   window.location.href=url;
 }
 document.getElementById('export-csv').addEventListener('click',function(){exportFindings('csv')});
@@ -55,18 +56,30 @@ var _forceProCharts=true; /* force on initial load */
 var sseMode=localStorage.getItem('lumen_sse_mode')==='true';
 var sseSource=null;
 var pollTimer=null;
+var _pipelineStages=null; /* cached — fetched once */
 
 async function loadData(){try{
-  var r=await Promise.all([fetch('/api/v1/status').then(function(r){return r.json()}),
+  var fetches=[
+    fetch('/api/v1/status').then(function(r){return r.json()}),
     fetch('/api/v1/stats?days='+trendDays).then(function(r){return r.json()}),
-    fetch('/api/v1/findings?limit='+dashPerPage+'&offset='+dashPage*dashPerPage).then(function(r){return r.json()})]);
-  var st=r[0],stats=r[1],fd=r[2];
+    fetch('/api/v1/findings?limit=8').then(function(r){return r.json()}),
+    fetch('/api/v1/sessions/dashboard?limit=5').then(function(r){return r.json()})
+  ];
+  /* Fetch pipeline stages once (they rarely change) */
+  if(!_pipelineStages){
+    fetches.push(fetch('/api/v1/pipeline').then(function(r){return r.json()}));
+  }
+  var r=await Promise.all(fetches);
+  var st=r[0],stats=r[1],fd=r[2],sess=r[3];
+  if(r[4])_pipelineStages=r[4].stages||[];
   document.getElementById('hdr-status').textContent='operational';
   document.getElementById('hdr-version').textContent='v'+st.version;
   document.getElementById('hdr-uptime').textContent=fmtUptime(st.uptime_seconds);
-  document.getElementById('total-badge').textContent=stats.total_findings.toLocaleString()+' findings';
-  var cards=document.getElementById('cards');cards.replaceChildren();
-  ['critical','high','warning','info'].forEach(function(s){cards.appendChild(makeCard(s,stats.by_severity[s]||0));});
+  /* Quick stats */
+  var sessionList=sess.sessions||[];
+  var sessionTotal=sess.total||0;
+  renderQuickStats(stats,sessionTotal);
+  /* Trend chart */
   var chartSvg=document.getElementById('chart');
   if(stats.daily_trend&&stats.daily_trend.length){
     var trend=stats.daily_trend;
@@ -86,30 +99,12 @@ async function loadData(){try{
   if(stats.by_detector)renderBars('det-list',stats.by_detector);
   if(stats.by_provider)renderBars('prov-list',stats.by_provider);
   var _f=_forceProCharts;_forceProCharts=false;renderProCharts(trendDays,_f);
-  var dtb=document.getElementById('dash-tbody');dtb.replaceChildren();
-  var dashTotal=fd.total;
-  var dashStart=dashPage*dashPerPage;
-  var recent=fd.findings||[];
-  document.getElementById('dash-showing').textContent=
-    (dashTotal?dashStart+1+'\u2013'+Math.min(dashStart+recent.length,dashTotal):'0')+' of '+dashTotal;
-  if(!recent.length){var tr=document.createElement('tr');var td=document.createElement('td');
-    td.colSpan=6;td.className='empty';td.textContent='No findings yet';tr.appendChild(td);dtb.appendChild(tr);}
-  else recent.forEach(function(f){dtb.appendChild(dashRow(f))});
-  renderPager('dash-pager',dashPage,fd.total,dashPerPage,
-    function(pg){dashPage=pg;loadData();},
-    function(pp){dashPerPage=pp;dashPage=0;loadData();});
-  if(stats.by_detector){
-    var detSel=document.getElementById('f-det'),curVal=detSel.value;
-    while(detSel.options.length>1)detSel.removeChild(detSel.lastChild);
-    Object.keys(stats.by_detector).sort(function(a,b){return a.localeCompare(b)}).forEach(function(d){var opt=document.createElement('option');
-      opt.value=d;opt.textContent=d;detSel.appendChild(opt);});
-    detSel.value=curVal;}
-  if(stats.by_provider){
-    var provSel=document.getElementById('f-prov'),curProv=provSel.value;
-    while(provSel.options.length>1)provSel.removeChild(provSel.lastChild);
-    Object.keys(stats.by_provider).sort(function(a,b){return a.localeCompare(b)}).forEach(function(p){var opt=document.createElement('option');
-      opt.value=p;opt.textContent=p;provSel.appendChild(opt);});
-    provSel.value=curProv;}
+  /* Bottom panels */
+  renderActivityFeed(fd.findings||[]);
+  renderActiveSessions(sessionList);
+  if(_pipelineStages)renderPipelineHealth(_pipelineStages);
+  /* Populate findings page filter dropdowns from stats */
+  _populateDynamicFilters(stats);
   var findingsActive=document.getElementById('page-findings').classList.contains('active');
   if(findingsActive)loadFindings();
   }catch(e){document.getElementById('hdr-status').textContent='connection error';}}
@@ -154,6 +149,9 @@ function toggleLiveMode(){
   else{stopSSE();startPolling();}
 }
 document.getElementById('live-toggle').addEventListener('click',toggleLiveMode);
+
+/* Invalidate pipeline cache when pipeline page saves */
+document.addEventListener('pipeline-rendered',function(){_pipelineStages=null;});
 
 /* Initialize */
 initColToggles();loadData();

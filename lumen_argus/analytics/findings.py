@@ -159,8 +159,12 @@ class FindingsRepository:
         provider: Optional[str] = None,
         session_id: Optional[str] = None,
         account_id: Optional[str] = None,
+        action: Optional[str] = None,
+        finding_type: Optional[str] = None,
+        client_name: Optional[str] = None,
+        days: Optional[int] = None,
     ) -> tuple:
-        """Return (findings_list, total_count) for consistency."""
+        """Return (findings_list, total_count) with optional filters."""
         where = ""
         conditions = []
         params = []  # type: list
@@ -179,6 +183,17 @@ class FindingsRepository:
         if account_id:
             conditions.append("account_id = ?")
             params.append(account_id)
+        if action:
+            conditions.append("action_taken = ?")
+            params.append(action)
+        if finding_type:
+            conditions.append("finding_type = ?")
+            params.append(finding_type)
+        if client_name:
+            conditions.append("client_name = ?")
+            params.append(client_name)
+        if days and days > 0:
+            conditions.append("timestamp >= DATE('now', '-%d days')" % min(days, 365))
         if conditions:
             where = " WHERE " + " AND ".join(conditions)
 
@@ -230,7 +245,15 @@ class FindingsRepository:
         """
         days = max(1, min(days, 365))
         with self._store._connect() as conn:
-            total = conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+            agg = conn.execute(
+                "SELECT COUNT(*) as total, "
+                "SUM(CASE WHEN DATE(timestamp) = DATE('now') THEN 1 ELSE 0 END) as today_count, "
+                "MAX(timestamp) as last_finding_time "
+                "FROM findings"
+            ).fetchone()
+            total = agg["total"]
+            today_count = agg["today_count"] or 0
+            last_finding_time = agg["last_finding_time"]
 
             by_severity = {}
             for row in conn.execute("SELECT severity, COUNT(*) as cnt FROM findings GROUP BY severity"):
@@ -260,6 +283,13 @@ class FindingsRepository:
             ):
                 by_model[row["model"] or "unknown"] = row["cnt"]
 
+            by_client = {}
+            for row in conn.execute(
+                "SELECT client_name, COUNT(*) as cnt FROM findings "
+                "WHERE client_name != '' GROUP BY client_name ORDER BY cnt DESC"
+            ):
+                by_client[row["client_name"]] = row["cnt"]
+
             daily = []
             for row in conn.execute(
                 "SELECT DATE(timestamp) as day, COUNT(*) as cnt "
@@ -272,12 +302,15 @@ class FindingsRepository:
 
         return {
             "total_findings": total,
+            "today_count": today_count,
+            "last_finding_time": last_finding_time,
             "by_severity": by_severity,
             "by_detector": by_detector,
             "top_finding_types": top_types,
             "by_action": by_action,
             "by_provider": by_provider,
             "by_model": by_model,
+            "by_client": by_client,
             "daily_trend": daily,
         }
 
@@ -407,6 +440,41 @@ class FindingsRepository:
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_dashboard_sessions(self, limit: int = 5, hours: int = 24) -> dict:
+        """Return active sessions with severity breakdown for dashboard.
+
+        Only includes sessions with findings in the last ``hours`` hours.
+        Returns both the session list and total count (uncapped by limit)
+        so the quick-stat card can show the real active session count.
+        """
+        hours = max(1, min(hours, 168))  # 1h–7d
+        time_filter = "AND timestamp >= DATETIME('now', '-%d hours')" % hours
+        with self._store._connect() as conn:
+            # Fetch limit+1 to detect if there are more sessions than limit
+            rows = conn.execute(
+                "SELECT session_id, MIN(timestamp) as first_seen, "
+                "MAX(timestamp) as last_seen, COUNT(*) as finding_count, "
+                "MAX(account_id) as account_id, "
+                "MAX(client_name) as client_name, "
+                "MAX(working_directory) as working_directory, "
+                "SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) as critical_count, "
+                "SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END) as high_count, "
+                "SUM(CASE WHEN severity = 'warning' THEN 1 ELSE 0 END) as warning_count, "
+                "SUM(CASE WHEN severity = 'info' THEN 1 ELSE 0 END) as info_count "
+                "FROM findings WHERE session_id != '' " + time_filter + " "
+                "GROUP BY session_id "
+                "ORDER BY last_seen DESC LIMIT ?",
+                (limit + 1,),
+            ).fetchall()
+            if len(rows) <= limit:
+                total = len(rows)
+            else:
+                rows = rows[:limit]
+                total = conn.execute(
+                    "SELECT COUNT(DISTINCT session_id) FROM findings WHERE session_id != '' " + time_filter
+                ).fetchone()[0]
+        return {"sessions": [dict(r) for r in rows], "total": total}
 
     def cleanup(self, retention_days: int = 365) -> int:
         """Delete findings older than retention_days. Returns count deleted."""

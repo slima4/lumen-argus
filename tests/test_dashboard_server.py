@@ -1037,6 +1037,8 @@ class TestCommunityAPIDirect(unittest.TestCase):
         data = json.loads(body)
         self.assertEqual(status, 200)
         self.assertEqual(data["total_findings"], 0)
+        self.assertEqual(data["today_count"], 0)
+        self.assertIsNone(data["last_finding_time"])
 
     def test_stats_advanced_returns_402_without_pro(self):
         status, body = handle_community_api("/api/v1/stats/advanced", "GET", b"", None)

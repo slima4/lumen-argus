@@ -749,7 +749,7 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
                             elif field_name in ("max_depth", "min_decoded_length", "max_decoded_length"):
                                 setattr(stage_cfg, field_name, int(value))
                 if db_overrides:
-                    log.info("applied %d config override(s) from DB", len(db_overrides))
+                    log.debug("applied %d config override(s) from DB", len(db_overrides))
             except Exception:
                 log.debug("no config overrides from DB")
 
@@ -757,11 +757,9 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
         old = current_config[0]
         changes = config_diff(old, new_config)
         if changes:
-            log.info("config reloaded: %d changes", len(changes))
-            for change in changes:
-                log.info("  %s", change)
+            log.info("config reloaded: %s", "; ".join(changes))
         else:
-            log.info("config reloaded (no changes)")
+            log.debug("config reloaded (no YAML changes, DB overrides applied)")
         current_config[0] = new_config
 
         server.pipeline.reload(
@@ -775,9 +773,6 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
         server.retries = new_config.proxy.retries
 
         # Apply parallel batching toggle on reload.
-        # Applied out-of-band after pipeline.reload() — brief window where
-        # new rules use old parallel setting. Not correctness-critical since
-        # parallel mode only affects performance, not scan results.
         if server.pipeline._rules_detector:
             server.pipeline._rules_detector.set_parallel(new_config.pipeline.parallel_batching)
 
@@ -796,7 +791,7 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
                 scan_injection=resp_injection,
                 max_response_size=new_config.pipeline.response_max_size,
             )
-            log.info("response scanning reloaded: secrets=%s injection=%s", resp_secrets, resp_injection)
+            log.debug("response scanning reloaded: secrets=%s injection=%s", resp_secrets, resp_injection)
         else:
             server.response_scanner = None
 
@@ -828,7 +823,7 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
                 blocked_tools=blocked_tools or None,
                 action=new_config.pipeline.mcp_arguments.action or new_config.default_action,
             )
-            log.info("MCP proxy scanning reloaded")
+            log.debug("MCP proxy scanning reloaded")
         else:
             server.mcp_scanner = None
 
@@ -846,7 +841,7 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
                 max_frame_size=new_config.websocket.max_frame_size,
             )
             server.ws_allowed_origins = new_config.websocket.allowed_origins or []
-            log.info(
+            log.debug(
                 "ws scanner reloaded: outbound=%s inbound=%s",
                 new_config.pipeline.websocket_outbound.enabled,
                 new_config.pipeline.websocket_inbound.enabled,
@@ -854,7 +849,7 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
         else:
             server.ws_scanner = None
             server.ws_allowed_origins = []
-            log.info("ws scanning disabled via config")
+            log.debug("ws scanning disabled via config")
 
         if old.proxy.max_connections != new_config.proxy.max_connections:
             log.warning(
@@ -906,6 +901,25 @@ def _do_reload(server, config_path, file_handler, console_level, root_logger, ex
                     dispatcher.rebuild()
                 except Exception:
                     log.warning("dispatcher rebuild failed on SIGHUP", exc_info=True)
+
+        # Single summary line for the entire reload
+        stages = []
+        for s in (
+            "outbound_dlp",
+            "encoding_decode",
+            "response_secrets",
+            "response_injection",
+            "mcp_arguments",
+            "mcp_responses",
+            "websocket_outbound",
+            "websocket_inbound",
+        ):
+            cfg = getattr(new_config.pipeline, s, None)
+            if cfg and cfg.enabled:
+                stages.append(s)
+        rd = server.pipeline._rules_detector
+        rule_count = rd.rule_count if rd and hasattr(rd, "rule_count") else 0
+        log.info("reload complete: %d rules, stages=[%s]", rule_count, ", ".join(stages) or "none")
     except Exception as e:
         log.error("config reload failed: %s", e)
 

@@ -398,7 +398,7 @@ class ScannerPipeline:
             new_encoding_decode = bool(pipeline_config.get("encoding_decode_enabled", True))
             if new_encoding_decode:
                 new_decoder = self._build_decoder(pipeline_config)
-            log.info(
+            log.debug(
                 "pipeline reload: outbound_dlp=%s encoding_decode=%s",
                 "enabled" if new_outbound_dlp else "disabled",
                 "enabled" if new_encoding_decode else "disabled",

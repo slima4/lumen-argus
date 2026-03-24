@@ -26,7 +26,7 @@ var ALL_COLS=[
 ];
 
 var sortCol='id',sortAsc=false,selectedFindingId=null,allFindings=[],findTotal=0;
-var dashPage=0,dashPerPage=15,findPage=0,findPerPage=25,auditPage=0,auditPerPage=25;
+var findPage=0,findPerPage=25,auditPage=0,auditPerPage=25;
 
 function _ensureNavTab(name, label, order) {
   var nav = document.getElementById('nav');

@@ -19,6 +19,25 @@ function _loadSessionFilter(){
       opt.textContent=_sessLabel(s);sel.appendChild(opt);});
     sel.value=cur;
   }).catch(function(){});}
+function _fillSelect(elId,items){
+  var sel=document.getElementById(elId),cur=sel.value;
+  while(sel.options.length>1)sel.removeChild(sel.lastChild);
+  Object.keys(items).sort(function(a,b){return a.localeCompare(b)}).forEach(function(v){
+    var o=document.createElement('option');o.value=v;o.textContent=v;sel.appendChild(o);});
+  sel.value=cur;
+}
+var _lastFilterHash=null;
+function _populateDynamicFilters(stats){
+  var hash=JSON.stringify([
+    Object.keys(stats.top_finding_types||{}),Object.keys(stats.by_detector||{}),
+    Object.keys(stats.by_provider||{}),Object.keys(stats.by_client||{})]);
+  if(hash===_lastFilterHash)return;
+  _lastFilterHash=hash;
+  if(stats.top_finding_types)_fillSelect('f-type',stats.top_finding_types);
+  if(stats.by_detector)_fillSelect('f-det',stats.by_detector);
+  if(stats.by_provider)_fillSelect('f-prov',stats.by_provider);
+  if(stats.by_client)_fillSelect('f-client',stats.by_client);
+}
 function loadFindings(){
   _loadSessionFilter();
   var url='/api/v1/findings?limit='+findPerPage+'&offset='+findPage*findPerPage;
@@ -26,10 +45,18 @@ function loadFindings(){
   var detF=document.getElementById('f-det').value;
   var provF=document.getElementById('f-prov').value;
   var sessF=document.getElementById('f-sess').value;
+  var actF=document.getElementById('f-action').value;
+  var typeF=document.getElementById('f-type').value;
+  var clientF=document.getElementById('f-client').value;
+  var daysF=document.getElementById('f-days').value;
   if(sevF)url+='&severity='+encodeURIComponent(sevF);
   if(detF)url+='&detector='+encodeURIComponent(detF);
   if(provF)url+='&provider='+encodeURIComponent(provF);
   if(sessF)url+='&session_id='+encodeURIComponent(sessF);
+  if(actF)url+='&action='+encodeURIComponent(actF);
+  if(typeF)url+='&finding_type='+encodeURIComponent(typeF);
+  if(clientF)url+='&client='+encodeURIComponent(clientF);
+  if(daysF)url+='&days='+encodeURIComponent(daysF);
   fetch(url).then(function(r){return r.json()}).then(function(fd){
     allFindings=fd.findings||[];findTotal=fd.total;
     renderFindingsTable();
@@ -115,6 +142,10 @@ document.getElementById('f-sev').addEventListener('change',function(){findPage=0
 document.getElementById('f-det').addEventListener('change',function(){findPage=0;loadFindings();});
 document.getElementById('f-prov').addEventListener('change',function(){findPage=0;loadFindings();});
 document.getElementById('f-sess').addEventListener('change',function(){findPage=0;loadFindings();});
+document.getElementById('f-action').addEventListener('change',function(){findPage=0;loadFindings();});
+document.getElementById('f-type').addEventListener('change',function(){findPage=0;loadFindings();});
+document.getElementById('f-client').addEventListener('change',function(){findPage=0;loadFindings();});
+document.getElementById('f-days').addEventListener('change',function(){findPage=0;loadFindings();});
 document.getElementById('detail-panel-close').addEventListener('click',function(){
   document.getElementById('detail-panel').classList.remove('visible');
   document.querySelector('.findings-layout').classList.remove('has-detail');

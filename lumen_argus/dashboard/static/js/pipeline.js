@@ -95,6 +95,9 @@ function loadPipeline(){
     saveBar.appendChild(saveBtn);
     el.appendChild(saveBar);
 
+    /* Notify plugins that pipeline page has been (re)built */
+    document.dispatchEvent(new CustomEvent('pipeline-rendered'));
+
   }).catch(function(e){
     showPageError('page-pipeline','Failed to load pipeline config: '+e.message,loadPipeline);
   });
@@ -111,6 +114,7 @@ function _pipelineStageRow(stage){
   var cb=document.createElement('input');cb.type='checkbox';
   cb.checked=stage.enabled;cb.disabled=!stage.available;
   cb.setAttribute('data-stage',stage.name);
+  cb.setAttribute('data-original',String(stage.enabled));
   cb.className='pipeline-cb';
   var slider=document.createElement('span');slider.className='pipeline-slider';
   toggle.appendChild(cb);toggle.appendChild(slider);
@@ -149,6 +153,7 @@ function _pipelineStageRow(stage){
       var subCb=document.createElement('input');subCb.type='checkbox';
       subCb.checked=det.enabled;subCb.className='pipeline-cb';
       subCb.setAttribute('data-detector',det.name);
+      subCb.setAttribute('data-original',String(det.enabled));
       var subSlider=document.createElement('span');subSlider.className='pipeline-slider';
       subToggle.appendChild(subCb);subToggle.appendChild(subSlider);
       sub.appendChild(subToggle);
@@ -190,6 +195,7 @@ function _pipelineStageRow(stage){
       var item=document.createElement('label');item.className='pipeline-enc-item';
       var cb=document.createElement('input');cb.type='checkbox';cb.checked=enc[e];
       cb.className='pipeline-enc-cb';cb.setAttribute('data-encoding',e);
+      cb.setAttribute('data-original',String(enc[e]));
       item.appendChild(cb);
       var lbl=document.createElement('span');lbl.textContent=e;item.appendChild(lbl);
       encToggles.appendChild(item);
@@ -207,6 +213,7 @@ function _pipelineStageRow(stage){
       inp.className='pipeline-enc-input';inp.value=enc[s[0]];
       inp.min=s[2];inp.max=s[3];
       inp.setAttribute('data-enc-setting',s[0]);
+      inp.setAttribute('data-original',String(enc[s[0]]));
       item.appendChild(inp);numRow.appendChild(item);
     });
     encWrap.appendChild(numRow);
@@ -225,21 +232,26 @@ function _savePipeline(statusEl){
     changes.default_action=actSel.value;
   }
 
-  /* Stage toggles */
+  /* Stage toggles — only include changed */
   var stageCbs=document.querySelectorAll('.pipeline-cb[data-stage]');
   var stageChanges={};
   for(var i=0;i<stageCbs.length;i++){
     var cb=stageCbs[i];
-    stageChanges[cb.getAttribute('data-stage')]={enabled:cb.checked};
+    if(String(cb.checked)!==cb.getAttribute('data-original')){
+      stageChanges[cb.getAttribute('data-stage')]={enabled:cb.checked};
+    }
   }
   if(Object.keys(stageChanges).length)changes.stages=stageChanges;
 
-  /* Detector toggles + action overrides */
+  /* Detector toggles + action overrides — only include changed */
   var detCbs=document.querySelectorAll('.pipeline-cb[data-detector]');
   var detChanges={};
   for(var j=0;j<detCbs.length;j++){
     var dcb=detCbs[j];
-    detChanges[dcb.getAttribute('data-detector')]={enabled:dcb.checked};
+    if(String(dcb.checked)!==dcb.getAttribute('data-original')){
+      if(!detChanges[dcb.getAttribute('data-detector')])detChanges[dcb.getAttribute('data-detector')]={};
+      detChanges[dcb.getAttribute('data-detector')].enabled=dcb.checked;
+    }
   }
   var detActionSels=document.querySelectorAll('.pipeline-action-select');
   for(var k=0;k<detActionSels.length;k++){
@@ -254,17 +266,21 @@ function _savePipeline(statusEl){
   }
   if(Object.keys(detChanges).length)changes.detectors=detChanges;
 
-  /* Encoding settings */
+  /* Encoding settings — only include changed */
   var encCbs=document.querySelectorAll('.pipeline-enc-cb');
   var encChanges={};
   for(var m=0;m<encCbs.length;m++){
     var ecb=encCbs[m];
-    encChanges[ecb.getAttribute('data-encoding')]=ecb.checked;
+    if(String(ecb.checked)!==ecb.getAttribute('data-original')){
+      encChanges[ecb.getAttribute('data-encoding')]=ecb.checked;
+    }
   }
   var encInputs=document.querySelectorAll('.pipeline-enc-input');
   for(var n=0;n<encInputs.length;n++){
     var ei=encInputs[n];
-    encChanges[ei.getAttribute('data-enc-setting')]=Number(ei.value);
+    if(ei.value!==ei.getAttribute('data-original')){
+      encChanges[ei.getAttribute('data-enc-setting')]=Number(ei.value);
+    }
   }
   if(Object.keys(encChanges).length)changes.encoding_settings=encChanges;
 
@@ -289,8 +305,13 @@ function _savePipeline(statusEl){
       var n=Object.keys(res.data.applied).length;
       statusEl.textContent=n+' setting(s) saved';
       statusEl.style.color='var(--accent)';
-      /* Reload page after brief delay to show message and reflect saved state */
-      setTimeout(loadPipeline, 600);
+      /* Reload page after brief delay to show message and reflect saved state.
+         Use the registered loadFn so Pro extensions are preserved. */
+      _pipelineStages=null; /* invalidate dashboard health cache */
+      setTimeout(function(){
+        var reg=_registeredPages['pipeline'];
+        if(reg&&reg.loadFn)reg.loadFn();else loadPipeline();
+      }, 600);
     }
     if(res.data.errors&&res.data.errors.length){
       statusEl.textContent+=' ('+res.data.errors.length+' error(s))';

@@ -110,7 +110,7 @@ class ResponseScanner:
                 except re.error as e:
                     log.warning("invalid injection rule '%s': %s", rule["name"], e)
             self._injection_rules = compiled
-            log.info("loaded %d injection rules from DB", len(compiled))
+            log.debug("loaded %d injection rules from DB", len(compiled))
         else:
             # Fallback to hardcoded patterns
             self._injection_rules = [

@@ -244,18 +244,19 @@ Scanning overhead stays under 50ms for typical payloads. Connection pooling elim
 
 Built-in web dashboard at `http://localhost:8081`:
 
-**Community pages:** Dashboard (severity cards, trend chart with 7d/30d/90d toggle, top detectors, top providers, recent findings), Findings (paginated table with filters, CSV/JSON export), Audit (log viewer with search), Pipeline (scanning stage config — toggle stages, detectors, encoding settings, default action), Settings (proxy config, license activation), Notifications (channel management).
+**Community pages:** Dashboard (quick stats cards, severity breakdown, trend chart with 7d/30d/90d toggle, top detectors, top providers, activity feed, recent sessions with severity breakdown, pipeline health), Findings (paginated table with 8 filters: severity, detector, action, type, provider, client, time range, session; CSV/JSON export), Audit (log viewer with search), Pipeline (scanning stage config — toggle stages, detectors, encoding settings, default action), Settings (proxy config, license activation), Notifications (channel management).
 
-**Pro pages:** Rules, Allowlists — unlocked with a Pro license. Pro also adds 6 analytics charts to the Dashboard: actions trend (stacked area), activity heatmap (hour × weekday), top accounts, top projects, detection coverage gauge, and notification health.
+**Pro pages:** Rules, Allowlists, MCP, Performance — unlocked with a Pro license. Pro also adds 6 analytics charts to the Dashboard: actions trend (stacked area), activity heatmap (hour × weekday), top accounts, top projects, detection coverage gauge, and notification health.
 
 ### Dashboard API
 
 | Endpoint | Description |
 |---|---|
 | `GET /api/v1/status` | Health, uptime, version |
-| `GET /api/v1/findings` | Paginated findings (filter by session, account, severity) |
+| `GET /api/v1/findings` | Paginated findings (filter by severity, detector, action, type, provider, client, days, session, account) |
 | `GET /api/v1/sessions` | Sessions with finding counts and metadata |
-| `GET /api/v1/stats` | Aggregated statistics (`?days=N` for trend range) |
+| `GET /api/v1/sessions/dashboard` | Active sessions (last 24h) with severity breakdown |
+| `GET /api/v1/stats` | Aggregated statistics incl. `today_count`, `last_finding_time`, `by_client` (`?days=N` for trend) |
 | `GET /api/v1/stats/advanced` | Pro analytics (action trend, heatmap, top accounts/projects) |
 | `GET /api/v1/config` | Current configuration |
 | `PUT /api/v1/config` | Save settings (community: proxy; Pro: all) |
@@ -382,7 +383,7 @@ custom_rules:
     action: block
 ```
 
-**Pipeline page:** Configure scanning stages from the dashboard — toggle stages on/off, enable/disable individual detectors, set per-detector actions, configure encoding decode settings. All saved to DB and applied via hot-reload.
+**Pipeline page:** Configure scanning stages from the dashboard — toggle stages on/off, enable/disable individual detectors, set per-detector actions, configure encoding decode settings. Only changed settings are saved to DB and applied via hot-reload. Dispatches `pipeline-rendered` event for Pro extensions.
 
 **Hot-reload:** `kill -HUP $(pgrep -f lumen_argus)` — updates allowlists, actions, timeouts. No downtime.
 

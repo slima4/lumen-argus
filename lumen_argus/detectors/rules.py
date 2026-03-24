@@ -227,7 +227,7 @@ class RulesDetector(BaseDetector):
         with self._swap_lock:
             self._accelerator = new_acc
             self._compiled_rules = compiled
-        log.info(
+        log.debug(
             "rules detector: loaded %d rules (accelerator: %s)",
             len(compiled),
             "enabled" if self._accelerator.available else "disabled",
@@ -268,6 +268,12 @@ class RulesDetector(BaseDetector):
         if should_flush:
             self._flush_hit_counts()
 
+    @property
+    def rule_count(self) -> int:
+        """Return the number of compiled rules (thread-safe)."""
+        with self._swap_lock:
+            return len(self._compiled_rules)
+
     def set_parallel(self, enabled: bool) -> None:
         """Enable or disable parallel rule evaluation at runtime.
 
@@ -279,7 +285,7 @@ class RulesDetector(BaseDetector):
             self._pool.shutdown(wait=False)
             self._pool = None
         self._parallel = enabled
-        log.info("parallel rule evaluation: %s", "enabled" if enabled else "disabled")
+        log.debug("parallel rule evaluation: %s", "enabled" if enabled else "disabled")
 
     def on_rules_changed(self, change_type, rule_name=None):
         """Handle rule changes from store callback.

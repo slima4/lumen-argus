@@ -261,12 +261,19 @@ When `dashboard.password` is set (or `LUMEN_ARGUS_DASHBOARD_PASSWORD` env var), 
 
 ### Session tracking
 
-`GET /api/v1/findings` supports session-based filtering:
+`GET /api/v1/findings` supports filtering:
 
 | Parameter | Description |
 |-----------|-------------|
-| `session_id` | Filter findings by session/conversation ID |
-| `account_id` | Filter findings by account (Anthropic UUID or OpenAI user) |
+| `severity` | Filter by severity level (critical, high, warning, info) |
+| `detector` | Filter by detector (secrets, pii, proprietary) |
+| `action` | Filter by action taken (block, alert, redact, log) |
+| `finding_type` | Filter by finding type (e.g., aws_access_key, ssn) |
+| `provider` | Filter by API provider (anthropic, openai) |
+| `client` | Filter by client name (claude, cursor) |
+| `days` | Filter by time range (e.g., 1 = today, 7, 30, 90) |
+| `session_id` | Filter by session/conversation ID |
+| `account_id` | Filter by account (Anthropic UUID or OpenAI user) |
 
 `GET /api/v1/sessions` returns sessions grouped by `session_id`:
 
@@ -291,6 +298,8 @@ When `dashboard.password` is set (or `LUMEN_ARGUS_DASHBOARD_PASSWORD` env var), 
 
 Supports `?limit=N` (default 50, max 100).
 
+`GET /api/v1/sessions/dashboard` returns active sessions (last 24 hours) with per-severity breakdown for the dashboard panel. Includes `total` count (uncapped) and `sessions` list (capped at `?limit=N`, default 5, max 10).
+
 ### Stats parameters
 
 `GET /api/v1/stats` supports a time range parameter:
@@ -298,6 +307,8 @@ Supports `?limit=N` (default 50, max 100).
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `days` | `30` | Number of days for `daily_trend` (1–365). Totals and breakdowns are always all-time. |
+
+Response includes `today_count` (findings from today), `last_finding_time` (most recent finding timestamp), `by_client` (findings grouped by client name), plus existing `by_severity`, `by_detector`, `by_action`, `by_provider`, `by_model`, `top_finding_types`, and `daily_trend`.
 
 The dashboard trend chart includes a 7d / 30d / 90d toggle that sets this parameter.
 

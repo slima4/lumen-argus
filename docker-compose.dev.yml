@@ -1,0 +1,14 @@
+# Dev overlay — bind-mounts source code so changes take effect on container restart
+# without rebuilding the image. First build once, then:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# After code changes, just restart (no --build needed, ~2s):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml restart
+#
+services:
+  lumen-argus:
+    command: ["serve", "--host", "0.0.0.0", "--log-level", "debug"]
+    volumes:
+      - ./lumen_argus:/usr/local/lib/python3.12/site-packages/lumen_argus:ro
+      - ./config.yaml:/home/argus/.lumen-argus/config.yaml:ro

@@ -99,6 +99,9 @@ def handle_community_api(
         if path == "/api/v1/sessions":
             return _handle_sessions(params, store)
 
+        if path == "/api/v1/sessions/dashboard":
+            return _handle_dashboard_sessions(params, store)
+
         if path == "/api/v1/audit":
             return _handle_audit(params, audit_reader)
 
@@ -211,10 +214,13 @@ def _handle_config_update(body: bytes, config, store) -> tuple:
         try:
             store.set_config_override(key, str(value))
             applied[key] = value
-            log.info("config override saved: %s = %s", key, value)
         except ValueError as e:
             log.warning("config override rejected: %s = %s (%s)", key, value, e)
             errors.append({"key": key, "error": str(e)})
+
+    if applied:
+        summary = ", ".join("%s=%s" % (k, v) for k, v in applied.items())
+        log.info("config update [settings]: %s", summary)
 
     # Trigger SIGHUP so the running server picks up the changes.
     # Only send if SIGHUP handler is registered (not default/test).
@@ -268,6 +274,16 @@ def _handle_findings_list(params: dict, store) -> tuple:
     provider = params.get("provider") or None
     session_id = params.get("session_id") or None
     account_id = params.get("account_id") or None
+    action = params.get("action") or None
+    finding_type = params.get("finding_type") or None
+    client_name = params.get("client") or None
+    days_str = params.get("days")
+    days = None
+    if days_str:
+        try:
+            days = int(days_str)
+        except (ValueError, TypeError):
+            pass
 
     findings, total = store.get_findings_page(
         limit=limit,
@@ -277,6 +293,10 @@ def _handle_findings_list(params: dict, store) -> tuple:
         provider=provider,
         session_id=session_id,
         account_id=account_id,
+        action=action,
+        finding_type=finding_type,
+        client_name=client_name,
+        days=days,
     )
     return _json_response(200, {"findings": findings, "total": total})
 
@@ -302,14 +322,33 @@ def _handle_sessions(params: dict, store) -> tuple:
     return _json_response(200, {"sessions": sessions})
 
 
+def _handle_dashboard_sessions(params: dict, store) -> tuple:
+    """Return active sessions (last 24h) with severity breakdown for dashboard."""
+    if not store:
+        return _json_response(200, {"sessions": [], "total": 0})
+    try:
+        limit = min(int(params.get("limit", 5)), 10)
+    except (ValueError, TypeError):
+        return _json_response(400, {"error": "invalid limit"})
+    result = store.get_dashboard_sessions(limit=limit)
+    return _json_response(200, result)
+
+
 def _handle_stats(params: dict, store) -> tuple:
     if not store:
         return _json_response(
             200,
             {
                 "total_findings": 0,
+                "today_count": 0,
+                "last_finding_time": None,
                 "by_severity": {},
                 "by_detector": {},
+                "top_finding_types": {},
+                "by_action": {},
+                "by_provider": {},
+                "by_model": {},
+                "by_client": {},
                 "daily_trend": [],
             },
         )
@@ -979,7 +1018,6 @@ def _handle_pipeline_update(body: bytes, config, store) -> tuple:
         try:
             store.set_config_override("pipeline.parallel_batching", str(changes["parallel_batching"]).lower())
             applied["parallel_batching"] = changes["parallel_batching"]
-            log.info("pipeline config saved: parallel_batching = %s", changes["parallel_batching"])
         except ValueError as e:
             log.warning("pipeline config rejected: parallel_batching = %s (%s)", changes["parallel_batching"], e)
             errors.append({"key": "parallel_batching", "error": str(e)})
@@ -989,7 +1027,6 @@ def _handle_pipeline_update(body: bytes, config, store) -> tuple:
         try:
             store.set_config_override("default_action", str(changes["default_action"]))
             applied["default_action"] = changes["default_action"]
-            log.info("pipeline config saved: default_action = %s", changes["default_action"])
         except ValueError as e:
             log.warning("pipeline config rejected: default_action = %s (%s)", changes["default_action"], e)
             errors.append({"key": "default_action", "error": str(e)})
@@ -1005,7 +1042,6 @@ def _handle_pipeline_update(body: bytes, config, store) -> tuple:
                 try:
                     store.set_config_override(key, str(stage_data["enabled"]).lower())
                     applied[key] = stage_data["enabled"]
-                    log.info("pipeline config saved: %s = %s", key, stage_data["enabled"])
                 except ValueError as e:
                     log.warning("pipeline config rejected: %s = %s (%s)", key, stage_data["enabled"], e)
                     errors.append({"key": key, "error": str(e)})
@@ -1023,7 +1059,6 @@ def _handle_pipeline_update(body: bytes, config, store) -> tuple:
             try:
                 store.set_config_override(key, str(enc_val))
                 applied[key] = enc_val
-                log.info("pipeline config saved: %s = %s", key, enc_val)
             except ValueError as e:
                 log.warning("pipeline config rejected: %s = %s (%s)", key, enc_val, e)
                 errors.append({"key": key, "error": str(e)})
@@ -1039,7 +1074,6 @@ def _handle_pipeline_update(body: bytes, config, store) -> tuple:
                 try:
                     store.set_config_override(key, str(det_data["enabled"]).lower())
                     applied[key] = det_data["enabled"]
-                    log.info("pipeline config saved: %s = %s", key, det_data["enabled"])
                 except ValueError as e:
                     log.warning("pipeline config rejected: %s = %s (%s)", key, det_data["enabled"], e)
                     errors.append({"key": key, "error": str(e)})
@@ -1049,12 +1083,10 @@ def _handle_pipeline_update(body: bytes, config, store) -> tuple:
                 try:
                     if action_val == "default":
                         store.delete_config_override(key)
-                        log.info("pipeline config saved: %s = default (override removed)", key)
                         applied[key] = "default"
                     else:
                         store.set_config_override(key, action_val)
                         applied[key] = action_val
-                        log.info("pipeline config saved: %s = %s", key, action_val)
                 except ValueError as e:
                     log.warning("pipeline config rejected: %s = %s (%s)", key, action_val, e)
                     errors.append({"key": key, "error": str(e)})
@@ -1069,10 +1101,12 @@ def _handle_pipeline_update(body: bytes, config, store) -> tuple:
             except OSError:
                 log.warning("could not send SIGHUP for pipeline config reload")
 
-    if errors:
-        log.info("pipeline update partial: %d applied, %d errors", len(applied), len(errors))
-    elif applied:
-        log.info("pipeline update complete: %d setting(s) applied", len(applied))
+    if applied:
+        summary = ", ".join("%s=%s" % (k, v) for k, v in applied.items())
+        if errors:
+            log.info("pipeline update [dashboard]: %d applied, %d errors: %s", len(applied), len(errors), summary)
+        else:
+            log.info("pipeline update [dashboard]: %s", summary)
 
     status = 200 if not errors else 207
     return _json_response(status, {"applied": applied, "errors": errors})
