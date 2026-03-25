@@ -30,6 +30,7 @@ _JS_MODULES = [
     "js/audit.js",
     "js/settings.js",
     "js/notifications.js",
+    "js/rules.js",
     "js/pipeline.js",
     "js/init.js",
 ]

@@ -8,9 +8,7 @@ registerPage('audit', 'Audit', {order: 60, loadFn: loadAudit});
 registerPage('pipeline', 'Pipeline', {order: 65, loadFn: loadPipeline});
 registerPage('settings', 'Settings', {order: 90, loadFn: loadSettings});
 
-/* Register locked Pro placeholders */
-registerPage('rules', 'Rules', {locked: true, order: 25,
-  proDescription: 'Create custom detection rules with regex patterns, keywords, and size limits. Manage rule priorities and per-rule actions.'});
+/* Rules page is registered in rules.js (community-owned) */
 registerPage('allowlists', 'Allowlists', {locked: true, order: 45,
   proDescription: 'Manage allowlist entries for secrets, PII, and file paths. Test patterns against recent findings before adding.'});
 registerPage('mcp', 'MCP', {locked: true, order: 50,

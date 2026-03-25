@@ -624,11 +624,10 @@ class TestTierGating(unittest.TestCase):
         # Without Pro, no channel types registered — falls through to 404
         self.assertIn(status, (400, 404))
 
-    def test_put_rules_returns_402(self):
-        status, _, body = _put(self.port, "/api/v1/rules/1", body=b"{}")
-        self.assertEqual(status, 402)
-        data = json.loads(body)
-        self.assertEqual(data["error"], "pro_required")
+    def test_put_rules_is_community(self):
+        """Rules are community-owned — PUT returns 200 or 404, not 402."""
+        status, _, body = _put(self.port, "/api/v1/rules/nonexistent", body=b"{}")
+        self.assertIn(status, (200, 404))
 
     def test_post_allowlist_returns_402(self):
         status, _, body = _post(self.port, "/api/v1/allowlist", body=b"{}")
@@ -1072,12 +1071,11 @@ class TestCommunityAPIDirect(unittest.TestCase):
         self.assertEqual(data["error"], "not_found")
 
     def test_pro_endpoint_post_returns_402(self):
-        # Notifications are now community-handled, not in _PRO_ENDPOINTS
-        for path in ("/api/v1/rules", "/api/v1/allowlist"):
-            status, body = handle_community_api(path, "POST", b"{}", None)
-            data = json.loads(body)
-            self.assertEqual(status, 402, "Expected 402 for POST %s" % path)
-            self.assertEqual(data["error"], "pro_required")
+        # Rules are now community-handled, only allowlist is Pro-gated
+        status, body = handle_community_api("/api/v1/allowlist", "POST", b"{}", None)
+        data = json.loads(body)
+        self.assertEqual(status, 402, "Expected 402 for POST /api/v1/allowlist")
+        self.assertEqual(data["error"], "pro_required")
 
     def test_put_config_empty_returns_400(self):
         status, body = handle_community_api("/api/v1/config", "PUT", b"{}", None)
@@ -1086,7 +1084,8 @@ class TestCommunityAPIDirect(unittest.TestCase):
         self.assertIn("error", data)
 
     def test_pro_endpoint_delete_returns_402(self):
-        status, body = handle_community_api("/api/v1/rules/1", "DELETE", b"", None)
+        # Rules are community-owned, test allowlist instead
+        status, body = handle_community_api("/api/v1/allowlist/1", "DELETE", b"", None)
         data = json.loads(body)
         self.assertEqual(status, 402)
         self.assertEqual(data["error"], "pro_required")

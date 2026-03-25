@@ -8,8 +8,10 @@ of 404 when no Pro handler is registered, giving API consumers a clear upgrade s
 import json
 import logging
 import os
+import re
 import signal
 import time
+from urllib.parse import unquote_plus
 
 from lumen_argus import __version__
 from lumen_argus.log_utils import sanitize_user_input
@@ -17,10 +19,7 @@ from lumen_argus.log_utils import sanitize_user_input
 log = logging.getLogger("argus.dashboard.api")
 
 # Pro endpoint prefixes — return 402 when Pro is not installed
-_PRO_ENDPOINTS = (
-    "/api/v1/rules",
-    "/api/v1/allowlist",
-)
+_PRO_ENDPOINTS = ("/api/v1/allowlist",)
 
 _SENSITIVE_FIELDS = frozenset(
     {
@@ -46,8 +45,6 @@ def _parse_query(path: str) -> tuple:
         path, query = path.split("?", 1)
     params = {}
     if query:
-        from urllib.parse import unquote_plus
-
         for part in query.split("&"):
             if "=" in part:
                 k, v = part.split("=", 1)
@@ -117,6 +114,18 @@ def handle_community_api(
                 return _json_response(400, {"error": "invalid finding ID"})
             return _handle_finding_detail(finding_id, store)
 
+        # --- Rules GET endpoints ---
+
+        if path == "/api/v1/rules":
+            return _handle_rules_list(params, store)
+
+        if path == "/api/v1/rules/stats":
+            return _handle_rules_stats(store)
+
+        if path.startswith("/api/v1/rules/"):
+            rule_name = path[len("/api/v1/rules/") :]
+            return _handle_rule_detail(rule_name, store)
+
     # --- POST endpoints ---
 
     if method == "POST":
@@ -137,6 +146,23 @@ def handle_community_api(
             return _handle_ws_connections(params, store)
         if path == "/api/v1/ws/stats":
             return _handle_ws_stats(params, store)
+
+    # --- Rules mutation endpoints ---
+
+    if path == "/api/v1/rules" and method == "POST":
+        return _handle_rule_create(body, store)
+
+    if path.startswith("/api/v1/rules/") and path.endswith("/clone") and method == "POST":
+        rule_name = path[len("/api/v1/rules/") : -len("/clone")]
+        return _handle_rule_clone(rule_name, body, store)
+
+    if path.startswith("/api/v1/rules/") and method == "PUT":
+        rule_name = path[len("/api/v1/rules/") :]
+        return _handle_rule_update(rule_name, body, store)
+
+    if path.startswith("/api/v1/rules/") and method == "DELETE":
+        rule_name = path[len("/api/v1/rules/") :]
+        return _handle_rule_delete(rule_name, store)
 
     # --- MCP tool list endpoints ---
 
@@ -445,6 +471,157 @@ def _handle_config(config, store=None) -> tuple:
         },
     }
     return _json_response(200, data)
+
+
+# --- Rules handlers ---
+
+
+def _handle_rules_list(params: dict, store) -> tuple:
+    if not store:
+        return _json_response(200, {"rules": [], "total": 0})
+    try:
+        limit = min(int(params.get("limit", 50)), 200)
+        offset = max(int(params.get("offset", 0)), 0)
+    except (ValueError, TypeError):
+        return _json_response(400, {"error": "invalid pagination parameters"})
+    search = params.get("search", "") or params.get("q", "") or None
+    detector = params.get("detector") or None
+    tier = params.get("tier") or None
+    severity = params.get("severity") or None
+    tag = params.get("tag") or None
+    enabled_str = params.get("enabled", "")
+    enabled = None
+    if enabled_str == "true":
+        enabled = True
+    elif enabled_str == "false":
+        enabled = False
+    rules, total = store.get_rules_page(
+        limit=limit,
+        offset=offset,
+        search=search,
+        detector=detector,
+        tier=tier,
+        enabled=enabled,
+        severity=severity,
+        tag=tag,
+    )
+    return _json_response(200, {"rules": rules, "total": total, "limit": limit, "offset": offset})
+
+
+def _handle_rules_stats(store) -> tuple:
+    if not store:
+        return _json_response(200, {"total": 0, "enabled": 0, "disabled": 0, "by_tier": {}, "by_detector": {}})
+    stats = store.get_rule_stats()
+    try:
+        stats["tags"] = store.get_rule_tag_stats()
+    except Exception as e:
+        log.warning("GET /api/v1/rules/stats: tag stats failed: %s", e)
+        stats["tags"] = []
+    return _json_response(200, stats)
+
+
+def _handle_rule_detail(rule_name: str, store) -> tuple:
+    rule_name = unquote_plus(rule_name)
+    if not store:
+        return _json_response(404, {"error": "rule not found"})
+    rule = store.get_rule_by_name(rule_name)
+    if rule is None:
+        return _json_response(404, {"error": "rule not found"})
+    return _json_response(200, rule)
+
+
+def _handle_rule_create(body: bytes, store) -> tuple:
+    if not store:
+        log.error("POST /api/v1/rules: analytics store not available")
+        return _json_response(500, {"error": "analytics store not available"})
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        log.debug("POST /api/v1/rules: invalid JSON body")
+        return _json_response(400, {"error": "invalid JSON"})
+    if not isinstance(data, dict) or not data.get("name"):
+        return _json_response(400, {"error": "name is required"})
+    if not data.get("pattern"):
+        return _json_response(400, {"error": "pattern is required"})
+    try:
+        re.compile(data["pattern"])
+    except re.error as e:
+        log.warning("POST /api/v1/rules: invalid regex for '%s': %s", data.get("name"), e)
+        return _json_response(400, {"error": "invalid regex: %s" % e})
+    action = data.get("action", "")
+    if action and action not in ("log", "alert", "block"):
+        log.warning("POST /api/v1/rules: invalid action '%s' for '%s'", action, data.get("name"))
+        return _json_response(400, {"error": "invalid action: %s (allowed: log, alert, block)" % action})
+    data["source"] = "dashboard"
+    data["tier"] = "custom"
+    data["created_by"] = "dashboard"
+    try:
+        rule = store.create_rule(data)
+        log.info(
+            "rule created [dashboard]: %s (detector=%s, severity=%s)",
+            data["name"],
+            data.get("detector", "custom"),
+            data.get("severity", "high"),
+        )
+        return _json_response(201, rule)
+    except ValueError as e:
+        log.warning("POST /api/v1/rules: conflict for '%s': %s", data.get("name"), e)
+        return _json_response(409, {"error": str(e)})
+
+
+def _handle_rule_update(rule_name: str, body: bytes, store) -> tuple:
+    rule_name = unquote_plus(rule_name)
+    if not store:
+        log.error("PUT /api/v1/rules: analytics store not available")
+        return _json_response(500, {"error": "analytics store not available"})
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        log.debug("PUT /api/v1/rules/%s: invalid JSON body", rule_name)
+        return _json_response(400, {"error": "invalid JSON"})
+    if not isinstance(data, dict):
+        return _json_response(400, {"error": "invalid JSON"})
+    action = data.get("action")
+    if action is not None and action != "" and action not in ("log", "alert", "block"):
+        log.warning("PUT /api/v1/rules/%s: invalid action '%s'", rule_name, action)
+        return _json_response(400, {"error": "invalid action: %s (allowed: log, alert, block)" % action})
+    data["updated_by"] = "dashboard"
+    result = store.update_rule(rule_name, data)
+    if result is None:
+        return _json_response(404, {"error": "rule not found"})
+    changes = ", ".join("%s=%s" % (k, v) for k, v in data.items() if k != "updated_by")
+    log.info("rule updated [dashboard]: %s (%s)", rule_name, changes)
+    return _json_response(200, result)
+
+
+def _handle_rule_delete(rule_name: str, store) -> tuple:
+    rule_name = unquote_plus(rule_name)
+    if not store:
+        log.error("DELETE /api/v1/rules: analytics store not available")
+        return _json_response(500, {"error": "analytics store not available"})
+    if store.delete_rule(rule_name):
+        log.info("rule deleted [dashboard]: %s", rule_name)
+        return _json_response(200, {"deleted": rule_name})
+    return _json_response(404, {"error": "rule not found"})
+
+
+def _handle_rule_clone(rule_name: str, body: bytes, store) -> tuple:
+    rule_name = unquote_plus(rule_name)
+    if not store:
+        log.error("POST /api/v1/rules/clone: analytics store not available")
+        return _json_response(500, {"error": "analytics store not available"})
+    try:
+        data = json.loads(body) if body else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        data = {}
+    new_name = data.get("new_name", rule_name + "_custom")
+    try:
+        rule = store.clone_rule(rule_name, new_name)
+        log.info("rule cloned [dashboard]: %s -> %s", rule_name, new_name)
+        return _json_response(201, rule)
+    except ValueError as e:
+        log.warning("POST /api/v1/rules/%s/clone: %s", rule_name, e)
+        return _json_response(409, {"error": str(e)})
 
 
 def _handle_audit(params: dict, audit_reader) -> tuple:
