@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 log = logging.getLogger("argus.notifiers.dispatcher")
 
@@ -18,6 +19,10 @@ def _parse_events(events):
     return events or []
 
 
+def _now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 class BasicDispatcher:
     """Fire-and-forget notification dispatcher.
 
@@ -30,6 +35,7 @@ class BasicDispatcher:
         self._builder = builder
         self._lock = threading.Lock()
         self._notifiers = {}  # channel_id -> (channel_dict, notifier, events_list)
+        self._last_status = {}  # channel_id -> {"status", "error", "timestamp"}
         self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="argus-notify")
 
     def rebuild(self):
@@ -49,6 +55,7 @@ class BasicDispatcher:
                     new_notifiers[ch["id"]] = (ch, notifier, events)
             with self._lock:
                 self._notifiers = new_notifiers
+                self._last_status = {}
             log.debug("dispatcher rebuilt: %d active notifiers", len(new_notifiers))
         except Exception:
             log.warning("failed to rebuild dispatcher", exc_info=True)
@@ -75,21 +82,43 @@ class BasicDispatcher:
                 matching = list(findings)
             if not matching:
                 continue
-            self._pool.submit(self._safe_notify, channel, notifier, matching, provider, model)
+            self._pool.submit(self._safe_notify, channel_id, channel, notifier, matching, provider, model)
 
-    def _safe_notify(self, channel, notifier, findings, provider, model):
+    def _safe_notify(self, channel_id, channel, notifier, findings, provider, model):
         try:
             notifier.notify(findings, provider=provider, model=model)
+            with self._lock:
+                self._last_status[channel_id] = {
+                    "status": "sent",
+                    "error": "",
+                    "timestamp": _now_iso(),
+                }
             log.info(
                 "notification sent: %s (%s) — %d findings",
                 channel.get("name", "?"),
                 channel.get("type", "?"),
                 len(findings),
             )
-        except Exception:
+        except Exception as e:
+            with self._lock:
+                self._last_status[channel_id] = {
+                    "status": "failed",
+                    "error": str(e),
+                    "timestamp": _now_iso(),
+                }
             log.warning(
-                "notification failed: %s (%s)",
+                "notification failed: %s (%s): %s",
                 channel.get("name", "?"),
                 channel.get("type", "?"),
+                e,
                 exc_info=True,
             )
+
+    def get_last_status(self):
+        """Return snapshot of last dispatch status per channel.
+
+        Returns dict: {channel_id: {"status", "error", "timestamp"}}
+        In-memory only — resets on restart and rebuild.
+        """
+        with self._lock:
+            return dict(self._last_status)

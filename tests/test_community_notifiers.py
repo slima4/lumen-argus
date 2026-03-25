@@ -254,6 +254,127 @@ class TestBasicDispatcher(unittest.TestCase):
         time.sleep(0.2)
         self.assertEqual(len(notified), 1)
 
+    def test_last_status_sent(self):
+        class MockNotifier:
+            def notify(self, findings, **kwargs):
+                pass
+
+        class MockStore:
+            def list_notification_channels(self):
+                return [{"id": 1, "name": "wh", "type": "webhook", "enabled": True, "events": []}]
+
+        dispatcher = BasicDispatcher(store=MockStore(), builder=lambda ch: MockNotifier())
+        dispatcher.rebuild()
+        self.assertEqual(dispatcher.get_last_status(), {})
+        dispatcher.dispatch([_make_finding()], provider="test")
+        time.sleep(0.3)
+        status = dispatcher.get_last_status()
+        self.assertIn(1, status)
+        self.assertEqual(status[1]["status"], "sent")
+        self.assertEqual(status[1]["error"], "")
+        self.assertIn("T", status[1]["timestamp"])
+
+    def test_last_status_failed(self):
+        class FailNotifier:
+            def notify(self, findings, **kwargs):
+                raise Exception("timeout")
+
+        class MockStore:
+            def list_notification_channels(self):
+                return [{"id": 1, "name": "fail", "type": "webhook", "enabled": True, "events": []}]
+
+        dispatcher = BasicDispatcher(store=MockStore(), builder=lambda ch: FailNotifier())
+        dispatcher.rebuild()
+        dispatcher.dispatch([_make_finding()], provider="test")
+        time.sleep(0.3)
+        status = dispatcher.get_last_status()
+        self.assertIn(1, status)
+        self.assertEqual(status[1]["status"], "failed")
+        self.assertIn("timeout", status[1]["error"])
+
+    def test_last_status_reset_on_rebuild(self):
+        class MockNotifier:
+            def notify(self, findings, **kwargs):
+                pass
+
+        class MockStore:
+            def list_notification_channels(self):
+                return [{"id": 1, "name": "wh", "type": "webhook", "enabled": True, "events": []}]
+
+        dispatcher = BasicDispatcher(store=MockStore(), builder=lambda ch: MockNotifier())
+        dispatcher.rebuild()
+        dispatcher.dispatch([_make_finding()], provider="test")
+        time.sleep(0.3)
+        self.assertTrue(len(dispatcher.get_last_status()) > 0)
+        dispatcher.rebuild()
+        self.assertEqual(dispatcher.get_last_status(), {})
+
+
+class TestChannelStatusEnrichment(unittest.TestCase):
+    """Test that GET /api/v1/notifications/channels enriches with dispatch status."""
+
+    def test_channels_enriched_with_last_status(self):
+        from lumen_argus.dashboard.api import handle_community_api
+        from lumen_argus.extensions import ExtensionRegistry
+
+        tmpdir = tempfile.mkdtemp()
+        db_path = os.path.join(tmpdir, "test.db")
+        store = AnalyticsStore(db_path=db_path)
+        ext = ExtensionRegistry()
+        ext.register_channel_types(WEBHOOK_CHANNEL_TYPE)
+
+        ch = store.create_notification_channel(
+            {
+                "name": "test-wh",
+                "type": "webhook",
+                "config": {"url": "https://example.com"},
+            }
+        )
+
+        class MockDispatcher:
+            def get_last_status(self):
+                return {ch["id"]: {"status": "sent", "error": "", "timestamp": "2026-03-25T12:00:00Z"}}
+
+        ext.set_dispatcher(MockDispatcher())
+
+        status, body = handle_community_api("/api/v1/notifications/channels", "GET", b"", store, extensions=ext)
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        channels = data["channels"]
+        self.assertEqual(len(channels), 1)
+        self.assertEqual(channels[0]["last_status"], "sent")
+        self.assertEqual(channels[0]["last_status_at"], "2026-03-25T12:00:00Z")
+        self.assertEqual(channels[0]["last_error"], "")
+
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_channels_without_dispatcher_status(self):
+        from lumen_argus.dashboard.api import handle_community_api
+        from lumen_argus.extensions import ExtensionRegistry
+
+        tmpdir = tempfile.mkdtemp()
+        db_path = os.path.join(tmpdir, "test.db")
+        store = AnalyticsStore(db_path=db_path)
+        ext = ExtensionRegistry()
+        ext.register_channel_types(WEBHOOK_CHANNEL_TYPE)
+
+        store.create_notification_channel(
+            {
+                "name": "test-wh",
+                "type": "webhook",
+                "config": {"url": "https://example.com"},
+            }
+        )
+
+        status, body = handle_community_api("/api/v1/notifications/channels", "GET", b"", store, extensions=ext)
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        channels = data["channels"]
+        self.assertEqual(len(channels), 1)
+        self.assertNotIn("last_status", channels[0])
+
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
 
 class TestBuildNotifier(unittest.TestCase):
     """Test the build_notifier factory function."""

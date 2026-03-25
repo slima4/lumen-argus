@@ -897,6 +897,19 @@ def _handle_notifications(path, method, body, store, extensions, request_user=""
     if path == "/api/v1/notifications/channels" and method == "GET":
         channels = store.list_notification_channels()
         safe = [_mask_channel(ch) for ch in channels]
+        # Enrich with last dispatch status from dispatcher (in-memory)
+        dispatcher = extensions.get_dispatcher() if extensions else None
+        if dispatcher and hasattr(dispatcher, "get_last_status"):
+            try:
+                statuses = dispatcher.get_last_status()
+                for ch in safe:
+                    st = statuses.get(ch.get("id"))
+                    if st:
+                        ch["last_status"] = st["status"]
+                        ch["last_status_at"] = st["timestamp"]
+                        ch["last_error"] = st["error"]
+            except Exception:
+                log.debug("failed to enrich channels with dispatch status", exc_info=True)
         limit = extensions.get_channel_limit()
         return _json_response(
             200,
