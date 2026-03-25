@@ -521,7 +521,7 @@ def _handle_allowlist_add(body: bytes, store) -> tuple:
         log.error("POST /api/v1/allowlist: analytics store not available")
         return _json_response(500, {"error": "analytics store not available"})
     try:
-        data = json.loads(body)
+        data = sanitize_user_input(json.loads(body))
     except (json.JSONDecodeError, UnicodeDecodeError):
         log.debug("POST /api/v1/allowlist: invalid JSON body")
         return _json_response(400, {"error": "invalid JSON"})
@@ -543,7 +543,7 @@ def _handle_allowlist_add(body: bytes, store) -> tuple:
 
 def _handle_allowlist_test(body: bytes, store) -> tuple:
     try:
-        data = json.loads(body)
+        data = sanitize_user_input(json.loads(body))
     except (json.JSONDecodeError, UnicodeDecodeError):
         return _json_response(400, {"error": "invalid JSON"})
     pattern = data.get("pattern", "")
@@ -653,7 +653,7 @@ def _handle_rule_create(body: bytes, store) -> tuple:
         log.error("POST /api/v1/rules: analytics store not available")
         return _json_response(500, {"error": "analytics store not available"})
     try:
-        data = json.loads(body)
+        data = sanitize_user_input(json.loads(body))
     except (json.JSONDecodeError, UnicodeDecodeError):
         log.debug("POST /api/v1/rules: invalid JSON body")
         return _json_response(400, {"error": "invalid JSON"})
@@ -688,12 +688,12 @@ def _handle_rule_create(body: bytes, store) -> tuple:
 
 
 def _handle_rule_update(rule_name: str, body: bytes, store) -> tuple:
-    rule_name = unquote_plus(rule_name)
+    rule_name = sanitize_user_input(unquote_plus(rule_name))
     if not store:
         log.error("PUT /api/v1/rules: analytics store not available")
         return _json_response(500, {"error": "analytics store not available"})
     try:
-        data = json.loads(body)
+        data = sanitize_user_input(json.loads(body))
     except (json.JSONDecodeError, UnicodeDecodeError):
         log.debug("PUT /api/v1/rules/%s: invalid JSON body", rule_name)
         return _json_response(400, {"error": "invalid JSON"})
@@ -713,7 +713,7 @@ def _handle_rule_update(rule_name: str, body: bytes, store) -> tuple:
 
 
 def _handle_rule_delete(rule_name: str, store) -> tuple:
-    rule_name = unquote_plus(rule_name)
+    rule_name = sanitize_user_input(unquote_plus(rule_name))
     if not store:
         log.error("DELETE /api/v1/rules: analytics store not available")
         return _json_response(500, {"error": "analytics store not available"})
@@ -724,12 +724,12 @@ def _handle_rule_delete(rule_name: str, store) -> tuple:
 
 
 def _handle_rule_clone(rule_name: str, body: bytes, store) -> tuple:
-    rule_name = unquote_plus(rule_name)
+    rule_name = sanitize_user_input(unquote_plus(rule_name))
     if not store:
         log.error("POST /api/v1/rules/clone: analytics store not available")
         return _json_response(500, {"error": "analytics store not available"})
     try:
-        data = json.loads(body) if body else {}
+        data = sanitize_user_input(json.loads(body)) if body else {}
     except (json.JSONDecodeError, UnicodeDecodeError):
         data = {}
     new_name = data.get("new_name", rule_name + "_custom")
