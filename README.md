@@ -244,9 +244,9 @@ Scanning overhead stays under 50ms for typical payloads. Connection pooling elim
 
 Built-in web dashboard at `http://localhost:8081`:
 
-**Community pages:** Dashboard (quick stats cards, severity breakdown, trend chart with 7d/30d/90d toggle, top detectors, top providers, activity feed, recent sessions with severity breakdown, pipeline health), Findings (paginated table with 8 filters: severity, detector, action, type, provider, client, time range, session; CSV/JSON export), Audit (log viewer with search), Pipeline (scanning stage config — toggle stages, detectors, encoding settings, default action), Settings (proxy config, license activation), Notifications (channel management).
+**Community pages:** Dashboard (quick stats cards, severity breakdown, trend chart with 7d/30d/90d toggle, top detectors, top providers, activity feed, recent sessions with severity breakdown, pipeline health), Findings (paginated table with 8 filters: severity, detector, action, type, provider, client, time range, session; CSV/JSON export), Rules (paginated rule list with search/filter by tier/detector/severity/status/tag, stat chips, tag chips, rule cards with enable toggle, action select, add/edit form with regex tester, clone/delete; URL hash deep-links from findings), Audit (log viewer with search), Pipeline (scanning stage config — toggle stages, detectors, encoding settings, default action), Settings (proxy config, license activation), Notifications (channel management).
 
-**Pro pages:** Rules, Allowlists, MCP, Performance — unlocked with a Pro license. Pro also adds 6 analytics charts to the Dashboard: actions trend (stacked area), activity heatmap (hour × weekday), top accounts, top projects, detection coverage gauge, and notification health.
+**Pro pages:** Allowlists, MCP, Performance — unlocked with a Pro license. Pro extends the Rules page with "Import Pro Rules" button and `redact` action. Pro also adds 6 analytics charts to the Dashboard: actions trend (stacked area), activity heatmap (hour × weekday), top accounts, top projects, detection coverage gauge, and notification health.
 
 ### Dashboard API
 
@@ -262,6 +262,13 @@ Built-in web dashboard at `http://localhost:8081`:
 | `PUT /api/v1/config` | Save settings (community: proxy; Pro: all) |
 | `GET /api/v1/pipeline` | Pipeline stage configuration with stats |
 | `PUT /api/v1/pipeline` | Save stage toggles, detector actions, encoding settings |
+| `GET /api/v1/rules` | Paginated rules (filter by tier, detector, severity, enabled, tag, search) |
+| `POST /api/v1/rules` | Create custom rule (action: log/alert/block; Pro adds redact) |
+| `GET /api/v1/rules/stats` | Rule counts by tier, detector, enabled, tags |
+| `GET /api/v1/rules/:name` | Single rule detail |
+| `PUT /api/v1/rules/:name` | Update rule (action, enabled, severity, etc.) |
+| `DELETE /api/v1/rules/:name` | Delete dashboard-created rules |
+| `POST /api/v1/rules/:name/clone` | Clone rule to custom tier |
 | `GET /api/v1/audit` | Audit log entries |
 | `GET /api/v1/live` | SSE real-time feed |
 | `GET /api/v1/notifications/channels` | List notification channels |

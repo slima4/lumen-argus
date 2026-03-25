@@ -239,6 +239,33 @@ The dashboard runs on a separate port (default `8081`) and provides a REST API f
 | `/api/v1/notifications/channels/:id/test` | POST | Send test notification |
 | `/api/v1/notifications/channels/batch` | POST | Bulk enable/disable/delete |
 
+### Rules endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/rules` | GET | Paginated rules list with search/filter by tier, detector, severity, enabled, tag |
+| `/api/v1/rules` | POST | Create custom rule (source='dashboard', tier='custom') |
+| `/api/v1/rules/stats` | GET | Rule counts by tier, detector, enabled status, and tag aggregation |
+| `/api/v1/rules/:name` | GET | Single rule detail |
+| `/api/v1/rules/:name` | PUT | Update rule (action, enabled, severity, pattern, tags, etc.) |
+| `/api/v1/rules/:name` | DELETE | Delete dashboard-created rules only (source='dashboard') |
+| `/api/v1/rules/:name/clone` | POST | Clone rule to custom tier (source='dashboard') |
+
+`GET /api/v1/rules` supports these query parameters:
+
+| Parameter | Description |
+|-----------|-------------|
+| `limit` | Page size (default 50, max 200) |
+| `offset` | Pagination offset (default 0) |
+| `search` / `q` | Search by name or description |
+| `detector` | Filter by detector (secrets, pii, injection, custom) |
+| `tier` | Filter by tier (community, pro, custom) |
+| `severity` | Filter by severity (critical, high, warning, info) |
+| `enabled` | Filter by status (`true` or `false`) |
+| `tag` | Filter by tag (exact match in JSON tags array) |
+
+`POST /api/v1/rules` and `PUT /api/v1/rules/:name` validate the `action` field. Community allows: empty string (default), `log`, `alert`, `block`. Pro overrides to also allow `redact`.
+
 ### Other mutation endpoints
 
 | Endpoint | Method | Description |
@@ -252,7 +279,6 @@ These return `402 pro_required` when Pro is not active:
 | Endpoint | Description |
 |----------|-------------|
 | `/api/v1/stats/advanced` | Advanced analytics (action trend, activity matrix, top accounts, top projects, detection coverage) |
-| `/api/v1/rules/*` | Rules management (CRUD, import, clone, stats) |
 | `/api/v1/allowlist/*` | Allowlist management |
 
 ### Authentication
