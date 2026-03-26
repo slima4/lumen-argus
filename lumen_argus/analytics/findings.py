@@ -3,10 +3,10 @@
 import hashlib
 import hmac as hmac_mod
 import logging
-from datetime import datetime, timezone
 from typing import List, Optional
 
 from lumen_argus.models import Finding, SessionContext
+from lumen_argus.time_utils import now_iso_ms
 
 log = logging.getLogger("argus.analytics")
 
@@ -73,7 +73,7 @@ class FindingsRepository:
         if not findings:
             return
 
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        now = now_iso_ms()
         s = session  # shorthand
 
         rows = []

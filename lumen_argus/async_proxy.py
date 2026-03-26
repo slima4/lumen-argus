@@ -19,7 +19,6 @@ import ssl
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
 
 import aiohttp
 from aiohttp import web
@@ -34,6 +33,7 @@ from lumen_argus.pipeline import ScannerPipeline
 from lumen_argus.provider import ProviderRouter
 from lumen_argus.session import extract_session as _extract_session
 from lumen_argus.stats import SessionStats
+from lumen_argus.time_utils import now_iso_ms
 
 log = logging.getLogger("argus.proxy")
 
@@ -98,7 +98,7 @@ def _log_audit(
 ) -> None:
     """Write audit log entry."""
     entry = AuditEntry(
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+        timestamp=now_iso_ms(),
         request_id=request_id,
         provider=provider,
         model=model,
