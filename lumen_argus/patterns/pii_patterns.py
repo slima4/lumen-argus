@@ -13,13 +13,6 @@ class PIIPattern(NamedTuple):
     validator: Optional[Callable[[str], bool]]  # None = match always counts
 
 
-# Local aliases for backward compatibility with existing PII_PATTERNS references
-_validate_ssn = validate_ssn
-_luhn_check = validate_luhn
-_exclude_private_ips = validate_ip_not_private
-_validate_iban = validate_iban
-
-
 PII_PATTERNS = (
     PIIPattern(
         "email",
@@ -31,13 +24,13 @@ PII_PATTERNS = (
         "ssn",
         re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
         "critical",
-        _validate_ssn,
+        validate_ssn,
     ),
     PIIPattern(
         "credit_card",
         re.compile(r"\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"),
         "critical",
-        _luhn_check,
+        validate_luhn,
     ),
     PIIPattern(
         "phone_us",
@@ -55,13 +48,13 @@ PII_PATTERNS = (
         "ip_address",
         re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"),
         "info",
-        _exclude_private_ips,
+        validate_ip_not_private,
     ),
     PIIPattern(
         "iban",
         re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b"),
         "warning",
-        _validate_iban,
+        validate_iban,
     ),
     PIIPattern(
         "passport_us",

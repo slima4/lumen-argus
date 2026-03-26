@@ -5,7 +5,11 @@ import unittest
 from lumen_argus.allowlist import AllowlistMatcher
 from lumen_argus.detectors.pii import PIIDetector
 from lumen_argus.models import ScanField
-from lumen_argus.patterns.pii_patterns import _luhn_check, _validate_ssn, _exclude_private_ips
+from lumen_argus.validators import (
+    validate_luhn as _luhn_check,
+    validate_ssn as _validate_ssn,
+    validate_ip_not_private as _exclude_private_ips,
+)
 
 
 class TestLuhnCheck(unittest.TestCase):

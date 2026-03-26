@@ -19,8 +19,10 @@ from lumen_argus.log_utils import setup_file_logging
 from lumen_argus.pipeline import ScannerPipeline
 from lumen_argus.provider import ProviderRouter
 
+log = logging.getLogger("argus.cli")
 
-def _initialize_analytics(config, args, extensions, action_overrides, log):
+
+def _initialize_analytics(config, args, extensions, action_overrides):
     """Initialize analytics store, auto-import rules, reconcile YAML, apply DB overrides.
 
     Returns the AnalyticsStore instance (or None if dashboard is disabled).
@@ -120,7 +122,7 @@ def _initialize_analytics(config, args, extensions, action_overrides, log):
     return analytics_store
 
 
-def _setup_mcp_scanning(config, server, pipeline, analytics_store, log):
+def _setup_mcp_scanning(config, server, pipeline, analytics_store):
     """Configure MCP tool argument/response scanning on the HTTP proxy."""
     mcp_args_enabled = config.pipeline.mcp_arguments.enabled
     mcp_resp_enabled = config.pipeline.mcp_responses.enabled
@@ -161,7 +163,7 @@ def _setup_mcp_scanning(config, server, pipeline, analytics_store, log):
     )
 
 
-def _setup_ws_scanning(config, server, pipeline, analytics_store, extensions, log):
+def _setup_ws_scanning(config, server, pipeline, analytics_store, extensions):
     """Configure WebSocket frame scanning and connection lifecycle hook."""
     from lumen_argus.ws_proxy import WebSocketScanner
 
@@ -404,8 +406,6 @@ def main(argv=None):
     root_logger.handlers.clear()
     root_logger.addHandler(console_handler)
 
-    log = logging.getLogger("argus.cli")
-
     # Load config
     config = load_config(config_path=args.config)
 
@@ -483,7 +483,7 @@ def main(argv=None):
 
     # --- Analytics store and rules (must happen before pipeline creation) ---
     dashboard_server = None
-    analytics_store = _initialize_analytics(config, args, extensions, action_overrides, log)
+    analytics_store = _initialize_analytics(config, args, extensions, action_overrides)
 
     # --- Allowlist (YAML config + DB entries) ---
     from lumen_argus.scanner import _build_allowlist
@@ -610,10 +610,10 @@ def main(argv=None):
             log.debug("community dispatcher registered")
 
     # --- MCP-aware scanning in HTTP proxy ---
-    _setup_mcp_scanning(config, server, pipeline, analytics_store, log)
+    _setup_mcp_scanning(config, server, pipeline, analytics_store)
 
     # --- WebSocket scanning (same port, handled by async proxy) ---
-    _setup_ws_scanning(config, server, pipeline, analytics_store, extensions, log)
+    _setup_ws_scanning(config, server, pipeline, analytics_store, extensions)
 
     # Track current config for diff on reload
     current_config = [config]
@@ -643,7 +643,6 @@ def main(argv=None):
                     root_logger,
                     extensions,
                     current_config,
-                    log,
                 )
             )
             server._background_tasks.add(task)
@@ -703,7 +702,7 @@ def _load_hmac_key() -> bytes:
     return key
 
 
-def _do_reload(server, config_path, file_handler, console_level, root_logger, extensions, current_config, log):
+def _do_reload(server, config_path, file_handler, console_level, root_logger, extensions, current_config):
     """Reload config from disk — runs in main thread, safe for locks."""
     try:
         from lumen_argus.log_utils import config_diff
