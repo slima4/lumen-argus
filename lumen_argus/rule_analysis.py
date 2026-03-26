@@ -21,6 +21,7 @@ try:
     from crossfire.evaluator import Evaluator
     from crossfire.classifier import Classifier
     from crossfire.models import Rule as CrossfireRule, Relationship
+    from crossfire.quality import assess_quality
 
     HAS_CROSSFIRE = True
     log.info("crossfire available — rule overlap analysis enabled")
@@ -104,6 +105,31 @@ def _cluster_to_dict(cluster):
     }
 
 
+def _rule_quality_to_dict(rq):
+    """Convert a crossfire RuleQuality to a JSON-serializable dict."""
+    return {
+        "name": rq.name,
+        "source": rq.source,
+        "specificity": rq.specificity,
+        "false_positive_potential": rq.false_positive_potential,
+        "pattern_complexity": rq.pattern_complexity,
+        "unique_coverage": rq.unique_coverage,
+        "is_broad": rq.is_broad,
+        "overlap_count": rq.overlap_count,
+        "flags": rq.flags,
+    }
+
+
+def _quality_to_dict(report):
+    """Convert a crossfire QualityReport to a JSON-serializable dict."""
+    return {
+        "broad_patterns": [_rule_quality_to_dict(r) for r in report.broad_patterns],
+        "low_specificity": [_rule_quality_to_dict(r) for r in report.low_specificity],
+        "fully_redundant": [_rule_quality_to_dict(r) for r in report.fully_redundant],
+        "summary": report.summary,
+    }
+
+
 def run_analysis(store, *, samples=50, threshold=0.8, seed=42):
     """Run overlap analysis on all active rules (synchronous).
 
@@ -129,6 +155,7 @@ def save_and_return(store, result):
             "subsets": result["subsets"],
             "overlaps": result["overlaps"],
             "clusters": result["clusters"],
+            "quality": result["quality"],
         }
     )
 
@@ -425,6 +452,15 @@ def _do_analysis(store, *, handler=None, samples=50, threshold=0.8, seed=42):
             overlaps.append(entry)
 
     cluster_list = [_cluster_to_dict(c) for c in clusters]
+
+    _set_status(True, "quality", "Assessing rule quality...")
+    try:
+        quality_report = assess_quality(cf_rules, corpus, matrix, corpus_sizes, seed=seed)
+        quality = _quality_to_dict(quality_report)
+    except Exception as exc:
+        log.warning("quality assessment failed (non-fatal): %s", exc, exc_info=True)
+        quality = {}
+
     duration = round(time.monotonic() - start, 2)
 
     log.info(
@@ -451,4 +487,5 @@ def _do_analysis(store, *, handler=None, samples=50, threshold=0.8, seed=42):
         "subsets": subsets,
         "overlaps": overlaps,
         "clusters": cluster_list,
+        "quality": quality,
     }

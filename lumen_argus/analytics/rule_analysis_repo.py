@@ -75,6 +75,7 @@ class RuleAnalysisRepository:
             "subsets": results.get("subsets", []),
             "overlaps": results.get("overlaps", []),
             "clusters": results.get("clusters", []),
+            "quality": results["quality"],
             "dismissed": dismissed,
         }
 
