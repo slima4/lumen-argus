@@ -67,13 +67,23 @@ Then point your AI tool at the proxy. **15 agents supported** — run `lumen-arg
 # Claude Code
 ANTHROPIC_BASE_URL=http://localhost:8080 claude
 
-# Cursor / Copilot / Aider / Continue / Cline / Roo Code
-OPENAI_BASE_URL=http://localhost:8080 your-tool
-# or
-ANTHROPIC_BASE_URL=http://localhost:8080 your-tool
+# Cursor
+OPENAI_BASE_URL=http://localhost:8080 cursor
+
+# Aider
+OPENAI_BASE_URL=http://localhost:8080 aider
+
+# Codex CLI
+OPENAI_BASE_URL=http://localhost:8080 codex
+
+# Copilot / Continue / Cody / Windsurf / Cline / Roo Code / Augment / Aide
+# Set in your IDE settings:
+OPENAI_BASE_URL=http://localhost:8080
+# or for Anthropic-based providers:
+ANTHROPIC_BASE_URL=http://localhost:8080
 
 # Gemini Code Assist
-GEMINI_BASE_URL=http://localhost:8080 your-tool
+GEMINI_BASE_URL=http://localhost:8080
 ```
 
 **Docker:**
