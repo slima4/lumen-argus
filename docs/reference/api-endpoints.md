@@ -327,6 +327,27 @@ When `dashboard.password` is set (or `LUMEN_ARGUS_DASHBOARD_PASSWORD` env var), 
 | `session_id` | Filter by session/conversation ID |
 | `account_id` | Filter by account (Anthropic UUID or OpenAI user) |
 
+`GET /api/v1/clients` returns the catalog of supported AI CLI agents with setup instructions:
+
+```json
+{
+  "clients": [
+    {
+      "id": "claude_code",
+      "display_name": "Claude Code",
+      "category": "cli",
+      "provider": "anthropic",
+      "ua_prefixes": ["claude-code/"],
+      "env_var": "ANTHROPIC_BASE_URL",
+      "setup_cmd": "ANTHROPIC_BASE_URL=http://localhost:8080 claude",
+      "website": "https://claude.ai/code"
+    }
+  ]
+}
+```
+
+Pro extends the list with enterprise clients via `extensions.register_clients()`.
+
 `GET /api/v1/sessions` returns sessions grouped by `session_id`:
 
 ```json

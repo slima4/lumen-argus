@@ -61,16 +61,18 @@ pip install lumen-argus
 lumen-argus serve
 ```
 
-Then point your AI tool at the proxy:
+Then point your AI tool at the proxy. **15 agents supported** — run `lumen-argus clients` to see them all:
 
 ```bash
 # Claude Code
 ANTHROPIC_BASE_URL=http://localhost:8080 claude
 
-# OpenAI / Copilot
+# Cursor / Copilot / Aider / Continue / Cline / Roo Code
 OPENAI_BASE_URL=http://localhost:8080 your-tool
+# or
+ANTHROPIC_BASE_URL=http://localhost:8080 your-tool
 
-# Gemini
+# Gemini Code Assist
 GEMINI_BASE_URL=http://localhost:8080 your-tool
 ```
 
