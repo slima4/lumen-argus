@@ -428,7 +428,7 @@ def main(argv=None):
         elif args.command == "rules":
             _run_rules(args)
         elif args.command == "mcp":
-            _run_mcp(args)
+            _run_mcp(args, extensions=extensions)
         elif args.command == "clients":
             _run_clients(args)
         elif args.command == "detect":
@@ -1279,7 +1279,7 @@ def _run_rules(args):
             print("  %d rules validated, 0 errors" % len(rules))
 
 
-def _run_mcp(args):
+def _run_mcp(args, extensions=None):
     """Run the unified MCP scanning proxy."""
     import asyncio
 
@@ -1364,8 +1364,9 @@ def _run_mcp(args):
     blocked_tools = blocked_tools or None
 
     # Load extensions (Pro hooks for policy engine + adaptive enforcement)
-    extensions = ExtensionRegistry()
-    extensions.load_plugins()
+    if extensions is None:
+        extensions = ExtensionRegistry()
+        extensions.load_plugins()
     policy_engine = extensions.get_mcp_policy_engine()
     escalation_fn = extensions.get_mcp_session_escalation()
 
