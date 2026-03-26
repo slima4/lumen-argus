@@ -183,8 +183,9 @@ def extract_session(req_data, provider: str, headers: dict, source_ip: str) -> S
         ctx.api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:16]
 
     # Client tool identification from User-Agent
-    client_id, _, _ = identify_client(headers.get("user-agent", ""))
+    client_id, _, version, _ = identify_client(headers.get("user-agent", ""))
     ctx.client_name = client_id
+    ctx.client_version = version
 
     # Explicit session header (highest priority)
     explicit_session = headers.get("x-session-id", "")

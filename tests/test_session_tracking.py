@@ -186,24 +186,26 @@ class TestClientName(unittest.TestCase):
     """Client identification via identify_client() and session extraction."""
 
     def test_claude_code_identified(self):
-        cid, name, _ = identify_client("claude-code/1.2.3 python/3.12")
+        cid, name, ver, _ = identify_client("claude-code/1.2.3 python/3.12")
         self.assertEqual(cid, "claude_code")
         self.assertEqual(name, "Claude Code")
+        self.assertEqual(ver, "1.2.3")
 
     def test_cursor_identified(self):
-        cid, _, _ = identify_client("Cursor/0.45.1")
+        cid, _, ver, _ = identify_client("Cursor/0.45.1")
         self.assertEqual(cid, "cursor")
+        self.assertEqual(ver, "0.45.1")
 
     def test_unknown_passthrough(self):
-        cid, _, _ = identify_client("python-requests/2.31.0")
+        cid, _, _, _ = identify_client("python-requests/2.31.0")
         self.assertEqual(cid, "python-requests/2.31.0")
 
     def test_browser_skipped(self):
-        cid, _, _ = identify_client("Mozilla/5.0 (Macintosh; Intel Mac OS X)")
+        cid, _, _, _ = identify_client("Mozilla/5.0 (Macintosh; Intel Mac OS X)")
         self.assertEqual(cid, "")
 
     def test_empty_ua(self):
-        cid, _, _ = identify_client("")
+        cid, _, _, _ = identify_client("")
         self.assertEqual(cid, "")
 
     def test_client_name_in_session(self):

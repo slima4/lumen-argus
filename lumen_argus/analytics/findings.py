@@ -5,7 +5,6 @@ import hmac as hmac_mod
 import logging
 from typing import List, Optional
 
-from lumen_argus.clients import normalize_legacy_client
 from lumen_argus.models import Finding, SessionContext
 from lumen_argus.time_utils import now_iso_ms
 
@@ -31,6 +30,7 @@ CREATE TABLE IF NOT EXISTS findings (
     git_branch TEXT NOT NULL DEFAULT '',
     os_platform TEXT NOT NULL DEFAULT '',
     client_name TEXT NOT NULL DEFAULT '',
+    client_version TEXT NOT NULL DEFAULT '',
     api_key_hash TEXT NOT NULL DEFAULT '',
     content_hash TEXT NOT NULL DEFAULT '',
     seen_count INTEGER NOT NULL DEFAULT 1,
@@ -50,7 +50,7 @@ _FINDINGS_COLUMNS = (
     "id, timestamp, detector, finding_type, severity, location, action_taken, "
     "provider, model, value_preview, account_id, session_id, device_id, "
     "source_ip, working_directory, git_branch, os_platform, client_name, "
-    "api_key_hash, content_hash, seen_count, value_hash"
+    "client_version, api_key_hash, content_hash, seen_count, value_hash"
 )
 
 
@@ -112,6 +112,7 @@ class FindingsRepository:
                     s.git_branch if s else "",
                     s.os_platform if s else "",
                     s.client_name if s else "",
+                    s.client_version if s else "",
                     s.api_key_hash if s else "",
                     content_hash,
                     vh,
@@ -126,8 +127,8 @@ class FindingsRepository:
                     "action_taken, provider, model, value_preview, "
                     "account_id, session_id, device_id, source_ip, "
                     "working_directory, git_branch, os_platform, "
-                    "client_name, api_key_hash, content_hash, value_hash) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "client_name, client_version, api_key_hash, content_hash, value_hash) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(content_hash, session_id) "
                     "WHERE content_hash != '' "
                     "DO UPDATE SET seen_count = seen_count + 1, "
@@ -284,17 +285,12 @@ class FindingsRepository:
             ):
                 by_model[row["model"] or "unknown"] = row["cnt"]
 
-            by_client_raw = {}
+            by_client = {}
             for row in conn.execute(
                 "SELECT client_name, COUNT(*) as cnt FROM findings "
                 "WHERE client_name != '' GROUP BY client_name ORDER BY cnt DESC LIMIT 50"
             ):
-                by_client_raw[row["client_name"]] = row["cnt"]
-            # Normalize legacy client names (e.g., "claude-code/1.2.3" → "claude_code")
-            by_client = {}
-            for raw_name, cnt in by_client_raw.items():
-                normalized = normalize_legacy_client(raw_name)
-                by_client[normalized] = by_client.get(normalized, 0) + cnt
+                by_client[row["client_name"]] = row["cnt"]
 
             daily = []
             for row in conn.execute(

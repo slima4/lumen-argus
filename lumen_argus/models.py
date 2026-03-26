@@ -44,7 +44,8 @@ class SessionContext:
     os_platform: str = ""  # OS from system prompt (darwin, linux, win32)
 
     # Client — HOW
-    client_name: str = ""  # Client tool name from User-Agent
+    client_name: str = ""  # Normalized client ID from registry (e.g., "aider")
+    client_version: str = ""  # Client version from User-Agent (e.g., "0.50.1")
 
 
 @dataclass
@@ -93,6 +94,7 @@ class AuditEntry:
     git_branch: str = ""
     os_platform: str = ""
     client_name: str = ""
+    client_version: str = ""
 
     def to_dict(self) -> dict:
         """Serialize for JSONL output. Never includes matched_value."""
@@ -131,6 +133,7 @@ class AuditEntry:
             "git_branch",
             "os_platform",
             "client_name",
+            "client_version",
         ):
             val = getattr(self, key, "")
             if val:

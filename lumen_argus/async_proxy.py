@@ -117,6 +117,7 @@ def _log_audit(
         git_branch=session.git_branch if session else "",
         os_platform=session.os_platform if session else "",
         client_name=session.client_name if session else "",
+        client_version=session.client_version if session else "",
     )
     server.audit.log(entry)
 

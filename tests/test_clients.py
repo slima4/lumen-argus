@@ -8,7 +8,6 @@ from lumen_argus.clients import (
     get_all_clients,
     get_client_by_id,
     identify_client,
-    normalize_legacy_client,
 )
 
 
@@ -49,117 +48,112 @@ class TestIdentifyClient(unittest.TestCase):
     """Test client identification from User-Agent strings."""
 
     def test_claude_code(self):
-        cid, name, raw = identify_client("claude-code/1.2.3 python/3.12")
+        cid, name, ver, raw = identify_client("claude-code/1.2.3 python/3.12")
         self.assertEqual(cid, "claude_code")
         self.assertEqual(name, "Claude Code")
+        self.assertEqual(ver, "1.2.3")
         self.assertEqual(raw, "claude-code/1.2.3")
 
     def test_cursor(self):
-        cid, name, raw = identify_client("Cursor/0.45.1")
+        cid, name, ver, _ = identify_client("Cursor/0.45.1")
         self.assertEqual(cid, "cursor")
         self.assertEqual(name, "Cursor")
+        self.assertEqual(ver, "0.45.1")
 
     def test_aider(self):
-        cid, name, raw = identify_client("aider/0.50.1 python-httpx/0.27")
+        cid, name, ver, _ = identify_client("aider/0.50.1 python-httpx/0.27")
         self.assertEqual(cid, "aider")
         self.assertEqual(name, "Aider")
+        self.assertEqual(ver, "0.50.1")
 
     def test_copilot(self):
-        cid, name, _ = identify_client("github-copilot/1.0")
+        cid, _, ver, _ = identify_client("github-copilot/1.0")
         self.assertEqual(cid, "copilot")
+        self.assertEqual(ver, "1.0")
 
     def test_continue(self):
-        cid, name, _ = identify_client("continue/0.8.1")
+        cid, _, ver, _ = identify_client("continue/0.8.1")
         self.assertEqual(cid, "continue")
+        self.assertEqual(ver, "0.8.1")
 
     def test_cody(self):
-        cid, name, _ = identify_client("cody/5.0.0")
+        cid, _, _, _ = identify_client("cody/5.0.0")
         self.assertEqual(cid, "cody")
 
     def test_cody_sourcegraph(self):
-        cid, name, _ = identify_client("sourcegraph-cody/1.2")
+        cid, _, _, _ = identify_client("sourcegraph-cody/1.2")
         self.assertEqual(cid, "cody")
 
     def test_windsurf(self):
-        cid, name, _ = identify_client("windsurf/1.0.0")
+        cid, _, _, _ = identify_client("windsurf/1.0.0")
         self.assertEqual(cid, "windsurf")
 
     def test_codeium_maps_to_windsurf(self):
-        cid, name, _ = identify_client("codeium/2.0")
+        cid, _, _, _ = identify_client("codeium/2.0")
         self.assertEqual(cid, "windsurf")
 
     def test_cline(self):
-        cid, name, _ = identify_client("cline/3.0.0")
+        cid, _, _, _ = identify_client("cline/3.0.0")
         self.assertEqual(cid, "cline")
 
     def test_roo_code(self):
-        cid, name, _ = identify_client("roo-code/1.0")
+        cid, _, _, _ = identify_client("roo-code/1.0")
         self.assertEqual(cid, "roo_code")
 
     def test_codex_cli(self):
-        cid, name, _ = identify_client("codex/0.1.0")
+        cid, _, _, _ = identify_client("codex/0.1.0")
         self.assertEqual(cid, "codex_cli")
 
     def test_aide(self):
-        cid, name, _ = identify_client("aide/1.0.0")
+        cid, _, _, _ = identify_client("aide/1.0.0")
         self.assertEqual(cid, "aide")
 
     def test_case_insensitive(self):
-        cid, _, _ = identify_client("CLAUDE-CODE/1.2.3")
+        cid, _, _, _ = identify_client("CLAUDE-CODE/1.2.3")
         self.assertEqual(cid, "claude_code")
 
     def test_case_insensitive_mixed(self):
-        cid, _, _ = identify_client("Aider/0.50.1")
+        cid, _, _, _ = identify_client("Aider/0.50.1")
         self.assertEqual(cid, "aider")
 
     def test_unknown_ua_passthrough(self):
-        cid, name, raw = identify_client("my-custom-tool/1.0")
+        cid, name, ver, raw = identify_client("my-custom-tool/1.0")
         self.assertEqual(cid, "my-custom-tool/1.0")
         self.assertEqual(name, "my-custom-tool/1.0")
+        self.assertEqual(ver, "1.0")
         self.assertEqual(raw, "my-custom-tool/1.0")
 
     def test_empty_ua(self):
-        cid, name, raw = identify_client("")
+        cid, name, ver, raw = identify_client("")
         self.assertEqual(cid, "")
-        self.assertEqual(name, "")
+        self.assertEqual(ver, "")
 
     def test_none_ua(self):
-        cid, name, raw = identify_client(None)
+        cid, name, ver, raw = identify_client(None)
         self.assertEqual(cid, "")
+        self.assertEqual(ver, "")
 
     def test_mozilla_filtered(self):
-        cid, name, raw = identify_client("Mozilla/5.0 (Macintosh; Intel Mac OS X)")
+        cid, _, ver, _ = identify_client("Mozilla/5.0 (Macintosh; Intel Mac OS X)")
         self.assertEqual(cid, "")
+        self.assertEqual(ver, "")
 
     def test_truncation(self):
         long_ua = "x" * 200
-        _, _, raw = identify_client(long_ua)
+        _, _, _, raw = identify_client(long_ua)
         self.assertEqual(len(raw), 128)
 
     def test_python_requests_passthrough(self):
         """Generic python-requests UA doesn't match any client."""
-        cid, name, raw = identify_client("python-requests/2.31.0")
+        cid, _, ver, _ = identify_client("python-requests/2.31.0")
         self.assertEqual(cid, "python-requests/2.31.0")
+        self.assertEqual(ver, "2.31.0")
 
-
-class TestNormalizeLegacyClient(unittest.TestCase):
-    """Test legacy client name normalization."""
-
-    def test_normalize_versioned_claude_code(self):
-        self.assertEqual(normalize_legacy_client("claude-code/1.2.3"), "claude_code")
-
-    def test_normalize_versioned_cursor(self):
-        self.assertEqual(normalize_legacy_client("Cursor/0.45.1"), "cursor")
-
-    def test_normalize_unknown_passthrough(self):
-        self.assertEqual(normalize_legacy_client("python-requests/2.31"), "python-requests/2.31")
-
-    def test_normalize_empty(self):
-        self.assertEqual(normalize_legacy_client(""), "")
-
-    def test_normalize_already_normalized(self):
-        """Already-normalized IDs don't contain '/' so won't match prefixes."""
-        self.assertEqual(normalize_legacy_client("claude_code"), "claude_code")
+    def test_no_version(self):
+        """UA without a slash has no version."""
+        cid, _, ver, _ = identify_client("custom-tool")
+        self.assertEqual(cid, "custom-tool")
+        self.assertEqual(ver, "")
 
 
 class TestGetClientById(unittest.TestCase):

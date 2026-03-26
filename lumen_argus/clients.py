@@ -198,41 +198,34 @@ for _client in CLIENT_REGISTRY:
 # ---------------------------------------------------------------------------
 
 
-def identify_client(user_agent: str, headers: dict = None) -> Tuple[str, str, str]:
+def _parse_version(raw_token: str) -> str:
+    """Extract version from a UA token like 'aider/0.50.1' → '0.50.1'."""
+    if "/" in raw_token:
+        return raw_token.split("/", 1)[1]
+    return ""
+
+
+def identify_client(user_agent: str, headers: dict = None) -> Tuple[str, str, str, str]:
     """Identify the AI CLI agent from request headers.
 
-    Returns (client_id, display_name, raw_ua_token):
+    Returns (client_id, display_name, version, raw_ua_token):
         - client_id: registry ID or raw token if no match
         - display_name: human-readable name or raw token
+        - version: parsed version string (e.g., "0.50.1")
         - raw_ua_token: first User-Agent token (for logging)
     """
     if not user_agent or user_agent.startswith("Mozilla/"):
-        return "", "", ""
+        return "", "", "", ""
 
     raw_token = user_agent.split()[0][:128]
     lower_token = raw_token.lower()
 
     for prefix, client in _PREFIX_INDEX:
         if lower_token.startswith(prefix):
-            return client.id, client.display_name, raw_token
+            return client.id, client.display_name, _parse_version(raw_token), raw_token
 
-    # No registry match — return raw token as both ID and display name
-    return raw_token, raw_token, raw_token
-
-
-def normalize_legacy_client(raw_name: str) -> str:
-    """Map a legacy raw client_name to a registry ID.
-
-    Used to group old DB values (e.g., "claude-code/1.2.3") with new
-    normalized IDs ("claude_code") in stats queries.
-    """
-    if not raw_name:
-        return raw_name
-    lower = raw_name.lower()
-    for prefix, client in _PREFIX_INDEX:
-        if lower.startswith(prefix):
-            return client.id
-    return raw_name
+    # No registry match — return raw token as ID/name
+    return raw_token, raw_token, _parse_version(raw_token), raw_token
 
 
 def get_client_by_id(client_id: str) -> Optional[ClientDef]:
