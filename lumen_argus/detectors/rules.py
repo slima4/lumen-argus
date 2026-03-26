@@ -24,6 +24,7 @@ from lumen_argus.allowlist import AllowlistMatcher
 from lumen_argus.detectors import BaseDetector
 from lumen_argus.detectors.accelerator import AhoCorasickAccelerator
 from lumen_argus.models import Finding, ScanField
+from lumen_argus.validators import validate_iban, validate_ip_not_private, validate_luhn, validate_ssn
 
 log = logging.getLogger("argus.detectors.rules")
 
@@ -40,75 +41,11 @@ def register_validator(name, fn):
     _VALIDATORS[name] = fn
 
 
-def _validate_ssn(value):
-    digits = value.replace("-", "")
-    if len(digits) != 9:
-        return False
-    area, group, serial = int(digits[:3]), int(digits[3:5]), int(digits[5:])
-    if area == 0 or area == 666 or area >= 900:
-        return False
-    return group != 0 and serial != 0
-
-
-def _luhn_check(value):
-    digits = [int(d) for d in value if d.isdigit()]
-    if len(digits) < 13 or len(digits) > 19:
-        return False
-    checksum = 0
-    for i, d in enumerate(reversed(digits)):
-        if i % 2 == 1:
-            d *= 2
-            if d > 9:
-                d -= 9
-        checksum += d
-    return checksum % 10 == 0
-
-
-def _exclude_private_ips(value):
-    parts = value.split(".")
-    if len(parts) != 4:
-        return False
-    try:
-        octets = [int(p) for p in parts]
-    except ValueError:
-        return False
-    if any(o < 0 or o > 255 for o in octets):
-        return False
-    first = octets[0]
-    if first in (0, 127):
-        return False
-    if first == 10:
-        return False
-    if first == 172 and 16 <= octets[1] <= 31:
-        return False
-    if first == 192 and octets[1] == 168:
-        return False
-    if first == 169 and octets[1] == 254:
-        return False
-    return True
-
-
-def _validate_iban(value):
-    cleaned = value.replace(" ", "").upper()
-    if len(cleaned) < 5 or len(cleaned) > 34:
-        return False
-    rearranged = cleaned[4:] + cleaned[:4]
-    digits = []
-    for c in rearranged:
-        if c.isdigit():
-            digits.append(c)
-        elif c.isalpha():
-            digits.append(str(ord(c) - ord("A") + 10))
-        else:
-            return False
-    return int("".join(digits)) % 97 == 1
-
-
-# Register built-in validators
-register_validator("ssn_range", _validate_ssn)
-register_validator("luhn", _luhn_check)
-register_validator("exclude_private_ips", _exclude_private_ips)
-register_validator("iban_mod97", _validate_iban)
+# Register built-in validators from shared module
+register_validator("ssn_range", validate_ssn)
+register_validator("luhn", validate_luhn)
+register_validator("exclude_private_ips", validate_ip_not_private)
+register_validator("iban_mod97", validate_iban)
 
 
 class RulesDetector(BaseDetector):
