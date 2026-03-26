@@ -59,6 +59,79 @@ def _json_response(status: int, data) -> tuple:
     return status, body
 
 
+# ---------------------------------------------------------------------------
+# Shared handler helpers — reduce duplication across 30+ handlers
+# ---------------------------------------------------------------------------
+
+
+def _parse_pagination(params: dict, default_limit: int = 50, max_limit: int = 100):
+    """Parse limit/offset from query params with bounds.
+
+    Returns (limit, offset) or a (status, body) error response tuple.
+    """
+    try:
+        limit = min(int(params.get("limit", default_limit)), max_limit)
+        offset = max(int(params.get("offset", 0)), 0)
+    except (ValueError, TypeError):
+        return _json_response(400, {"error": "invalid pagination parameters"})
+    return limit, offset
+
+
+def _parse_json_body(body: bytes, context: str = ""):
+    """Parse JSON body with sanitization and error handling.
+
+    Returns parsed dict or a (status, body) error response tuple.
+    """
+    try:
+        data = sanitize_user_input(json.loads(body))
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        if context:
+            log.debug("%s: invalid JSON body", context)
+        return _json_response(400, {"error": "invalid JSON"})
+    if not isinstance(data, dict):
+        return _json_response(400, {"error": "invalid JSON"})
+    return data
+
+
+def _require_store(store, context: str = ""):
+    """Check that the analytics store is available.
+
+    Returns None if store is available, or a (status, body) error response.
+    """
+    if not store:
+        if context:
+            log.error("%s: analytics store not available", context)
+        return _json_response(500, {"error": "analytics store not available"})
+    return None
+
+
+def _parse_days(params: dict, default: int = 30) -> int:
+    """Parse a 'days' query parameter with fallback to default."""
+    val = params.get("days")
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+
+def _send_sighup() -> bool:
+    """Send SIGHUP to self for config reload. Returns True if sent."""
+    if not hasattr(signal, "SIGHUP"):
+        return False
+    current_handler = signal.getsignal(signal.SIGHUP)
+    if current_handler in (signal.SIG_DFL, signal.SIG_IGN, None):
+        return False
+    try:
+        os.kill(os.getpid(), signal.SIGHUP)
+        log.debug("SIGHUP sent for config reload")
+        return True
+    except OSError:
+        log.warning("could not send SIGHUP for config reload")
+        return False
+
+
 def handle_community_api(
     path: str, method: str, body: bytes, store, audit_reader=None, config=None, extensions=None, request_user: str = ""
 ) -> tuple:
@@ -232,23 +305,16 @@ def _handle_config_update(body: bytes, config, store) -> tuple:
     Uses the same config_overrides SQLite table as Pro, so settings
     survive license transitions without data loss.
     """
-    try:
-        changes = json.loads(body)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        log.debug("PUT /api/v1/config: invalid JSON body")
-        return _json_response(400, {"error": "invalid JSON"})
-
-    if not isinstance(changes, dict) or not changes:
-        log.debug("PUT /api/v1/config: empty or non-object body")
+    changes = _parse_json_body(body, "PUT /api/v1/config")
+    if isinstance(changes, tuple):
+        return changes
+    if not changes:
+        log.debug("PUT /api/v1/config: empty body")
         return _json_response(400, {"error": "expected a JSON object with settings to update"})
 
-    # Sanitize all user input at the boundary — downstream code (logging,
-    # validation, storage) works with clean data, no per-call escaping.
-    changes = sanitize_user_input(changes)
-
-    if not store:
-        log.error("PUT /api/v1/config: analytics store not available")
-        return _json_response(500, {"error": "analytics store not available"})
+    err = _require_store(store, "PUT /api/v1/config")
+    if err:
+        return err
 
     log.debug("PUT /api/v1/config: %d change(s) requested: %s", len(changes), list(changes.keys()))
     errors = []
@@ -265,17 +331,7 @@ def _handle_config_update(body: bytes, config, store) -> tuple:
     if applied:
         summary = ", ".join("%s=%s" % (k, v) for k, v in applied.items())
         log.info("config update [settings]: %s", summary)
-
-    # Trigger SIGHUP so the running server picks up the changes.
-    # Only send if SIGHUP handler is registered (not default/test).
-    if applied and hasattr(signal, "SIGHUP"):
-        current_handler = signal.getsignal(signal.SIGHUP)
-        if current_handler not in (signal.SIG_DFL, signal.SIG_IGN, None):
-            try:
-                os.kill(os.getpid(), signal.SIGHUP)
-                log.debug("SIGHUP sent for config reload")
-            except OSError:
-                log.warning("could not send SIGHUP for config reload")
+        _send_sighup()
 
     if errors and not applied:
         return _json_response(400, {"error": "; ".join(e["error"] for e in errors)})
@@ -308,11 +364,11 @@ def _handle_findings_list(params: dict, store) -> tuple:
     if not store:
         return _json_response(200, {"findings": [], "total": 0})
 
-    try:
-        limit = min(int(params.get("limit", 50)), 100)
-        offset = max(int(params.get("offset", 0)), 0)
-    except (ValueError, TypeError):
-        return _json_response(400, {"error": "invalid pagination parameters"})
+    result = _parse_pagination(params)
+    if isinstance(result[1], bytes):
+        return result
+    limit, offset = result
+
     severity = params.get("severity") or None
     detector = params.get("detector") or None
     provider = params.get("provider") or None
@@ -321,13 +377,7 @@ def _handle_findings_list(params: dict, store) -> tuple:
     action = params.get("action") or None
     finding_type = params.get("finding_type") or None
     client_name = params.get("client") or None
-    days_str = params.get("days")
-    days = None
-    if days_str:
-        try:
-            days = int(days_str)
-        except (ValueError, TypeError):
-            pass
+    days = _parse_days(params, default=0) or None
 
     findings, total = store.get_findings_page(
         limit=limit,
@@ -358,10 +408,10 @@ def _handle_finding_detail(finding_id: int, store) -> tuple:
 def _handle_sessions(params: dict, store) -> tuple:
     if not store:
         return _json_response(200, {"sessions": []})
-    try:
-        limit = min(int(params.get("limit", 50)), 100)
-    except (ValueError, TypeError):
-        return _json_response(400, {"error": "invalid limit"})
+    result = _parse_pagination(params)
+    if isinstance(result[1], bytes):
+        return result
+    limit, _ = result
     sessions = store.get_sessions(limit=limit)
     return _json_response(200, {"sessions": sessions})
 
@@ -370,12 +420,12 @@ def _handle_dashboard_sessions(params: dict, store) -> tuple:
     """Return active sessions (last 24h) with severity breakdown for dashboard."""
     if not store:
         return _json_response(200, {"sessions": [], "total": 0})
-    try:
-        limit = min(int(params.get("limit", 5)), 10)
-    except (ValueError, TypeError):
-        return _json_response(400, {"error": "invalid limit"})
-    result = store.get_dashboard_sessions(limit=limit)
-    return _json_response(200, result)
+    result = _parse_pagination(params, default_limit=5, max_limit=10)
+    if isinstance(result[1], bytes):
+        return result
+    limit, _ = result
+    data = store.get_dashboard_sessions(limit=limit)
+    return _json_response(200, data)
 
 
 def _handle_stats(params: dict, store) -> tuple:
@@ -397,12 +447,7 @@ def _handle_stats(params: dict, store) -> tuple:
             },
         )
 
-    days_str = params.get("days", "30")
-    try:
-        days = int(days_str)
-    except (ValueError, TypeError):
-        days = 30
-    stats = store.get_stats(days=days)
+    stats = store.get_stats(days=_parse_days(params))
     return _json_response(200, stats)
 
 
@@ -416,11 +461,7 @@ def _handle_stats_advanced(params: dict, store, extensions) -> tuple:
         except Exception:
             is_valid = False
         if is_valid:
-            days_str = params.get("days", "30")
-            try:
-                days = int(days_str)
-            except (ValueError, TypeError):
-                days = 30
+            days = _parse_days(params)
             data = {
                 "action_trend": store.get_action_trend(days=days) if store else [],
                 "activity_matrix": store.get_activity_matrix(days=days) if store else [],
@@ -517,14 +558,12 @@ def _handle_allowlists(store, config) -> tuple:
 
 
 def _handle_allowlist_add(body: bytes, store) -> tuple:
-    if not store:
-        log.error("POST /api/v1/allowlist: analytics store not available")
-        return _json_response(500, {"error": "analytics store not available"})
-    try:
-        data = sanitize_user_input(json.loads(body))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        log.debug("POST /api/v1/allowlist: invalid JSON body")
-        return _json_response(400, {"error": "invalid JSON"})
+    err = _require_store(store, "POST /api/v1/allowlists")
+    if err:
+        return err
+    data = _parse_json_body(body, "POST /api/v1/allowlists")
+    if isinstance(data, tuple):
+        return data
     list_type = data.get("type", "")
     pattern = data.get("pattern", "")
     if list_type not in ("secrets", "pii", "paths"):
@@ -542,10 +581,9 @@ def _handle_allowlist_add(body: bytes, store) -> tuple:
 
 
 def _handle_allowlist_test(body: bytes, store) -> tuple:
-    try:
-        data = sanitize_user_input(json.loads(body))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return _json_response(400, {"error": "invalid JSON"})
+    data = _parse_json_body(body, "POST /api/v1/allowlists/test")
+    if isinstance(data, tuple):
+        return data
     pattern = data.get("pattern", "")
     test_value = data.get("value", "")
     if not pattern:
@@ -578,9 +616,9 @@ def _handle_allowlist_test(body: bytes, store) -> tuple:
 
 
 def _handle_allowlist_delete(entry_id: str, store) -> tuple:
-    if not store:
-        log.error("DELETE /api/v1/allowlist: analytics store not available")
-        return _json_response(500, {"error": "analytics store not available"})
+    err = _require_store(store, "DELETE /api/v1/allowlists")
+    if err:
+        return err
     try:
         entry_id_int = int(entry_id)
     except (ValueError, TypeError):
@@ -597,11 +635,10 @@ def _handle_allowlist_delete(entry_id: str, store) -> tuple:
 def _handle_rules_list(params: dict, store) -> tuple:
     if not store:
         return _json_response(200, {"rules": [], "total": 0})
-    try:
-        limit = min(int(params.get("limit", 50)), 200)
-        offset = max(int(params.get("offset", 0)), 0)
-    except (ValueError, TypeError):
-        return _json_response(400, {"error": "invalid pagination parameters"})
+    result = _parse_pagination(params, max_limit=200)
+    if isinstance(result[1], bytes):
+        return result
+    limit, offset = result
     search = params.get("search", "") or params.get("q", "") or None
     detector = params.get("detector") or None
     tier = params.get("tier") or None
@@ -649,15 +686,13 @@ def _handle_rule_detail(rule_name: str, store) -> tuple:
 
 
 def _handle_rule_create(body: bytes, store) -> tuple:
-    if not store:
-        log.error("POST /api/v1/rules: analytics store not available")
-        return _json_response(500, {"error": "analytics store not available"})
-    try:
-        data = sanitize_user_input(json.loads(body))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        log.debug("POST /api/v1/rules: invalid JSON body")
-        return _json_response(400, {"error": "invalid JSON"})
-    if not isinstance(data, dict) or not data.get("name"):
+    err = _require_store(store, "POST /api/v1/rules")
+    if err:
+        return err
+    data = _parse_json_body(body, "POST /api/v1/rules")
+    if isinstance(data, tuple):
+        return data
+    if not data.get("name"):
         return _json_response(400, {"error": "name is required"})
     if not data.get("pattern"):
         return _json_response(400, {"error": "pattern is required"})
@@ -689,16 +724,12 @@ def _handle_rule_create(body: bytes, store) -> tuple:
 
 def _handle_rule_update(rule_name: str, body: bytes, store) -> tuple:
     rule_name = sanitize_user_input(unquote_plus(rule_name))
-    if not store:
-        log.error("PUT /api/v1/rules: analytics store not available")
-        return _json_response(500, {"error": "analytics store not available"})
-    try:
-        data = sanitize_user_input(json.loads(body))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        log.debug("PUT /api/v1/rules/%s: invalid JSON body", rule_name)
-        return _json_response(400, {"error": "invalid JSON"})
-    if not isinstance(data, dict):
-        return _json_response(400, {"error": "invalid JSON"})
+    err = _require_store(store, "PUT /api/v1/rules/%s" % rule_name)
+    if err:
+        return err
+    data = _parse_json_body(body, "PUT /api/v1/rules/%s" % rule_name)
+    if isinstance(data, tuple):
+        return data
     action = data.get("action")
     if action is not None and action != "" and action not in ("log", "alert", "block"):
         log.warning("PUT /api/v1/rules/%s: invalid action '%s'", rule_name, action)
@@ -714,9 +745,9 @@ def _handle_rule_update(rule_name: str, body: bytes, store) -> tuple:
 
 def _handle_rule_delete(rule_name: str, store) -> tuple:
     rule_name = sanitize_user_input(unquote_plus(rule_name))
-    if not store:
-        log.error("DELETE /api/v1/rules: analytics store not available")
-        return _json_response(500, {"error": "analytics store not available"})
+    err = _require_store(store, "DELETE /api/v1/rules")
+    if err:
+        return err
     if store.delete_rule(rule_name):
         log.info("rule deleted [dashboard]: %s", rule_name)
         return _json_response(200, {"deleted": rule_name})
@@ -725,12 +756,14 @@ def _handle_rule_delete(rule_name: str, store) -> tuple:
 
 def _handle_rule_clone(rule_name: str, body: bytes, store) -> tuple:
     rule_name = sanitize_user_input(unquote_plus(rule_name))
-    if not store:
-        log.error("POST /api/v1/rules/clone: analytics store not available")
-        return _json_response(500, {"error": "analytics store not available"})
-    try:
-        data = sanitize_user_input(json.loads(body)) if body else {}
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    err = _require_store(store, "POST /api/v1/rules/%s/clone" % rule_name)
+    if err:
+        return err
+    if body:
+        data = _parse_json_body(body, "POST /api/v1/rules/%s/clone" % rule_name)
+        if isinstance(data, tuple):
+            return data
+    else:
         data = {}
     new_name = data.get("new_name", rule_name + "_custom")
     try:
@@ -746,11 +779,10 @@ def _handle_audit(params: dict, audit_reader) -> tuple:
     if not audit_reader:
         return _json_response(200, {"entries": [], "total": 0, "providers": []})
 
-    try:
-        limit = min(int(params.get("limit", 50)), 100)
-        offset = max(int(params.get("offset", 0)), 0)
-    except (ValueError, TypeError):
-        return _json_response(400, {"error": "invalid pagination parameters"})
+    result = _parse_pagination(params)
+    if isinstance(result[1], bytes):
+        return result
+    limit, offset = result
     action = params.get("action") or None
     provider = params.get("provider") or None
     search = params.get("search") or None
@@ -790,12 +822,9 @@ def _handle_logs_tail(config) -> tuple:
 
 def _handle_license_activation(body: bytes) -> tuple:
     """POST /api/v1/license — save license key to disk."""
-    try:
-        data = json.loads(body)
-    except (json.JSONDecodeError, ValueError):
-        return _json_response(400, {"error": "invalid JSON"})
-
-    data = sanitize_user_input(data)
+    data = _parse_json_body(body, "POST /api/v1/license")
+    if isinstance(data, tuple):
+        return data
     key = data.get("key", "").strip()
     if not key:
         return _json_response(400, {"error": "license key is required"})
@@ -922,12 +951,9 @@ def _handle_notifications(path, method, body, store, extensions, request_user=""
 
     # POST /api/v1/notifications/channels
     if path == "/api/v1/notifications/channels" and method == "POST":
-        try:
-            data = sanitize_user_input(json.loads(body))
-        except (json.JSONDecodeError, ValueError):
-            return _json_response(400, {"error": "invalid JSON"})
-        if not isinstance(data, dict):
-            return _json_response(400, {"error": "invalid JSON"})
+        data = _parse_json_body(body, "POST /api/v1/notifications/channels")
+        if isinstance(data, tuple):
+            return data
         # Validate channel type
         allowed_types = extensions.get_channel_types()
         if data.get("type") not in allowed_types:
@@ -960,10 +986,9 @@ def _handle_notifications(path, method, body, store, extensions, request_user=""
 
     # POST /api/v1/notifications/channels/batch
     if path == "/api/v1/notifications/channels/batch" and method == "POST":
-        try:
-            data = sanitize_user_input(json.loads(body))
-        except (json.JSONDecodeError, ValueError):
-            return _json_response(400, {"error": "invalid JSON"})
+        data = _parse_json_body(body, "POST /api/v1/notifications/channels/batch")
+        if isinstance(data, tuple):
+            return data
         action = data.get("action", "")
         raw_ids = data.get("ids", [])
         if not isinstance(raw_ids, list):
@@ -1001,12 +1026,9 @@ def _handle_notifications(path, method, body, store, extensions, request_user=""
 
         # PUT /api/v1/notifications/channels/:id
         if method == "PUT" and sub is None:
-            try:
-                data = sanitize_user_input(json.loads(body))
-            except (json.JSONDecodeError, ValueError):
-                return _json_response(400, {"error": "invalid JSON"})
-            if not isinstance(data, dict):
-                return _json_response(400, {"error": "invalid JSON"})
+            data = _parse_json_body(body, "PUT /api/v1/notifications/channels/%d" % channel_id)
+            if isinstance(data, tuple):
+                return data
             data["updated_by"] = request_user or "dashboard"
             try:
                 result = store.update_notification_channel(channel_id, data)
@@ -1299,22 +1321,13 @@ def _handle_pipeline_get(config, store=None) -> tuple:
 
 def _handle_pipeline_update(body: bytes, config, store) -> tuple:
     """Save pipeline configuration changes."""
-    if not store:
-        log.error("PUT /api/v1/pipeline: analytics store not available")
-        return _json_response(500, {"error": "analytics store not available"})
+    err = _require_store(store, "PUT /api/v1/pipeline")
+    if err:
+        return err
 
-    try:
-        changes = json.loads(body)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        log.debug("PUT /api/v1/pipeline: invalid JSON body")
-        return _json_response(400, {"error": "invalid JSON"})
-
-    if not isinstance(changes, dict):
-        log.debug("PUT /api/v1/pipeline: empty or non-object body")
-        return _json_response(400, {"error": "expected JSON object"})
-
-    # Sanitize all user input at the boundary
-    changes = sanitize_user_input(changes)
+    changes = _parse_json_body(body, "PUT /api/v1/pipeline")
+    if isinstance(changes, tuple):
+        return changes
 
     log.debug("PUT /api/v1/pipeline: %d section(s) requested: %s", len(changes), list(changes.keys()))
 
@@ -1399,17 +1412,8 @@ def _handle_pipeline_update(body: bytes, config, store) -> tuple:
                     log.warning("pipeline config rejected: %s = %s (%s)", key, action_val, e)
                     errors.append({"key": key, "error": str(e)})
 
-    # Trigger SIGHUP for hot reload
-    if applied and hasattr(signal, "SIGHUP"):
-        current_handler = signal.getsignal(signal.SIGHUP)
-        if current_handler not in (signal.SIG_DFL, signal.SIG_IGN, None):
-            try:
-                os.kill(os.getpid(), signal.SIGHUP)
-                log.debug("SIGHUP sent for pipeline config reload")
-            except OSError:
-                log.warning("could not send SIGHUP for pipeline config reload")
-
     if applied:
+        _send_sighup()
         summary = ", ".join("%s=%s" % (k, v) for k, v in applied.items())
         if errors:
             log.info("pipeline update [dashboard]: %d applied, %d errors: %s", len(applied), len(errors), summary)
@@ -1459,15 +1463,13 @@ def _handle_mcp_tools_list(store, config) -> tuple:
 
 def _handle_mcp_tools_add(body: bytes, store) -> tuple:
     """Add a tool to the allowed or blocked list."""
-    if not store:
-        log.error("POST /api/v1/mcp/tools: analytics store not available")
-        return _json_response(500, {"error": "analytics store not available"})
+    err = _require_store(store, "POST /api/v1/mcp/tools")
+    if err:
+        return err
 
-    try:
-        data = sanitize_user_input(json.loads(body))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        log.debug("POST /api/v1/mcp/tools: invalid JSON body")
-        return _json_response(400, {"error": "invalid JSON"})
+    data = _parse_json_body(body, "POST /api/v1/mcp/tools")
+    if isinstance(data, tuple):
+        return data
 
     list_type = data.get("list_type", "")
     tool_name = data.get("tool_name", "")
@@ -1488,9 +1490,9 @@ def _handle_mcp_tools_add(body: bytes, store) -> tuple:
 
 def _handle_mcp_tools_delete(entry_id: int, store) -> tuple:
     """Remove an API-managed MCP tool list entry."""
-    if not store:
-        log.error("DELETE /api/v1/mcp/tools: analytics store not available")
-        return _json_response(500, {"error": "analytics store not available"})
+    err = _require_store(store, "DELETE /api/v1/mcp/tools/%d" % entry_id)
+    if err:
+        return err
 
     deleted = store.delete_mcp_tool_entry(entry_id)
     if not deleted:
@@ -1506,14 +1508,14 @@ def _handle_mcp_tools_delete(entry_id: int, store) -> tuple:
 
 def _handle_ws_connections(params: dict, store) -> tuple:
     """Return recent WebSocket connections, newest first."""
-    if not store:
-        return _json_response(500, {"error": "analytics store not available"})
+    err = _require_store(store, "GET /api/v1/ws/connections")
+    if err:
+        return err
 
-    try:
-        limit = min(int(params.get("limit", 50)), 200)
-        offset = max(int(params.get("offset", 0)), 0)
-    except (ValueError, TypeError):
-        return _json_response(400, {"error": "invalid limit or offset"})
+    result = _parse_pagination(params, max_limit=200)
+    if isinstance(result[1], bytes):
+        return result
+    limit, offset = result
 
     connections = store.get_ws_connections(limit=limit, offset=offset)
     log.debug("GET /api/v1/ws/connections: %d result(s) (limit=%d, offset=%d)", len(connections), limit, offset)
@@ -1522,13 +1524,11 @@ def _handle_ws_connections(params: dict, store) -> tuple:
 
 def _handle_ws_stats(params: dict, store) -> tuple:
     """Return aggregate WebSocket stats for the given period."""
-    if not store:
-        return _json_response(500, {"error": "analytics store not available"})
+    err = _require_store(store, "GET /api/v1/ws/stats")
+    if err:
+        return err
 
-    try:
-        days = min(max(int(params.get("days", 7)), 1), 365)
-    except (ValueError, TypeError):
-        return _json_response(400, {"error": "invalid days parameter"})
+    days = min(max(_parse_days(params, default=7), 1), 365)
 
     stats = store.get_ws_stats(days=days)
     log.debug("GET /api/v1/ws/stats: days=%d, %d connections", days, stats.get("total_connections", 0))
