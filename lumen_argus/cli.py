@@ -20,6 +20,194 @@ from lumen_argus.pipeline import ScannerPipeline
 from lumen_argus.provider import ProviderRouter
 
 
+def _initialize_analytics(config, args, extensions, action_overrides, log):
+    """Initialize analytics store, auto-import rules, reconcile YAML, apply DB overrides.
+
+    Returns the AnalyticsStore instance (or None if dashboard is disabled).
+    Mutates config and action_overrides with DB overrides.
+    """
+    if not config.dashboard.enabled:
+        return None
+
+    from lumen_argus.analytics.store import AnalyticsStore
+
+    # Load or generate HMAC key for value hashing
+    hmac_key = None
+    if config.analytics.hash_secrets:
+        hmac_key = _load_hmac_key()
+
+    # Create analytics store (or use plugin-provided one)
+    analytics_store = extensions.get_analytics_store()
+    if analytics_store is None and config.analytics.enabled:
+        analytics_store = AnalyticsStore(db_path=config.analytics.db_path, hmac_key=hmac_key)
+        extensions.set_analytics_store(analytics_store)
+        analytics_store.start_cleanup_scheduler(config.analytics.retention_days)
+    elif analytics_store is not None and hmac_key:
+        # Plugin-provided store (Pro) — inject HMAC key for value hashing
+        analytics_store._hmac_key = hmac_key
+
+    # Auto-import community rules on first run if DB has zero rules
+    if analytics_store and not args.no_default_rules and config.rules.auto_import:
+        if analytics_store.get_rules_count() == 0:
+            rules, version, tier = _load_rules_bundle()
+            result = analytics_store.import_rules(rules, tier=tier)
+            log.info("auto-imported %d community rules v%s", result["created"], version)
+
+    # Reconcile YAML custom_rules to DB (Kubernetes-style)
+    if analytics_store and config.custom_rules:
+        yaml_rules = [
+            {
+                "name": r.name,
+                "pattern": r.pattern,
+                "severity": r.severity,
+                "action": r.action,
+                "detector": r.detector,
+            }
+            for r in config.custom_rules
+        ]
+        rules_result = analytics_store.reconcile_yaml_rules(yaml_rules)
+        for action_name in ("created", "updated", "deleted"):
+            if rules_result[action_name]:
+                log.info(
+                    "custom rules %s: %s",
+                    action_name,
+                    ", ".join(rules_result[action_name]),
+                )
+
+    # Apply DB config overrides on top of YAML (dashboard-saved settings)
+    if analytics_store:
+        try:
+            db_overrides = analytics_store.get_config_overrides()
+            for key, value in db_overrides.items():
+                if key == "proxy.timeout":
+                    config.proxy.timeout = int(value)
+                elif key == "proxy.retries":
+                    config.proxy.retries = int(value)
+                elif key == "default_action":
+                    config.default_action = value
+                elif key == "detectors.secrets.action":
+                    action_overrides["secrets"] = value
+                    config.secrets.action = value
+                elif key == "detectors.pii.action":
+                    action_overrides["pii"] = value
+                    config.pii.action = value
+                elif key == "detectors.proprietary.action":
+                    action_overrides["proprietary"] = value
+                    config.proprietary.action = value
+                elif key == "detectors.secrets.enabled":
+                    config.secrets.enabled = value.lower() == "true"
+                elif key == "detectors.pii.enabled":
+                    config.pii.enabled = value.lower() == "true"
+                elif key == "detectors.proprietary.enabled":
+                    config.proprietary.enabled = value.lower() == "true"
+                elif key == "pipeline.parallel_batching":
+                    config.pipeline.parallel_batching = value.lower() == "true"
+                elif key.startswith("pipeline.stages."):
+                    parts = key.split(".")
+                    stage_name = parts[2]
+                    field_name = parts[3] if len(parts) > 3 else ""
+                    stage_cfg = getattr(config.pipeline, stage_name, None)
+                    if stage_cfg is not None and field_name:
+                        if field_name == "enabled" or field_name in ("base64", "hex", "url", "unicode"):
+                            setattr(stage_cfg, field_name, value.lower() == "true")
+                        elif field_name in ("max_depth", "min_decoded_length", "max_decoded_length"):
+                            setattr(stage_cfg, field_name, int(value))
+            if db_overrides:
+                log.info("applied %d config override(s) from DB", len(db_overrides))
+        except Exception:
+            pass
+
+    return analytics_store
+
+
+def _setup_mcp_scanning(config, server, pipeline, analytics_store, log):
+    """Configure MCP tool argument/response scanning on the HTTP proxy."""
+    mcp_args_enabled = config.pipeline.mcp_arguments.enabled
+    mcp_resp_enabled = config.pipeline.mcp_responses.enabled
+    if not (mcp_args_enabled or mcp_resp_enabled):
+        return
+
+    from lumen_argus.mcp.scanner import MCPScanner
+
+    mcp_cfg = getattr(config, "mcp", None)
+    allowed_tools = set(mcp_cfg.allowed_tools) if mcp_cfg and mcp_cfg.allowed_tools else set()
+    blocked_tools = set(mcp_cfg.blocked_tools) if mcp_cfg and mcp_cfg.blocked_tools else set()
+
+    # Merge DB tool lists
+    if analytics_store:
+        try:
+            db_lists = analytics_store.get_mcp_tool_lists()
+            for entry in db_lists.get("allowed", []):
+                allowed_tools.add(entry["tool_name"])
+            for entry in db_lists.get("blocked", []):
+                blocked_tools.add(entry["tool_name"])
+        except Exception:
+            pass
+
+    server.mcp_scanner = MCPScanner(
+        detectors=pipeline._detectors,
+        allowlist=pipeline._allowlist,
+        response_scanner=server.response_scanner,
+        scan_arguments=mcp_args_enabled,
+        scan_responses=mcp_resp_enabled,
+        allowed_tools=allowed_tools or None,
+        blocked_tools=blocked_tools or None,
+        action=config.pipeline.mcp_arguments.action or config.default_action,
+    )
+    log.info(
+        "MCP proxy scanning enabled: arguments=%s responses=%s",
+        mcp_args_enabled,
+        mcp_resp_enabled,
+    )
+
+
+def _setup_ws_scanning(config, server, pipeline, analytics_store, extensions, log):
+    """Configure WebSocket frame scanning and connection lifecycle hook."""
+    from lumen_argus.ws_proxy import WebSocketScanner
+
+    ws_outbound = config.pipeline.websocket_outbound.enabled
+    ws_inbound = config.pipeline.websocket_inbound.enabled
+    if ws_outbound or ws_inbound:
+        server.ws_scanner = WebSocketScanner(
+            detectors=pipeline._detectors,
+            allowlist=pipeline._allowlist,
+            response_scanner=server.response_scanner,
+            scan_outbound=ws_outbound,
+            scan_inbound=ws_inbound,
+            max_frame_size=config.websocket.max_frame_size,
+        )
+        server.ws_allowed_origins = config.websocket.allowed_origins or []
+        log.info("WebSocket scanning enabled on same port: outbound=%s inbound=%s", ws_outbound, ws_inbound)
+
+    # Register default WS connection lifecycle hook (records to analytics store).
+    # Pro can override via extensions.set_ws_connection_hook() to add richer analytics.
+    if analytics_store and not extensions.get_ws_connection_hook():
+
+        def _default_ws_hook(event_type, connection_id, metadata):
+            if event_type == "open":
+                analytics_store.record_ws_connection_open(
+                    connection_id,
+                    metadata["target_url"],
+                    metadata.get("origin", ""),
+                    metadata["timestamp"],
+                )
+            elif event_type == "close":
+                analytics_store.record_ws_connection_close(
+                    connection_id,
+                    metadata["timestamp"],
+                    metadata["duration_seconds"],
+                    metadata["frames_sent"],
+                    metadata["frames_received"],
+                    0,
+                    metadata.get("close_code", 1000),
+                )
+            elif event_type == "finding_detected" and metadata["findings_count"] > 0:
+                analytics_store.increment_ws_findings(connection_id, metadata["findings_count"])
+
+        extensions.set_ws_connection_hook(_default_ws_hook)
+        log.debug("default WebSocket connection hook registered")
+
+
 def _build_pipeline_config(cfg):
     """Build flat dict from PipelineConfig for ScannerPipeline."""
     enc = cfg.pipeline.encoding_decode
@@ -295,98 +483,7 @@ def main(argv=None):
 
     # --- Analytics store and rules (must happen before pipeline creation) ---
     dashboard_server = None
-    analytics_store = None
-    if config.dashboard.enabled:
-        from lumen_argus.analytics.store import AnalyticsStore
-        from lumen_argus.dashboard.audit_reader import AuditReader
-        from lumen_argus.dashboard.server import start_dashboard
-        from lumen_argus.dashboard.sse import SSEBroadcaster
-
-        # Load or generate HMAC key for value hashing
-        hmac_key = None
-        if config.analytics.hash_secrets:
-            hmac_key = _load_hmac_key()
-
-        # Create analytics store (or use plugin-provided one)
-        analytics_store = extensions.get_analytics_store()
-        if analytics_store is None and config.analytics.enabled:
-            analytics_store = AnalyticsStore(db_path=config.analytics.db_path, hmac_key=hmac_key)
-            extensions.set_analytics_store(analytics_store)
-            analytics_store.start_cleanup_scheduler(config.analytics.retention_days)
-        elif analytics_store is not None and hmac_key:
-            # Plugin-provided store (Pro) — inject HMAC key for value hashing
-            analytics_store._hmac_key = hmac_key
-
-        # Auto-import community rules on first run if DB has zero rules
-        if analytics_store and not args.no_default_rules and config.rules.auto_import:
-            if analytics_store.get_rules_count() == 0:
-                rules, version, tier = _load_rules_bundle()
-                result = analytics_store.import_rules(rules, tier=tier)
-                log.info("auto-imported %d community rules v%s", result["created"], version)
-
-        # Reconcile YAML custom_rules to DB (Kubernetes-style)
-        if analytics_store and config.custom_rules:
-            yaml_rules = [
-                {
-                    "name": r.name,
-                    "pattern": r.pattern,
-                    "severity": r.severity,
-                    "action": r.action,
-                    "detector": r.detector,
-                }
-                for r in config.custom_rules
-            ]
-            rules_result = analytics_store.reconcile_yaml_rules(yaml_rules)
-            for action_name in ("created", "updated", "deleted"):
-                if rules_result[action_name]:
-                    log.info(
-                        "custom rules %s: %s",
-                        action_name,
-                        ", ".join(rules_result[action_name]),
-                    )
-
-    # Apply DB config overrides on top of YAML (dashboard-saved settings)
-    if analytics_store:
-        try:
-            db_overrides = analytics_store.get_config_overrides()
-            for key, value in db_overrides.items():
-                if key == "proxy.timeout":
-                    config.proxy.timeout = int(value)
-                elif key == "proxy.retries":
-                    config.proxy.retries = int(value)
-                elif key == "default_action":
-                    config.default_action = value
-                elif key == "detectors.secrets.action":
-                    action_overrides["secrets"] = value
-                    config.secrets.action = value
-                elif key == "detectors.pii.action":
-                    action_overrides["pii"] = value
-                    config.pii.action = value
-                elif key == "detectors.proprietary.action":
-                    action_overrides["proprietary"] = value
-                    config.proprietary.action = value
-                elif key == "detectors.secrets.enabled":
-                    config.secrets.enabled = value.lower() == "true"
-                elif key == "detectors.pii.enabled":
-                    config.pii.enabled = value.lower() == "true"
-                elif key == "detectors.proprietary.enabled":
-                    config.proprietary.enabled = value.lower() == "true"
-                elif key == "pipeline.parallel_batching":
-                    config.pipeline.parallel_batching = value.lower() == "true"
-                elif key.startswith("pipeline.stages."):
-                    parts = key.split(".")
-                    stage_name = parts[2]
-                    field_name = parts[3] if len(parts) > 3 else ""
-                    stage_cfg = getattr(config.pipeline, stage_name, None)
-                    if stage_cfg is not None and field_name:
-                        if field_name == "enabled" or field_name in ("base64", "hex", "url", "unicode"):
-                            setattr(stage_cfg, field_name, value.lower() == "true")
-                        elif field_name in ("max_depth", "min_decoded_length", "max_decoded_length"):
-                            setattr(stage_cfg, field_name, int(value))
-            if db_overrides:
-                log.info("applied %d config override(s) from DB", len(db_overrides))
-        except Exception:
-            pass
+    analytics_store = _initialize_analytics(config, args, extensions, action_overrides, log)
 
     # --- Allowlist (YAML config + DB entries) ---
     from lumen_argus.scanner import _build_allowlist
@@ -460,6 +557,10 @@ def main(argv=None):
 
     # --- Dashboard ---
     if config.dashboard.enabled:
+        from lumen_argus.dashboard.audit_reader import AuditReader
+        from lumen_argus.dashboard.server import start_dashboard
+        from lumen_argus.dashboard.sse import SSEBroadcaster
+
         # Create SSE broadcaster and register with extensions so Pro can use it
         sse_broadcaster = SSEBroadcaster()
         extensions.set_sse_broadcaster(sse_broadcaster)
@@ -509,89 +610,10 @@ def main(argv=None):
             log.debug("community dispatcher registered")
 
     # --- MCP-aware scanning in HTTP proxy ---
-    mcp_args_enabled = config.pipeline.mcp_arguments.enabled
-    mcp_resp_enabled = config.pipeline.mcp_responses.enabled
-    if mcp_args_enabled or mcp_resp_enabled:
-        from lumen_argus.mcp.scanner import MCPScanner
-
-        mcp_cfg = getattr(config, "mcp", None)
-        allowed_tools = set(mcp_cfg.allowed_tools) if mcp_cfg and mcp_cfg.allowed_tools else set()
-        blocked_tools = set(mcp_cfg.blocked_tools) if mcp_cfg and mcp_cfg.blocked_tools else set()
-
-        # Merge DB tool lists
-        if analytics_store:
-            try:
-                db_lists = analytics_store.get_mcp_tool_lists()
-                for entry in db_lists.get("allowed", []):
-                    allowed_tools.add(entry["tool_name"])
-                for entry in db_lists.get("blocked", []):
-                    blocked_tools.add(entry["tool_name"])
-            except Exception:
-                pass
-
-        server.mcp_scanner = MCPScanner(
-            detectors=pipeline._detectors,
-            allowlist=pipeline._allowlist,
-            response_scanner=server.response_scanner,
-            scan_arguments=mcp_args_enabled,
-            scan_responses=mcp_resp_enabled,
-            allowed_tools=allowed_tools or None,
-            blocked_tools=blocked_tools or None,
-            action=config.pipeline.mcp_arguments.action or config.default_action,
-        )
-        log.info(
-            "MCP proxy scanning enabled: arguments=%s responses=%s",
-            mcp_args_enabled,
-            mcp_resp_enabled,
-        )
+    _setup_mcp_scanning(config, server, pipeline, analytics_store, log)
 
     # --- WebSocket scanning (same port, handled by async proxy) ---
-    from lumen_argus.ws_proxy import WebSocketScanner
-
-    ws_enabled = config.pipeline.websocket_outbound.enabled or config.pipeline.websocket_inbound.enabled
-    if ws_enabled:
-        server.ws_scanner = WebSocketScanner(
-            detectors=pipeline._detectors,
-            allowlist=pipeline._allowlist,
-            response_scanner=server.response_scanner,
-            scan_outbound=config.pipeline.websocket_outbound.enabled,
-            scan_inbound=config.pipeline.websocket_inbound.enabled,
-            max_frame_size=config.websocket.max_frame_size,
-        )
-        server.ws_allowed_origins = config.websocket.allowed_origins or []
-        log.info(
-            "WebSocket scanning enabled on same port: outbound=%s inbound=%s",
-            config.pipeline.websocket_outbound.enabled,
-            config.pipeline.websocket_inbound.enabled,
-        )
-
-    # Register default WS connection lifecycle hook (records to analytics store).
-    # Pro can override via extensions.set_ws_connection_hook() to add richer analytics.
-    if analytics_store and not extensions.get_ws_connection_hook():
-
-        def _default_ws_hook(event_type, connection_id, metadata):
-            if event_type == "open":
-                analytics_store.record_ws_connection_open(
-                    connection_id,
-                    metadata["target_url"],
-                    metadata.get("origin", ""),
-                    metadata["timestamp"],
-                )
-            elif event_type == "close":
-                analytics_store.record_ws_connection_close(
-                    connection_id,
-                    metadata["timestamp"],
-                    metadata["duration_seconds"],
-                    metadata["frames_sent"],
-                    metadata["frames_received"],
-                    0,
-                    metadata.get("close_code", 1000),
-                )
-            elif event_type == "finding_detected" and metadata["findings_count"] > 0:
-                analytics_store.increment_ws_findings(connection_id, metadata["findings_count"])
-
-        extensions.set_ws_connection_hook(_default_ws_hook)
-        log.debug("default WebSocket connection hook registered")
+    _setup_ws_scanning(config, server, pipeline, analytics_store, extensions, log)
 
     # Track current config for diff on reload
     current_config = [config]
