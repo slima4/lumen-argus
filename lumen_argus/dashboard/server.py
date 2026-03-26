@@ -317,8 +317,12 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
             try:
                 result = pro_handler(self.path, method, body, store, audit_reader)
                 if result is not None:
-                    status, response_body = result
-                    self._send_raw(status, "application/json", response_body)
+                    if len(result) == 3:
+                        status, content_type, response_body = result
+                    else:
+                        status, response_body = result
+                        content_type = "application/json"
+                    self._send_raw(status, content_type, response_body)
                     return
             except Exception:
                 pass
