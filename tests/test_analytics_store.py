@@ -9,27 +9,7 @@ import unittest
 from datetime import datetime, timezone
 
 from lumen_argus.analytics.store import AnalyticsStore
-from lumen_argus.models import Finding
-
-
-def _make_finding(
-    detector="secrets",
-    type_="aws_access_key",
-    severity="critical",
-    location="messages[0].content",
-    value_preview="AKIA****",
-    matched_value="AKIAIOSFODNN7EXAMPLE",
-    action="block",
-):
-    return Finding(
-        detector=detector,
-        type=type_,
-        severity=severity,
-        location=location,
-        value_preview=value_preview,
-        matched_value=matched_value,
-        action=action,
-    )
+from tests.helpers import make_finding as _make_finding
 
 
 class TestAnalyticsStore(unittest.TestCase):

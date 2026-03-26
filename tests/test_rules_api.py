@@ -1,19 +1,15 @@
 """Tests for community rules API endpoints."""
 
 import json
-import os
-import shutil
-import tempfile
 import unittest
 
-from lumen_argus.analytics.store import AnalyticsStore
 from lumen_argus.dashboard.api import handle_community_api
+from tests.helpers import StoreTestCase
 
 
-class TestRulesAPI(unittest.TestCase):
+class TestRulesAPI(StoreTestCase):
     def setUp(self):
-        self._tmpdir = tempfile.mkdtemp()
-        self.store = AnalyticsStore(db_path=os.path.join(self._tmpdir, "test.db"))
+        super().setUp()
         # Seed some rules
         self.store.import_rules(
             [
@@ -43,7 +39,7 @@ class TestRulesAPI(unittest.TestCase):
         )
 
     def tearDown(self):
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
+        super().tearDown()
 
     def _api(self, path, method="GET", body=b""):
         return handle_community_api(path, method, body, self.store)

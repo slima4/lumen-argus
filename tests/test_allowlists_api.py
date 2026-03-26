@@ -9,15 +9,11 @@ from unittest.mock import MagicMock
 
 from lumen_argus.analytics.store import AnalyticsStore
 from lumen_argus.dashboard.api import handle_community_api
+from tests.helpers import StoreTestCase
 
 
-class TestAllowlistStore(unittest.TestCase):
-    def setUp(self):
-        self._tmpdir = tempfile.mkdtemp()
-        self.store = AnalyticsStore(db_path=os.path.join(self._tmpdir, "test.db"))
-
-    def tearDown(self):
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
+class TestAllowlistStore(StoreTestCase):
+    pass
 
     def test_add_and_list(self):
         entry = self.store.add_allowlist_entry("secrets", "sk-ant-*")
@@ -96,17 +92,13 @@ class TestAllowlistStore(unittest.TestCase):
         self.assertEqual(fetched["list_type"], "paths")
 
 
-class TestAllowlistAPI(unittest.TestCase):
+class TestAllowlistAPI(StoreTestCase):
     def setUp(self):
-        self._tmpdir = tempfile.mkdtemp()
-        self.store = AnalyticsStore(db_path=os.path.join(self._tmpdir, "test.db"))
+        super().setUp()
         self.config = MagicMock()
         self.config.allowlist.secrets = ["config-secret-*"]
         self.config.allowlist.pii = ["*@config.com"]
         self.config.allowlist.paths = ["*.key"]
-
-    def tearDown(self):
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _api(self, path, method="GET", body=b""):
         return handle_community_api(path, method, body, self.store, config=self.config)

@@ -1,24 +1,15 @@
 """Tests for MCP tool list DB storage and API endpoints."""
 
 import json
-import shutil
-import tempfile
 import unittest
 
-from lumen_argus.analytics.store import AnalyticsStore
 from lumen_argus.config import Config
 from lumen_argus.dashboard.api import handle_community_api
+from tests.helpers import StoreTestCase
 
 
-class TestMCPToolListStore(unittest.TestCase):
+class TestMCPToolListStore(StoreTestCase):
     """Test MCP tool list store methods."""
-
-    def setUp(self):
-        self._tmpdir = tempfile.mkdtemp()
-        self.store = AnalyticsStore(db_path=self._tmpdir + "/test.db")
-
-    def tearDown(self):
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_empty_lists(self):
         lists = self.store.get_mcp_tool_lists()
@@ -96,16 +87,12 @@ class TestMCPToolListStore(unittest.TestCase):
         self.assertEqual(len(lists["blocked"]), 2)
 
 
-class TestMCPToolListAPI(unittest.TestCase):
+class TestMCPToolListAPI(StoreTestCase):
     """Test MCP tool list API endpoints."""
 
     def setUp(self):
-        self._tmpdir = tempfile.mkdtemp()
-        self.store = AnalyticsStore(db_path=self._tmpdir + "/test.db")
+        super().setUp()
         self.config = Config()
-
-    def tearDown(self):
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_get_empty_lists(self):
         status, body = handle_community_api("/api/v1/mcp/tools", "GET", b"", self.store, config=self.config)
