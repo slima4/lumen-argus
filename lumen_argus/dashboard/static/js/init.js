@@ -128,6 +128,7 @@ function startSSE(){
   sseSource.addEventListener('finding',function(){loadData();});
   sseSource.addEventListener('rule_analysis_complete',function(){
     if(typeof loadRuleAnalysis==='function')loadRuleAnalysis();
+    document.dispatchEvent(new CustomEvent('rule_analysis_complete'));
   });
   sseSource.addEventListener('heartbeat',function(){
     document.getElementById('live-label').textContent='Live';
