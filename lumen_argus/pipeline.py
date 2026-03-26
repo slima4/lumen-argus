@@ -324,6 +324,11 @@ class ScannerPipeline:
             )
             self._detectors.append(self._rules_detector)
             store.set_rules_change_callback(self._rules_detector.on_rules_changed)
+            if extensions:
+                skip = extensions.get_rule_skip_list()
+                if skip:
+                    self._rules_detector.set_skip_list(skip)
+                extensions.set_rule_skip_list_callback(self._rules_detector.set_skip_list)
             log.info("using DB-backed rules detector (%d rules)", count)
         # Note: if DB starts empty (fallback path), callback is not registered.
         # Rules imported while running won't take effect until restart/SIGHUP.

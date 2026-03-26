@@ -885,5 +885,100 @@ class TestDebouncedRebuild(unittest.TestCase):
             det._rebuild_lock.release()
 
 
+class TestRuleSkipList(StoreTestCase):
+    """Test skip list filtering during scan."""
+
+    def setUp(self):
+        super().setUp()
+        self.store.import_rules(
+            [
+                {"name": "aws_key", "pattern": "AKIA[A-Z0-9]{16}", "detector": "secrets", "severity": "critical"},
+                {"name": "generic_secret", "pattern": "secret_[a-z]+", "detector": "secrets", "severity": "high"},
+                {"name": "test_email", "pattern": "[a-z]+@test\\.com", "detector": "pii", "severity": "warning"},
+            ],
+            tier="community",
+        )
+
+    def test_skip_list_filters_rules(self):
+        det = RulesDetector(store=self.store)
+        det.set_skip_list({"generic_secret"})
+        fields = [ScanField(text="secret_token and AKIAIOSFODNN7EXAMPLE", path="test")]
+        allowlist = AllowlistMatcher()
+        findings = det.scan(fields, allowlist)
+        names = [f.type for f in findings]
+        self.assertIn("aws_key", names)
+        self.assertNotIn("generic_secret", names)
+
+    def test_empty_skip_list_is_noop(self):
+        det = RulesDetector(store=self.store)
+        det.set_skip_list(set())
+        fields = [ScanField(text="secret_token", path="test")]
+        allowlist = AllowlistMatcher()
+        findings = det.scan(fields, allowlist)
+        self.assertTrue(any(f.type == "generic_secret" for f in findings))
+
+    def test_none_skip_list_is_noop(self):
+        det = RulesDetector(store=self.store)
+        fields = [ScanField(text="secret_token", path="test")]
+        allowlist = AllowlistMatcher()
+        findings = det.scan(fields, allowlist)
+        self.assertTrue(any(f.type == "generic_secret" for f in findings))
+
+    def test_runtime_update(self):
+        det = RulesDetector(store=self.store)
+        fields = [ScanField(text="secret_token", path="test")]
+        allowlist = AllowlistMatcher()
+        # Before skip
+        findings = det.scan(fields, allowlist)
+        self.assertTrue(any(f.type == "generic_secret" for f in findings))
+        # After skip
+        det.set_skip_list({"generic_secret"})
+        findings = det.scan(fields, allowlist)
+        self.assertFalse(any(f.type == "generic_secret" for f in findings))
+
+    def test_skip_list_does_not_affect_other_rules(self):
+        det = RulesDetector(store=self.store)
+        det.set_skip_list({"generic_secret"})
+        fields = [ScanField(text="foo@test.com", path="test")]
+        allowlist = AllowlistMatcher()
+        findings = det.scan(fields, allowlist)
+        self.assertTrue(any(f.type == "test_email" for f in findings))
+
+
+class TestRuleSkipListExtension(unittest.TestCase):
+    """Test skip list extension hook."""
+
+    def test_set_and_get(self):
+        from lumen_argus.extensions import ExtensionRegistry
+
+        reg = ExtensionRegistry()
+        reg.set_rule_skip_list({"rule_a", "rule_b"})
+        self.assertEqual(reg.get_rule_skip_list(), {"rule_a", "rule_b"})
+
+    def test_default_empty(self):
+        from lumen_argus.extensions import ExtensionRegistry
+
+        reg = ExtensionRegistry()
+        self.assertEqual(reg.get_rule_skip_list(), set())
+
+    def test_set_none_clears(self):
+        from lumen_argus.extensions import ExtensionRegistry
+
+        reg = ExtensionRegistry()
+        reg.set_rule_skip_list({"rule_a"})
+        reg.set_rule_skip_list(None)
+        self.assertEqual(reg.get_rule_skip_list(), set())
+
+    def test_callback_propagates_to_detector(self):
+        from lumen_argus.extensions import ExtensionRegistry
+
+        reg = ExtensionRegistry()
+        received = []
+        reg.set_rule_skip_list_callback(lambda s: received.append(s))
+        reg.set_rule_skip_list({"rule_x"})
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0], {"rule_x"})
+
+
 if __name__ == "__main__":
     unittest.main()

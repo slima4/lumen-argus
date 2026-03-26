@@ -76,6 +76,8 @@ class ExtensionRegistry:
         self._extra_clients = []  # type: list
         self._extra_cli_commands = []  # type: list
         self._allowlist_matcher_factory = None  # type: Optional[Callable]
+        self._rule_skip_list = set()  # type: set
+        self._rule_skip_list_callback = None  # type: Optional[Callable]
         # MCP Pro hooks
         self._mcp_policy_engine = None  # type: Optional[object]
         self._mcp_session_escalation = None  # type: Optional[Callable]
@@ -447,6 +449,26 @@ class ExtensionRegistry:
 
     def get_rule_metrics_collector(self):
         return self._rule_metrics_collector
+
+    def set_rule_skip_list(self, skip_set) -> None:
+        """Register a set of rule names to skip during scanning.
+
+        Pro computes this from analysis results (fully redundant subset rules)
+        to reduce scan time without disabling rules in the DB.
+        Automatically propagates to the RulesDetector if a callback is wired.
+        """
+        self._rule_skip_list = set(skip_set) if skip_set else set()
+        log.info("rule skip list updated: %d rules", len(self._rule_skip_list))
+        if self._rule_skip_list_callback:
+            self._rule_skip_list_callback(self._rule_skip_list)
+
+    def get_rule_skip_list(self):
+        """Return the skip set, or empty set."""
+        return self._rule_skip_list
+
+    def set_rule_skip_list_callback(self, callback) -> None:
+        """Register callback invoked when skip list changes. Used by pipeline."""
+        self._rule_skip_list_callback = callback
 
     def set_license_checker(self, checker) -> None:
         """Register a license checker with is_valid() method for rule-tier gating."""

@@ -78,6 +78,7 @@ class RulesDetector(BaseDetector):
         self._license = license_checker
         self._metrics = metrics_collector
         self._accelerator_factory = accelerator_factory
+        self._skip_list = set()
         self._parallel = parallel
         self._pool = None  # type: ThreadPoolExecutor | None
         if parallel:
@@ -223,6 +224,11 @@ class RulesDetector(BaseDetector):
             self._pool = None
         self._parallel = enabled
         log.debug("parallel rule evaluation: %s", "enabled" if enabled else "disabled")
+
+    def set_skip_list(self, names):
+        """Update the set of rule names to skip during scanning."""
+        self._skip_list = set(names) if names else set()
+        log.info("rule skip list updated: %d rules", len(self._skip_list))
 
     def on_rules_changed(self, change_type, rule_name=None):
         """Handle rule changes from store callback.
@@ -371,6 +377,7 @@ class RulesDetector(BaseDetector):
         with self._swap_lock:
             compiled_rules = self._compiled_rules  # snapshot for thread safety
             accelerator = self._accelerator
+            skip_list = self._skip_list  # snapshot for no-GIL safety
         metrics = self._metrics
         use_parallel = self._parallel
 
@@ -389,7 +396,9 @@ class RulesDetector(BaseDetector):
 
             # Parallel path: group candidates by detector, evaluate concurrently
             if use_parallel and len(candidates) > self._PARALLEL_THRESHOLD:
-                field_findings = self._scan_field_parallel(candidates, compiled_rules, field, allowlist, metrics)
+                field_findings = self._scan_field_parallel(
+                    candidates, compiled_rules, field, allowlist, metrics, skip_list
+                )
                 findings.extend(field_findings)
                 # Check for early termination on block
                 if any(f.action == "block" for f in field_findings):
@@ -402,6 +411,8 @@ class RulesDetector(BaseDetector):
                     if idx >= len(compiled_rules):
                         continue
                     rule = compiled_rules[idx]
+                    if skip_list and rule["name"] in skip_list:
+                        continue
                     rule_findings = self._eval_rule(rule, field, allowlist, metrics)
 
                     if rule_findings:
@@ -418,7 +429,7 @@ class RulesDetector(BaseDetector):
 
         return findings
 
-    def _scan_field_parallel(self, candidates, compiled_rules, field, allowlist, metrics):
+    def _scan_field_parallel(self, candidates, compiled_rules, field, allowlist, metrics, skip_list):
         """Evaluate candidate rules in parallel, grouped by detector category.
 
         Python's re module releases the GIL during C-level regex matching,
@@ -431,6 +442,8 @@ class RulesDetector(BaseDetector):
         groups = {}  # type: dict
         for idx in candidates:
             if idx >= len(compiled_rules):
+                continue
+            if skip_list and compiled_rules[idx]["name"] in skip_list:
                 continue
             det = compiled_rules[idx].get("detector", "other")
             if det not in groups:
