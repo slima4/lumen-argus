@@ -20,7 +20,7 @@ _FIELD_SEP = "\x00\x00\x00"
 def _build_merged_text(fields: list[ScanField]) -> tuple[str, list[tuple[int, int, int]]]:
     """Concatenate fields into single string for batch scanning."""
     parts = []
-    boundaries = []  # type: list[tuple[int, int, int]]
+    boundaries: list[tuple[int, int, int]] = []
     offset = 0
     for i, field in enumerate(fields):
         if i > 0:
@@ -65,7 +65,7 @@ class PIIDetector(BaseDetector):
         if not merged:
             return []
 
-        findings = []  # type: list[Finding]
+        findings: list[Finding] = []
 
         for pat in PII_PATTERNS:
             for match in pat.pattern.finditer(merged):

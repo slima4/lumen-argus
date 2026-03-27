@@ -150,7 +150,7 @@ class ResponseScanner:
         # Sanitize (same pre-processing as request scanning)
         text = sanitize_text(text)
 
-        findings = []  # type: list[Finding]
+        findings: list[Finding] = []
 
         # Secret detection — reuse existing detectors on response text
         if self._scan_secrets and self._detectors:

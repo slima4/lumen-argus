@@ -5,6 +5,7 @@ import hmac as hmac_mod
 import logging
 from typing import TYPE_CHECKING, Any
 
+from lumen_argus.analytics._db import scalar
 from lumen_argus.models import Finding, SessionContext
 from lumen_argus.time_utils import now_iso_ms
 
@@ -203,10 +204,7 @@ class FindingsRepository:
             where = " WHERE " + " AND ".join(conditions)
 
         with self._store._connect() as conn:
-            total = conn.execute(
-                "SELECT COUNT(*) FROM findings" + where,
-                params,
-            ).fetchone()[0]
+            total = scalar(conn, "SELECT COUNT(*) FROM findings" + where, tuple(params))
             rows = conn.execute(
                 "SELECT " + _FINDINGS_COLUMNS + " FROM findings" + where + " ORDER BY id DESC LIMIT ? OFFSET ?",
                 [*params, limit, offset],
@@ -418,8 +416,7 @@ class FindingsRepository:
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         with self._store._connect() as conn:
-            row = conn.execute(query, params).fetchone()
-            return row[0] if row else 0
+            return scalar(conn, query, tuple(params))
 
     def get_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return recent sessions with finding counts and metadata.
@@ -478,9 +475,9 @@ class FindingsRepository:
                 total = len(rows)
             else:
                 rows = rows[:limit]
-                total = conn.execute(
-                    "SELECT COUNT(DISTINCT session_id) FROM findings WHERE session_id != '' " + time_filter
-                ).fetchone()[0]
+                total = scalar(
+                    conn, "SELECT COUNT(DISTINCT session_id) FROM findings WHERE session_id != '' " + time_filter
+                )
         return {"sessions": [dict(r) for r in rows], "total": total}
 
     def cleanup(self, retention_days: int = 365) -> int:

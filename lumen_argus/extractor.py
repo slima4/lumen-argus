@@ -41,7 +41,7 @@ class RequestExtractor:
 
     def _extract_anthropic(self, data: dict[str, Any]) -> list[ScanField]:
         """Extract from Anthropic Messages API format."""
-        fields = []  # type: list[ScanField]
+        fields: list[ScanField] = []
 
         # System prompt
         system = data.get("system")
@@ -122,7 +122,7 @@ class RequestExtractor:
 
     def _extract_openai(self, data: dict[str, Any]) -> list[ScanField]:
         """Extract from OpenAI Chat Completions API format."""
-        fields = []  # type: list[ScanField]
+        fields: list[ScanField] = []
 
         messages = data.get("messages", [])
         for i, msg in enumerate(messages):
@@ -201,7 +201,7 @@ class RequestExtractor:
 
     def _extract_gemini(self, data: dict[str, Any]) -> list[ScanField]:
         """Extract from Gemini generateContent API format."""
-        fields = []  # type: list[ScanField]
+        fields: list[ScanField] = []
 
         # System instruction
         sys_instr = data.get("systemInstruction", {})
@@ -271,7 +271,7 @@ class RequestExtractor:
 
     def _extract_generic(self, data: dict[str, Any]) -> list[ScanField]:
         """Fallback: recursively extract all string values > 20 chars."""
-        fields = []  # type: list[ScanField]
+        fields: list[ScanField] = []
         self._walk(data, "", fields)
         return fields
 

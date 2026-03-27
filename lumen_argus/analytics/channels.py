@@ -5,6 +5,8 @@ import logging
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
+from lumen_argus.analytics._db import scalar
+
 if TYPE_CHECKING:
     from lumen_argus.analytics.store import AnalyticsStore
 
@@ -76,10 +78,7 @@ class ChannelsRepository:
     def count(self) -> int:
         """Return total channel count (for limit enforcement)."""
         with self._store._connect() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM notification_channels",
-            ).fetchone()
-            return row[0] if row else 0
+            return scalar(conn, "SELECT COUNT(*) FROM notification_channels")
 
     def create(
         self,
@@ -110,7 +109,7 @@ class ChannelsRepository:
             with self._store._connect() as conn:
                 # Atomic limit check under the same lock as insert
                 if channel_limit is not None:
-                    current: int = conn.execute("SELECT COUNT(*) FROM notification_channels").fetchone()[0]
+                    current = scalar(conn, "SELECT COUNT(*) FROM notification_channels")
                     if current >= channel_limit:
                         raise ValueError("channel_limit_reached")
                 created_by = data.get("created_by", "")

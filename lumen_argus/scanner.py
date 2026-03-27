@@ -136,7 +136,7 @@ def scan_text(
     detectors = _build_detectors(config)
 
     fields = [ScanField(path="stdin", text=text)]
-    all_findings = []  # type: list[Finding]
+    all_findings: list[Finding] = []
     for det in detectors:
         all_findings.extend(det.scan(fields, allowlist))
 
@@ -214,7 +214,7 @@ def scan_files(
             continue
 
         fields = [ScanField(path=filepath, text=text, source_filename=filepath)]
-        all_findings = []  # type: list[Finding]
+        all_findings: list[Finding] = []
         for det in detectors:
             all_findings.extend(det.scan(fields, allowlist))
 
@@ -282,7 +282,7 @@ def _parse_diff(diff_text: str) -> dict[str, str]:
     """
     files = {}  # type: dict[str, str]
     current_file = None
-    lines = []  # type: list[str]
+    lines: list[str] = []
 
     for line in diff_text.splitlines():
         m = _DIFF_FILE_RE.match(line)
@@ -366,7 +366,7 @@ def scan_diff(
             continue
 
         fields = [ScanField(path=filepath, text=text, source_filename=filepath)]
-        all_findings = []  # type: list[Finding]
+        all_findings: list[Finding] = []
         for det in detectors:
             all_findings.extend(det.scan(fields, allowlist))
 

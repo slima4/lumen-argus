@@ -6,6 +6,8 @@ import re
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
+from lumen_argus.analytics._db import scalar
+
 if TYPE_CHECKING:
     from lumen_argus.analytics.store import AnalyticsStore
 
@@ -54,8 +56,7 @@ class RulesRepository:
     def get_count(self) -> int:
         """Return total number of rules in the DB."""
         with self._store._connect() as conn:
-            row = conn.execute("SELECT COUNT(*) FROM rules").fetchone()
-            return row[0] if row else 0
+            return scalar(conn, "SELECT COUNT(*) FROM rules")
 
     def get_active(self, detector: str | None = None, tier: str | None = None) -> list[dict[str, Any]]:
         """Return enabled rules, optionally filtered by detector/tier."""
@@ -127,8 +128,7 @@ class RulesRepository:
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
         with self._store._connect() as conn:
-            count_row = conn.execute("SELECT COUNT(*) FROM rules" + where, params).fetchone()
-            total: int = count_row[0] if count_row else 0
+            total = scalar(conn, "SELECT COUNT(*) FROM rules" + where, tuple(params))
             rows = conn.execute(
                 "SELECT " + _RULES_COLUMNS + " FROM rules" + where + " ORDER BY id LIMIT ? OFFSET ?",
                 [*params, limit, offset],
@@ -463,14 +463,14 @@ class RulesRepository:
     def get_stats(self) -> dict[str, Any]:
         """Rule counts by tier, detector, enabled."""
         with self._store._connect() as conn:
-            total: int = conn.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
+            total = scalar(conn, "SELECT COUNT(*) FROM rules")
             by_tier: dict[str, Any] = {}
             for row in conn.execute("SELECT tier, COUNT(*) as cnt FROM rules GROUP BY tier"):
                 by_tier[row["tier"]] = row["cnt"]
             by_detector: dict[str, Any] = {}
             for row in conn.execute("SELECT detector, COUNT(*) as cnt FROM rules GROUP BY detector"):
                 by_detector[row["detector"]] = row["cnt"]
-            enabled: int = conn.execute("SELECT COUNT(*) FROM rules WHERE enabled = 1").fetchone()[0]
+            enabled = scalar(conn, "SELECT COUNT(*) FROM rules WHERE enabled = 1")
         return {
             "total": total,
             "enabled": enabled,
@@ -482,9 +482,9 @@ class RulesRepository:
     def get_coverage(self) -> dict[str, int]:
         """Detection coverage stats for dashboard gauge."""
         with self._store._connect() as conn:
-            total = conn.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
-            active = conn.execute("SELECT COUNT(*) FROM rules WHERE enabled = 1").fetchone()[0]
-            pro_imported = conn.execute("SELECT COUNT(*) FROM rules WHERE tier = 'pro'").fetchone()[0]
+            total = scalar(conn, "SELECT COUNT(*) FROM rules")
+            active = scalar(conn, "SELECT COUNT(*) FROM rules WHERE enabled = 1")
+            pro_imported = scalar(conn, "SELECT COUNT(*) FROM rules WHERE tier = 'pro'")
         return {
             "active_rules": active,
             "total_rules": total,

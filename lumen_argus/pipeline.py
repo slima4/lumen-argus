@@ -577,7 +577,7 @@ class ScannerPipeline:
 
         # Run all detectors (gated by outbound_dlp stage toggle)
         t_stage = time.monotonic()
-        all_findings = []  # type: list[Finding]
+        all_findings: list[Finding] = []
         if outbound_dlp_enabled:
             for detector in detectors:
                 det_findings = detector.scan(fields_to_scan, allowlist)

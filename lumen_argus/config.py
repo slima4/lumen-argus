@@ -307,7 +307,7 @@ def _warn(msg: str) -> None:
 
 def _validate_config(data: dict[str, Any], source: str) -> list[str]:
     """Validate parsed config data. Returns list of warnings."""
-    warnings = []  # type: list[str]
+    warnings: list[str] = []
 
     if not isinstance(data, dict):
         warnings.append("%s: config root must be a mapping" % source)

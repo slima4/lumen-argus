@@ -66,13 +66,13 @@ class ProprietaryDetector(BaseDetector):
         fields: list[ScanField],
         allowlist: AllowlistMatcher,
     ) -> list[Finding]:
-        findings = []  # type: list[Finding]
+        findings: list[Finding] = []
         for field in fields:
             findings.extend(self._scan_field(field, allowlist))
         return findings
 
     def _scan_field(self, field: ScanField, allowlist: AllowlistMatcher) -> list[Finding]:
-        findings = []  # type: list[Finding]
+        findings: list[Finding] = []
 
         # Check source filename against file pattern blocklist
         if field.source_filename:

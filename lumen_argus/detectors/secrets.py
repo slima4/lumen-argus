@@ -42,7 +42,7 @@ def _build_merged_text(fields: list[ScanField]) -> tuple[str, list[tuple[int, in
         (start_offset, end_offset, field_index) tuples.
     """
     parts = []
-    boundaries = []  # type: list[tuple[int, int, int]]
+    boundaries: list[tuple[int, int, int]] = []
     offset = 0
     for i, field in enumerate(fields):
         if i > 0:
@@ -91,7 +91,7 @@ class SecretsDetector(BaseDetector):
         if not merged:
             return []
 
-        findings = []  # type: list[Finding]
+        findings: list[Finding] = []
         matched_spans = set()  # type: set[tuple[int, int]]
 
         # Pass 1: regex patterns — one finditer per pattern over merged text
