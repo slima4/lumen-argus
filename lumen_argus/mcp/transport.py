@@ -50,7 +50,7 @@ class StdioTransport:
             if hasattr(self._writer, "wait_closed"):
                 await self._writer.wait_closed()
         except Exception:
-            pass
+            log.debug("transport writer close failed", exc_info=True)
 
     @classmethod
     async def from_process_stdio(cls) -> "StdioTransport":

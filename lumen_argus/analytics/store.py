@@ -118,8 +118,8 @@ class AnalyticsStore:
         # Secure file permissions — same 0o600 as audit JSONL files
         try:
             os.chmod(self._db_path, 0o600)
-        except OSError:
-            pass
+        except OSError as exc:
+            log.warning("could not set DB file permissions to 0o600: %s", exc)
 
     def _connect(self) -> sqlite3.Connection:
         """Return a thread-local SQLite connection.
@@ -164,7 +164,7 @@ class AnalyticsStore:
             try:
                 self._rules_change_callback(change_type, rule_name=rule_name)
             except Exception:
-                pass
+                log.warning("rules change callback failed for %s (rule=%s)", change_type, rule_name, exc_info=True)
 
     def start_cleanup_scheduler(self, retention_days: int = 365) -> None:
         """Start a background thread that runs cleanup daily."""

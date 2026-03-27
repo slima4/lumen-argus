@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 from lumen_argus.provider import DEFAULT_UPSTREAMS
 
+log = logging.getLogger("argus.log_utils")
+
 # ---------------------------------------------------------------------------
 # Input sanitization — log injection prevention (OWASP / Sonar S5145)
 # ---------------------------------------------------------------------------
@@ -109,7 +111,7 @@ def _build_provider_hosts() -> frozenset[str]:
             if parsed.hostname:
                 hosts.add(parsed.hostname)
         except Exception:
-            pass
+            log.debug("failed to parse provider URL: %s", url, exc_info=True)
     return frozenset(hosts)
 
 
@@ -238,7 +240,7 @@ def export_logs(config: Any, sanitize: bool = False) -> int:
                 if parsed.hostname:
                     extra_hosts.add(parsed.hostname)
             except Exception:
-                pass
+                log.debug("failed to parse upstream URL: %s", url, exc_info=True)
 
     # Read rotated files in order (oldest first), then current
     files_to_read = []

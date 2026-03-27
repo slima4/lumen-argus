@@ -1,5 +1,9 @@
 """Provider routing: map inbound requests to upstream HTTPS targets."""
 
+import logging
+
+log = logging.getLogger("argus.provider")
+
 # Default upstream URLs per provider.
 DEFAULT_UPSTREAMS = {
     "anthropic": "https://api.anthropic.com",
@@ -50,7 +54,7 @@ class ProviderRouter:
             try:
                 port = int(parts[1])
             except ValueError:
-                pass
+                log.debug("invalid port in host header: %s", parts[1])
 
         # Strip trailing slash
         host = host.rstrip("/")

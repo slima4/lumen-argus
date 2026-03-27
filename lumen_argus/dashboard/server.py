@@ -165,7 +165,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
         try:
             cookie.load(cookie_header)
         except Exception:
-            pass
+            log.debug("malformed cookie header in auth check")
 
         session_id = cookie.get("argus_session")
         if session_id and self.server.validate_session(session_id.value):
@@ -181,7 +181,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                     self._user = user_info
                     return True
             except Exception:
-                pass
+                log.warning("auth provider %s failed", type(provider).__name__, exc_info=True)
 
         # API requests get 401 JSON
         if self.path.startswith("/api/") and "/export" not in self.path:
@@ -207,7 +207,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
         try:
             cookie.load(cookie_header)
         except Exception:
-            pass
+            log.debug("malformed cookie header in CSRF check")
 
         cookie_token = cookie.get("csrf_token")
         header_token = self.headers.get("X-CSRF-Token", "")
@@ -296,7 +296,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
         try:
             cookie.load(cookie_header)
         except Exception:
-            pass
+            log.debug("malformed cookie header in logout")
         session_id = cookie.get("argus_session")
         if session_id:
             self.server.invalidate_session(session_id.value)
@@ -336,7 +336,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                     self._send_raw(status, content_type, response_body)
                     return
             except Exception:
-                pass
+                log.warning("plugin API handler failed for %s %s", method, self.path, exc_info=True)
 
         # Resolve request user for audit trail
         request_user = "dashboard"
@@ -393,7 +393,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     break
         except (BrokenPipeError, ConnectionResetError, OSError):
-            pass
+            log.debug("SSE client disconnected")
         finally:
             broadcaster.unregister(self.wfile)
 

@@ -50,7 +50,7 @@ def detect_mcp_request(body: bytes) -> dict[str, Any] | None:
                     "request_id": msg.get("id"),
                 }
     except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
-        pass
+        log.debug("detect_mcp_request: body is not valid JSON-RPC")
     return None
 
 
@@ -61,7 +61,7 @@ def detect_mcp_method(body: bytes) -> str | None:
         if isinstance(msg, dict) and msg.get("jsonrpc") == "2.0":
             return msg.get("method")
     except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
-        pass
+        log.debug("detect_mcp_method: body is not valid JSON-RPC")
     return None
 
 
@@ -87,7 +87,7 @@ def detect_mcp_tools_list_response(body: bytes) -> list[dict[str, Any]] | None:
                         if isinstance(t, dict) and t.get("name")
                     ]
     except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
-        pass
+        log.debug("detect_mcp_tools_list_response: body is not valid JSON-RPC")
     return None
 
 
@@ -107,7 +107,7 @@ def detect_mcp_response(body: bytes) -> dict[str, Any] | None:
                     "content": result.get("content", []),
                 }
     except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
-        pass
+        log.debug("detect_mcp_response: body is not valid JSON-RPC")
     return None
 
 

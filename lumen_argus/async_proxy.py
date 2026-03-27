@@ -141,7 +141,7 @@ async def _handle_health(request: web.Request) -> web.Response:
             extra = await asyncio.to_thread(health_hook)
             data.update(extra)
         except Exception:
-            pass
+            log.debug("health hook failed", exc_info=True)
     return web.json_response(data)
 
 
@@ -159,7 +159,7 @@ async def _handle_metrics(request: web.Request) -> web.Response:
             if extra:
                 text += extra
         except Exception:
-            pass
+            log.debug("metrics hook failed", exc_info=True)
     resp = web.Response(body=text.encode("utf-8"))
     resp.content_type = "text/plain"
     resp.headers["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8"
@@ -472,7 +472,7 @@ async def _do_forward(
         try:
             pre_hook(request_id)
         except Exception:
-            pass
+            log.debug("pre-request hook failed for #%d", request_id, exc_info=True)
 
     path = request.path_qs
     method = request.method
@@ -600,7 +600,7 @@ async def _do_forward(
                         try:
                             store.record_mcp_tool_seen(tool_name)
                         except Exception:
-                            pass
+                            log.debug("failed to record MCP tool '%s'", tool_name, exc_info=True)
 
                 # Check tool allow/block lists
                 if not server.mcp_scanner.is_tool_allowed(tool_name):
@@ -654,7 +654,7 @@ async def _do_forward(
                                     source="proxy",
                                 )
                             except Exception:
-                                pass
+                                log.debug("failed to record blocked MCP tool call '%s'", tool_name, exc_info=True)
                     return web.Response(body=block_body, status=400, content_type="application/json")
 
                 # Scan tool arguments
@@ -677,7 +677,7 @@ async def _do_forward(
                                 session=session,
                             )
                         except Exception:
-                            pass
+                            log.warning("failed to record MCP argument findings", exc_info=True)
 
                 # Log tool call (allowed/alert)
                 if server.extensions:
@@ -692,7 +692,7 @@ async def _do_forward(
                                 source="proxy",
                             )
                         except Exception:
-                            pass
+                            log.debug("failed to record MCP tool call '%s'", tool_name, exc_info=True)
 
         # Check if we should block
         if not should_forward(scan_result):
@@ -900,8 +900,8 @@ async def _do_forward(
 
                     try:
                         await response.write_eof()
-                    except Exception:
-                        pass
+                    except (ConnectionResetError, BrokenPipeError, OSError):
+                        log.debug("#%d client disconnected during write_eof", request_id)
 
                 else:
                     # Non-streaming — read full response
@@ -1039,7 +1039,7 @@ async def _do_forward(
                                     session=session,
                                 )
                             except Exception:
-                                pass
+                                log.warning("failed to record MCP response findings", exc_info=True)
 
         # MCP tools/list response — capture tool descriptions
         if _mcp_method == "tools/list" and server.mcp_scanner and resp_text:
@@ -1057,7 +1057,7 @@ async def _do_forward(
                                 input_schema=json.dumps(t.get("inputSchema", {})),
                             )
                         except Exception:
-                            pass
+                            log.debug("failed to record MCP tool '%s'", t.get("name"), exc_info=True)
                     log.debug("#%d MCP tools/list: captured %d tool descriptions", request_id, len(tools_meta))
 
         return response
@@ -1116,7 +1116,7 @@ def _async_response_scan(
                         model=model,
                     )
                 except Exception:
-                    pass
+                    log.warning("#%d post-scan hook failed for response", request_id, exc_info=True)
         except Exception as e:
             log.warning("#%d response scan failed: %s", request_id, e)
 

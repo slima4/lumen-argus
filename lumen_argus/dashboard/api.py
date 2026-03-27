@@ -916,8 +916,8 @@ def _handle_logs_tail(config: Config | None) -> tuple[int, bytes]:
         with open(log_file, "r", encoding="utf-8", errors="replace") as f:
             all_lines = f.readlines()
             lines = [line.rstrip("\n") for line in all_lines[-100:]]
-    except OSError:
-        pass
+    except OSError as exc:
+        log.warning("failed to read audit log file %s: %s", log_file, exc)
 
     return _json_response(200, {"lines": lines})
 
@@ -1307,7 +1307,7 @@ def _handle_pipeline_get(config: Config | None, store: AnalyticsStore | None = N
             raw_stats = store.get_stats()
             stats = raw_stats.get("by_detector", {})
         except Exception:
-            pass
+            log.warning("GET /api/v1/pipeline: could not load detector stats", exc_info=True)
 
     default_action = overrides.get("default_action", config.default_action)
 

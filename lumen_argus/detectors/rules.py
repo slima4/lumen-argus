@@ -263,7 +263,7 @@ class RulesDetector(BaseDetector):
                 try:
                     self._debounce_handle.cancel()
                 except Exception:
-                    pass
+                    log.debug("failed to cancel debounce handle", exc_info=True)
                 self._debounce_handle = None
 
             delay = self._rebuild_delay
@@ -354,7 +354,7 @@ class RulesDetector(BaseDetector):
                 try:
                     metrics.record(rule["name"], elapsed_ms)
                 except Exception:
-                    pass
+                    log.debug("failed to record metrics for rule '%s'", rule["name"], exc_info=True)
 
         return findings
 

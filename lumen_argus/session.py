@@ -212,7 +212,7 @@ def extract_session(req_data: Any, provider: str, headers: dict[str, str], sourc
                 try:
                     user_id = json.loads(user_id)
                 except (json.JSONDecodeError, ValueError):
-                    pass
+                    log.debug("metadata.user_id looks like JSON but failed to parse")
             if isinstance(user_id, dict):
                 ctx.account_id = str(user_id.get("account_uuid", ""))[:256]
                 ctx.device_id = str(user_id.get("device_id", ""))[:256]

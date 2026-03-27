@@ -326,7 +326,7 @@ class ScannerPipeline:
                 if isinstance(count, int) and count > 0:
                     has_rules = True
             except Exception:
-                pass
+                log.warning("failed to check rules count from store", exc_info=True)
         if has_rules and store:
             self._rules_detector = RulesDetector(
                 store=store,
@@ -545,7 +545,7 @@ class ScannerPipeline:
                         try:
                             _store.bump_seen_counts(conv_key)
                         except Exception:
-                            pass
+                            log.warning("failed to bump seen_counts for session %s", conv_key, exc_info=True)
 
         # Prioritize scanning: reverse order so newest messages (end of
         # conversation) are scanned first, then cap total text to keep

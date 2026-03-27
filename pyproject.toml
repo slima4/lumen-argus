@@ -47,6 +47,7 @@ Homepage = "https://github.com/lumen-argus/lumen-argus"
 include = ["lumen_argus*"]
 
 [tool.setuptools.package-data]
+"lumen_argus" = ["py.typed"]
 "lumen_argus.dashboard" = ["static/**/*"]
 "lumen_argus.rules" = ["*.json"]
 

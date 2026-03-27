@@ -148,7 +148,7 @@ def _initialize_analytics(
             if db_overrides:
                 log.info("applied %d config override(s) from DB", len(db_overrides))
         except Exception:
-            pass
+            log.warning("failed to apply DB config overrides", exc_info=True)
 
     return analytics_store
 
@@ -177,7 +177,7 @@ def _setup_mcp_scanning(
             for entry in db_lists.get("blocked", []):
                 blocked_tools.add(entry["tool_name"])
         except Exception:
-            pass
+            log.warning("failed to load MCP tool lists from DB", exc_info=True)
 
     server.mcp_scanner = MCPScanner(
         detectors=pipeline._detectors,
@@ -772,7 +772,7 @@ def _load_hmac_key() -> bytes:
         if len(key) >= 32:
             return key
     except FileNotFoundError:
-        pass
+        log.debug("HMAC key not found at %s, generating new key", key_path)
     # Generate new key — use exclusive create to avoid race conditions
     key = os.urandom(32)
     os.makedirs(os.path.dirname(key_path), exist_ok=True)
@@ -934,7 +934,7 @@ def _do_reload(
                     for entry in db_lists.get("blocked", []):
                         blocked_tools.add(entry["tool_name"])
                 except Exception:
-                    pass
+                    log.warning("SIGHUP: failed to reload MCP tool lists from DB", exc_info=True)
             server.mcp_scanner = _MCPScanner(
                 detectors=server.pipeline._detectors,
                 allowlist=server.pipeline._allowlist,
@@ -1001,7 +1001,7 @@ def _do_reload(
             try:
                 reload_hook(server.pipeline)
             except Exception:
-                pass
+                log.warning("SIGHUP: config reload hook failed", exc_info=True)
 
         # Re-reconcile YAML notification channels (after Pro hook updates limit)
         if not analytics_store:
