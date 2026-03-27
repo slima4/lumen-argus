@@ -12,6 +12,7 @@ from lumen_argus.clients import CLIENT_REGISTRY, ClientDef
 from lumen_argus.detect import (
     DetectedClient,
     DetectionReport,
+    IDEVariant,
     InstallMethod,
     _extract_env_value,
     _scan_binary,
@@ -133,7 +134,9 @@ class TestScanVSCodeExtension(unittest.TestCase):
             website="https://test.com",
             detect_vscode_ext="github.copilot",
         )
-        with patch("lumen_argus.detect._VSCODE_VARIANTS", {"Test": {"extensions": (ext_dir,), "settings": ()}}):
+        with patch(
+            "lumen_argus.detect._VSCODE_VARIANTS", (IDEVariant(name="Test", extensions=(ext_dir,), settings=()),)
+        ):
             result = _scan_vscode_extension(client)
         self.assertIsNotNone(result)
         self.assertEqual(result.version, "1.200.0")
@@ -154,7 +157,9 @@ class TestScanVSCodeExtension(unittest.TestCase):
             website="https://test.com",
             detect_vscode_ext="github.copilot",
         )
-        with patch("lumen_argus.detect._VSCODE_VARIANTS", {"Test": {"extensions": (ext_dir,), "settings": ()}}):
+        with patch(
+            "lumen_argus.detect._VSCODE_VARIANTS", (IDEVariant(name="Test", extensions=(ext_dir,), settings=()),)
+        ):
             result = _scan_vscode_extension(client)
         self.assertIsNone(result)
 
@@ -174,7 +179,9 @@ class TestScanVSCodeExtension(unittest.TestCase):
             website="https://test.com",
             detect_vscode_ext="github.copilot",
         )
-        with patch("lumen_argus.detect._VSCODE_VARIANTS", {"Test": {"extensions": (ext_dir,), "settings": ()}}):
+        with patch(
+            "lumen_argus.detect._VSCODE_VARIANTS", (IDEVariant(name="Test", extensions=(ext_dir,), settings=()),)
+        ):
             result = _scan_vscode_extension(client)
         self.assertEqual(result.version, "1.200.0")
 

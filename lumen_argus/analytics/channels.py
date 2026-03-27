@@ -1,6 +1,5 @@
 """Notification channels repository — extracted from AnalyticsStore."""
 
-import builtins
 import json
 import logging
 import sqlite3
@@ -51,7 +50,7 @@ class ChannelsRepository:
         d["enabled"] = bool(d.get("enabled", 1))
         return d
 
-    def list(self, source: str | None = None) -> builtins.list[dict[str, Any]]:
+    def list_all(self, source: str | None = None) -> list[dict[str, Any]]:
         """Return all channels, optionally filtered by source."""
         query = (
             "SELECT "
@@ -60,7 +59,7 @@ class ChannelsRepository:
             + (" WHERE source = ?" if source else "")
             + " ORDER BY id"
         )
-        params: builtins.list[str | None] = [source] if source else []
+        params: list[str | None] = [source] if source else []
         with self._store._connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._parse_row(r) for r in rows]
@@ -143,8 +142,8 @@ class ChannelsRepository:
 
     def update(self, channel_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
         """Update channel fields. Only updates provided keys."""
-        updates: builtins.list[str] = []
-        params: builtins.list[Any] = []
+        updates: list[str] = []
+        params: list[Any] = []
         for key in ("name", "type", "min_severity", "source"):
             if key in data:
                 updates.append("%s = ?" % key)
@@ -199,7 +198,7 @@ class ChannelsRepository:
                 )
                 return cursor.rowcount > 0
 
-    def bulk_update(self, ids: builtins.list[int], action: str) -> int:
+    def bulk_update(self, ids: list[int], action: str) -> int:
         """Bulk enable/disable/delete. Returns count affected."""
         if not ids:
             return 0
@@ -224,9 +223,9 @@ class ChannelsRepository:
 
     def reconcile_yaml(
         self,
-        yaml_channels: builtins.list[Any],
+        yaml_channels: list[Any],
         channel_limit: int | None = None,
-    ) -> dict[str, builtins.list[str]]:
+    ) -> dict[str, list[str]]:
         """Kubernetes-style declarative reconciliation of YAML channels.
 
         YAML is fully authoritative for source='yaml' channels: all fields
@@ -235,7 +234,7 @@ class ChannelsRepository:
         channel_limit: max total channels (None = unlimited). Only blocks
         new creates — existing YAML channels are always updated.
         """
-        result: dict[str, builtins.list[str]] = {"created": [], "updated": [], "deleted": []}
+        result: dict[str, list[str]] = {"created": [], "updated": [], "deleted": []}
 
         # Build lookup of YAML channels by name
         yaml_by_name: dict[str, Any] = {}
@@ -247,8 +246,8 @@ class ChannelsRepository:
                 yaml_by_name[name] = ch
 
         # Get current DB state
-        db_yaml = {ch["name"]: ch for ch in self.list(source="yaml")}
-        db_dashboard_names = {ch["name"] for ch in self.list(source="dashboard")}
+        db_yaml = {ch["name"]: ch for ch in self.list_all(source="yaml")}
+        db_dashboard_names = {ch["name"] for ch in self.list_all(source="dashboard")}
         current_total = self.count()
 
         # Delete YAML channels no longer in config

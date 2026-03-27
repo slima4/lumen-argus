@@ -33,47 +33,62 @@ _SHELL_PROFILES = {
     "fish": ("~/.config/fish/config.fish",),
 }
 
+
+@dataclass(frozen=True)
+class IDEVariant:
+    """VS Code-like IDE variant with extension and settings paths."""
+
+    name: str
+    extensions: tuple[str, ...]
+    settings: tuple[str, ...]
+
+
 # VS Code variants and their extensions/settings paths
-_VSCODE_VARIANTS: dict[str, dict[str, tuple[str, ...]]] = {
-    "VS Code": {
-        "extensions": (
+_VSCODE_VARIANTS: tuple[IDEVariant, ...] = (
+    IDEVariant(
+        name="VS Code",
+        extensions=(
             "~/.vscode/extensions",
-            "~/Library/Application Support/Code/User/extensions",  # macOS alt
+            "~/Library/Application Support/Code/User/extensions",
         ),
-        "settings": (
-            "~/Library/Application Support/Code/User/settings.json",  # macOS
-            "~/.config/Code/User/settings.json",  # Linux
+        settings=(
+            "~/Library/Application Support/Code/User/settings.json",
+            "~/.config/Code/User/settings.json",
         ),
-    },
-    "VS Code Insiders": {
-        "extensions": ("~/.vscode-insiders/extensions",),
-        "settings": (
+    ),
+    IDEVariant(
+        name="VS Code Insiders",
+        extensions=("~/.vscode-insiders/extensions",),
+        settings=(
             "~/Library/Application Support/Code - Insiders/User/settings.json",
             "~/.config/Code - Insiders/User/settings.json",
         ),
-    },
-    "VSCodium": {
-        "extensions": ("~/.vscode-oss/extensions",),
-        "settings": (
+    ),
+    IDEVariant(
+        name="VSCodium",
+        extensions=("~/.vscode-oss/extensions",),
+        settings=(
             "~/Library/Application Support/VSCodium/User/settings.json",
             "~/.config/VSCodium/User/settings.json",
         ),
-    },
-    "Cursor": {
-        "extensions": ("~/.cursor/extensions",),
-        "settings": (
+    ),
+    IDEVariant(
+        name="Cursor",
+        extensions=("~/.cursor/extensions",),
+        settings=(
             "~/.cursor/User/settings.json",
             "~/Library/Application Support/Cursor/User/settings.json",
         ),
-    },
-    "Windsurf": {
-        "extensions": ("~/.windsurf/extensions",),
-        "settings": (
+    ),
+    IDEVariant(
+        name="Windsurf",
+        extensions=("~/.windsurf/extensions",),
+        settings=(
             "~/.windsurf/User/settings.json",
             "~/Library/Application Support/Windsurf/User/settings.json",
         ),
-    },
-}
+    ),
+)
 
 _VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)?(?:[.-]\w+)?)")
 
@@ -229,8 +244,8 @@ def _scan_vscode_extension(client: ClientDef) -> DetectedClient | None:
         return None
     ext_id_lower = client.detect_vscode_ext.lower()
 
-    for variant_name, paths in _VSCODE_VARIANTS.items():
-        for ext_dir in paths["extensions"]:
+    for variant in _VSCODE_VARIANTS:
+        for ext_dir in variant.extensions:
             ext_dir = os.path.expanduser(ext_dir)
             if not os.path.isdir(ext_dir):
                 continue
@@ -246,7 +261,7 @@ def _scan_vscode_extension(client: ClientDef) -> DetectedClient | None:
                 dash_idx = dir_name.rfind("-")
                 if dash_idx > 0:
                     version = dir_name[dash_idx + 1 :]
-                log.debug("VS Code extension found: %s in %s (%s)", client.detect_vscode_ext, variant_name, dir_name)
+                log.debug("VS Code extension found: %s in %s (%s)", client.detect_vscode_ext, variant.name, dir_name)
                 return DetectedClient(
                     client_id=client.id,
                     display_name=client.display_name,
@@ -554,8 +569,8 @@ def _extract_env_value(line: str, var_name: str) -> str:
 def _build_settings_cache() -> dict[str, tuple[dict[str, Any], str]]:
     """Load and parse all existing IDE settings files once. Returns {expanded_path: (settings, path)}."""
     cache: dict[str, tuple[dict[str, Any], str]] = {}
-    for paths in _VSCODE_VARIANTS.values():
-        for settings_path in paths["settings"]:
+    for variant in _VSCODE_VARIANTS:
+        for settings_path in variant.settings:
             expanded = os.path.expanduser(settings_path)
             if expanded in cache:
                 continue

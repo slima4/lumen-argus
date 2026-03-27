@@ -434,20 +434,16 @@ def _find_ide_settings(extension_path: str) -> str | None:
     from lumen_argus.detect import _VSCODE_VARIANTS
 
     # Determine which variant owns this extension path
-    for paths in _VSCODE_VARIANTS.values():
-        variant: dict[str, tuple[str, ...]] = paths
-        ext_dirs = variant["extensions"]
-        for ext_dir in ext_dirs:
+    for variant in _VSCODE_VARIANTS:
+        for ext_dir in variant.extensions:
             expanded = os.path.expanduser(ext_dir)
             if extension_path.startswith(expanded):
                 # Found the variant — return first existing settings file
-                settings_list = variant["settings"]
-                for settings_path in settings_list:
+                for settings_path in variant.settings:
                     settings_expanded = os.path.expanduser(settings_path)
                     if os.path.isfile(settings_expanded):
                         return settings_expanded
                 # Settings dir might not exist yet
-                if settings_list:
-                    result: str = os.path.expanduser(settings_list[0])
-                    return result
+                if variant.settings:
+                    return os.path.expanduser(variant.settings[0])
     return None

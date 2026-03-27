@@ -340,7 +340,7 @@ class AnalyticsStore:
     # --- Channels facade ---
 
     def list_notification_channels(self, source: str | None = None) -> list[dict[str, Any]]:
-        return self.channels.list(source=source)
+        return self.channels.list_all(source=source)
 
     def get_notification_channel(self, channel_id: int) -> dict[str, Any] | None:
         return self.channels.get(channel_id)
@@ -429,7 +429,7 @@ class AnalyticsStore:
         return self.allowlists.delete(entry_id)
 
     def list_allowlist_entries(self, list_type: str | None = None) -> list[dict[str, Any]]:
-        return self.allowlists.list(list_type=list_type)
+        return self.allowlists.list_all(list_type=list_type)
 
     def list_enabled_allowlist_entries(self, list_type: str | None = None) -> list[dict[str, Any]]:
         return self.allowlists.list_enabled(list_type=list_type)

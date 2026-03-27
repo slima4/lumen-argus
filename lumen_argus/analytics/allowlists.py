@@ -1,6 +1,5 @@
 """Allowlist entries repository — DB-backed allowlist patterns."""
 
-import builtins
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -75,8 +74,8 @@ class AllowlistRepository:
 
     def update(self, entry_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
         """Update an API-managed allowlist entry. Returns updated entry or None."""
-        updates: builtins.list[str] = []
-        params: builtins.list[Any] = []
+        updates: list[str] = []
+        params: list[Any] = []
         for key in ("pattern", "description", "list_type"):
             if key in data:
                 updates.append("%s = ?" % key)
@@ -123,10 +122,10 @@ class AllowlistRepository:
                 )
                 return cursor.rowcount > 0
 
-    def list(self, list_type: str | None = None) -> builtins.list[dict[str, Any]]:
+    def list_all(self, list_type: str | None = None) -> list[dict[str, Any]]:
         """List allowlist entries, optionally filtered by type."""
         query = "SELECT " + _ALLOWLIST_COLUMNS + " FROM allowlist_entries"
-        params: builtins.list[str] = []
+        params: list[str] = []
         if list_type:
             query += " WHERE list_type = ?"
             params.append(list_type)
@@ -135,10 +134,10 @@ class AllowlistRepository:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
-    def list_enabled(self, list_type: str | None = None) -> builtins.list[dict[str, Any]]:
+    def list_enabled(self, list_type: str | None = None) -> list[dict[str, Any]]:
         """List only enabled entries (for scan-time integration)."""
         query = "SELECT " + _ALLOWLIST_COLUMNS + " FROM allowlist_entries WHERE enabled = 1"
-        params: builtins.list[str] = []
+        params: list[str] = []
         if list_type:
             query += " AND list_type = ?"
             params.append(list_type)
