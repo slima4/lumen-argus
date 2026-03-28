@@ -10,6 +10,7 @@ from unittest.mock import patch
 from lumen_argus.setup_wizard import (
     MANAGED_TAG,
     add_env_to_shell_profile,
+    install_shell_hook,
     undo_setup,
     update_ide_settings,
 )
@@ -141,6 +142,99 @@ class TestUndoSetup(unittest.TestCase):
     def test_managed_tag_in_line(self):
         line = "export OPENAI_BASE_URL=http://localhost:8080  %s client=aider" % MANAGED_TAG
         self.assertIn(MANAGED_TAG, line)
+
+
+class TestInstallShellHook(unittest.TestCase):
+    """Test shell hook installation."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.profile = os.path.join(self.tmpdir, ".zshrc")
+        with open(self.profile, "w") as f:
+            f.write("# my zshrc\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_installs_hook(self):
+        with patch("lumen_argus.setup_wizard._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
+            change = install_shell_hook(self.profile)
+        self.assertIsNotNone(change)
+        with open(self.profile) as f:
+            content = f.read()
+        self.assertIn("lumen-argus detect --check-quiet", content)
+        self.assertIn(MANAGED_TAG, content)
+
+    def test_skips_if_already_installed(self):
+        with open(self.profile, "a") as f:
+            f.write('eval "$(lumen-argus detect --check-quiet 2>/dev/null)"\n')
+        change = install_shell_hook(self.profile)
+        self.assertIsNone(change)
+
+    def test_dry_run(self):
+        change = install_shell_hook(self.profile, dry_run=True)
+        self.assertIsNotNone(change)
+        with open(self.profile) as f:
+            content = f.read()
+        self.assertNotIn("check-quiet", content)
+
+    def test_undo_removes_hook(self):
+        """Hook lines should be removed by undo_setup since they contain MANAGED_TAG."""
+        with patch("lumen_argus.setup_wizard._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
+            install_shell_hook(self.profile)
+
+        mock_profiles = {"zsh": (self.profile,)}
+        manifest = os.path.join(self.tmpdir, "manifest.json")
+        backup_dir = os.path.join(self.tmpdir, "backups")
+        with (
+            patch("lumen_argus.setup_wizard._SHELL_PROFILES", mock_profiles),
+            patch("lumen_argus.setup_wizard._MANIFEST_PATH", manifest),
+            patch("lumen_argus.setup_wizard._BACKUP_DIR", backup_dir),
+        ):
+            reverted = undo_setup()
+        self.assertGreater(reverted, 0)
+        with open(self.profile) as f:
+            content = f.read()
+        self.assertNotIn(MANAGED_TAG, content)
+
+
+class TestWindowsSetup(unittest.TestCase):
+    """Test PowerShell profile detection and env var format."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    @patch("platform.system", return_value="Windows")
+    def test_powershell_export_format(self, _):
+        """On Windows with .ps1 profile, should use $env: syntax."""
+        ps_profile = os.path.join(self.tmpdir, "Microsoft.PowerShell_profile.ps1")
+        with open(ps_profile, "w") as f:
+            f.write("# PowerShell profile\n")
+
+        with patch("lumen_argus.setup_wizard._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
+            change = add_env_to_shell_profile("OPENAI_BASE_URL", "http://localhost:8080", "aider", ps_profile)
+        self.assertIsNotNone(change)
+        with open(ps_profile) as f:
+            content = f.read()
+        self.assertIn("$env:OPENAI_BASE_URL", content)
+        self.assertIn(MANAGED_TAG, content)
+
+    @patch("platform.system", return_value="Windows")
+    def test_detect_shell_profile_windows(self, _):
+        """On Windows, should detect PowerShell profile."""
+        from lumen_argus.setup_wizard import _detect_shell_profile
+
+        ps_profile = os.path.join(self.tmpdir, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1")
+        os.makedirs(os.path.dirname(ps_profile))
+        with open(ps_profile, "w") as f:
+            f.write("# profile\n")
+
+        with patch("lumen_argus.detect._get_powershell_profiles", return_value=(ps_profile,)):
+            result = _detect_shell_profile()
+        self.assertEqual(result, ps_profile)
 
 
 if __name__ == "__main__":

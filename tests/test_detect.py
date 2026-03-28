@@ -15,12 +15,15 @@ from lumen_argus.detect import (
     IDEVariant,
     InstallMethod,
     _extract_env_value,
+    _get_powershell_profiles,
+    _get_vscode_variants,
     _scan_binary,
     _scan_brew_package,
     _scan_neovim_plugin,
     _scan_npm_package,
     _scan_shell_profiles,
     _scan_vscode_extension,
+    detect_ci_environment,
     detect_installed_clients,
 )
 
@@ -470,6 +473,206 @@ class TestDetectedClientDict(unittest.TestCase):
         d = c.to_dict()
         self.assertEqual(d["client_id"], "aider")
         self.assertTrue(d["installed"])
+
+
+class TestCIEnvironmentDetection(unittest.TestCase):
+    """Test CI/CD environment detection via env vars."""
+
+    def test_github_actions(self):
+        with patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "org/repo"}, clear=False):
+            result = detect_ci_environment()
+        self.assertIsNotNone(result)
+        self.assertEqual(result.env_id, "github_actions")
+        self.assertEqual(result.display_name, "GitHub Actions")
+        self.assertEqual(result.details["repository"], "org/repo")
+
+    def test_gitlab_ci(self):
+        with patch.dict(os.environ, {"GITLAB_CI": "true", "CI_PROJECT_NAME": "myproject"}, clear=False):
+            result = detect_ci_environment()
+        self.assertIsNotNone(result)
+        self.assertEqual(result.env_id, "gitlab_ci")
+
+    def test_kubernetes(self):
+        env = {"KUBERNETES_SERVICE_HOST": "10.0.0.1"}
+        # Remove CI-related vars to avoid false matches
+        clean_env = {k: v for k, v in os.environ.items() if k not in ("CI", "GITHUB_ACTIONS", "GITLAB_CI")}
+        clean_env.update(env)
+        with patch.dict(os.environ, clean_env, clear=True):
+            result = detect_ci_environment()
+        self.assertIsNotNone(result)
+        self.assertEqual(result.env_id, "kubernetes")
+
+    def test_generic_ci(self):
+        clean_env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI")}
+        clean_env["CI"] = "true"
+        with patch.dict(os.environ, clean_env, clear=True):
+            result = detect_ci_environment()
+        self.assertIsNotNone(result)
+        self.assertEqual(result.env_id, "ci_generic")
+
+    def test_no_ci(self):
+        clean_env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "KUBERNETES_SERVICE_HOST")
+        }
+        with patch.dict(os.environ, clean_env, clear=True):
+            with patch("os.path.exists", return_value=False):
+                result = detect_ci_environment()
+        self.assertIsNone(result)
+
+    def test_docker_env_file(self):
+        clean_env = {k: v for k, v in os.environ.items() if k not in ("CI", "GITHUB_ACTIONS", "GITLAB_CI")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            with patch("os.path.exists", return_value=True):
+                result = detect_ci_environment()
+        self.assertIsNotNone(result)
+        self.assertEqual(result.env_id, "docker")
+
+    def test_ci_environment_in_report(self):
+        """CI environment should be included in detection report."""
+        with (
+            patch("lumen_argus.detect._scan_binary", return_value=None),
+            patch("lumen_argus.detect._scan_pip_package", return_value=None),
+            patch("lumen_argus.detect._scan_npm_package", return_value=None),
+            patch("lumen_argus.detect._scan_brew_package", return_value=None),
+            patch("lumen_argus.detect._scan_vscode_extension", return_value=None),
+            patch("lumen_argus.detect._scan_app_bundle", return_value=None),
+            patch("lumen_argus.detect._scan_jetbrains_plugin", return_value=None),
+            patch("lumen_argus.detect._scan_neovim_plugin", return_value=None),
+            patch("lumen_argus.detect._scan_shell_profiles", return_value={}),
+            patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=False),
+        ):
+            report = detect_installed_clients()
+        self.assertIsNotNone(report.ci_environment)
+        self.assertEqual(report.ci_environment.env_id, "github_actions")
+        d = report.to_dict()
+        self.assertIn("ci_environment", d)
+
+    def test_report_to_dict_no_ci(self):
+        """Report without CI env should not include ci_environment key."""
+        report = DetectionReport(
+            clients=[],
+            platform="Test",
+            total_detected=0,
+            total_configured=0,
+        )
+        d = report.to_dict()
+        self.assertNotIn("ci_environment", d)
+
+
+class TestPowerShellEnvExtraction(unittest.TestCase):
+    """Test PowerShell env var pattern matching."""
+
+    def test_powershell_env_syntax(self):
+        line = '$env:OPENAI_BASE_URL = "http://localhost:8080"'
+        val = _extract_env_value(line, "OPENAI_BASE_URL")
+        self.assertEqual(val, "http://localhost:8080")
+
+    def test_powershell_env_no_spaces(self):
+        line = '$env:OPENAI_BASE_URL="http://localhost:8080"'
+        val = _extract_env_value(line, "OPENAI_BASE_URL")
+        self.assertEqual(val, "http://localhost:8080")
+
+
+class TestWindowsPaths(unittest.TestCase):
+    """Test Windows-specific path detection."""
+
+    @patch("platform.system", return_value="Windows")
+    def test_powershell_profiles(self, _):
+        with patch.dict(os.environ, {"USERPROFILE": "/Users/testuser"}):
+            profiles = _get_powershell_profiles()
+        self.assertEqual(len(profiles), 2)
+        self.assertIn("PowerShell", profiles[0])
+        self.assertIn("WindowsPowerShell", profiles[1])
+
+    @patch("platform.system", return_value="Linux")
+    def test_powershell_profiles_non_windows(self, _):
+        profiles = _get_powershell_profiles()
+        self.assertEqual(profiles, ())
+
+    @patch("platform.system", return_value="Windows")
+    def test_vscode_variants_includes_windows(self, _):
+        with patch.dict(os.environ, {"APPDATA": "C:\\Users\\test\\AppData\\Roaming"}):
+            variants = _get_vscode_variants()
+        # Should include both Windows and standard variants
+        names = [v.name for v in variants]
+        self.assertTrue(any("Windows" in n for n in names))
+
+    @patch("platform.system", return_value="Darwin")
+    def test_vscode_variants_no_windows_on_mac(self, _):
+        variants = _get_vscode_variants()
+        names = [v.name for v in variants]
+        self.assertFalse(any("Windows" in n for n in names))
+
+
+class TestNpmFnmVolta(unittest.TestCase):
+    """Test fnm and volta Node manager path detection."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_volta_package_found(self):
+        """npm scanner should find packages under volta tools."""
+        # Create mock volta structure
+        volta_home = os.path.join(self.tmpdir, ".volta")
+        node_dir = os.path.join(volta_home, "tools", "image", "node", "20.0.0", "lib", "node_modules")
+        pkg_dir = os.path.join(node_dir, "@openai", "codex")
+        os.makedirs(pkg_dir)
+        with open(os.path.join(pkg_dir, "package.json"), "w") as f:
+            json.dump({"name": "@openai/codex", "version": "0.2.0"}, f)
+
+        client = ClientDef(
+            id="codex_cli",
+            display_name="Codex CLI",
+            category="cli",
+            provider="openai",
+            ua_prefixes=("codex/",),
+            env_var="OPENAI_BASE_URL",
+            setup_cmd="test",
+            website="https://test.com",
+            detect_npm="@openai/codex",
+        )
+        with patch.dict(os.environ, {"VOLTA_HOME": volta_home, "NPM_CONFIG_PREFIX": ""}, clear=False):
+            result = _scan_npm_package(client)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.version, "0.2.0")
+        self.assertEqual(result.install_method, InstallMethod.NPM)
+
+    def test_fnm_multishell_path(self):
+        """npm scanner should find packages under FNM_MULTISHELL_PATH."""
+        fnm_ms = os.path.join(self.tmpdir, "fnm_multishell")
+        pkg_dir = os.path.join(fnm_ms, "lib", "node_modules", "@openai", "codex")
+        os.makedirs(pkg_dir)
+        with open(os.path.join(pkg_dir, "package.json"), "w") as f:
+            json.dump({"name": "@openai/codex", "version": "0.3.0"}, f)
+
+        # Also need a valid FNM_DIR with node-versions for the code path
+        fnm_dir = os.path.join(self.tmpdir, "fnm")
+        os.makedirs(os.path.join(fnm_dir, "node-versions"))
+
+        client = ClientDef(
+            id="codex_cli",
+            display_name="Codex CLI",
+            category="cli",
+            provider="openai",
+            ua_prefixes=("codex/",),
+            env_var="OPENAI_BASE_URL",
+            setup_cmd="test",
+            website="https://test.com",
+            detect_npm="@openai/codex",
+        )
+        with patch.dict(
+            os.environ,
+            {"FNM_DIR": fnm_dir, "FNM_MULTISHELL_PATH": fnm_ms, "NPM_CONFIG_PREFIX": "", "VOLTA_HOME": ""},
+            clear=False,
+        ):
+            result = _scan_npm_package(client)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.version, "0.3.0")
 
 
 if __name__ == "__main__":

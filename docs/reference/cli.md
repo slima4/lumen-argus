@@ -1,6 +1,6 @@
 # CLI Reference
 
-lumen-argus provides three subcommands: `serve`, `scan`, and `logs`.
+lumen-argus provides subcommands for proxy operation, scanning, tool detection, and setup.
 
 ```
 lumen-argus [--version] [--help] <command> [<args>]
@@ -165,6 +165,153 @@ lumen-argus logs export --sanitize
 
 # Export using a specific config
 lumen-argus logs export --config /path/to/config.yaml
+```
+
+---
+
+## `detect`
+
+Scan the system for installed AI CLI agents and check proxy configuration status.
+
+```bash
+lumen-argus detect [OPTIONS]
+```
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--versions` | `bool` | `false` | Detect versions by running `--version` subprocesses (slower). |
+| `--json` | `bool` | `false` | Output as JSON for CI/automation. |
+| `--audit` | `bool` | `false` | Audit proxy compliance — shows [OK]/[FAIL] per tool. |
+| `--check-quiet` | `bool` | `false` | Shell hook mode: prints warning to stderr if unconfigured tools found, silent otherwise. Designed for `eval` in shell profiles (<100ms). |
+| `--proxy-url` | `str` | `http://localhost:8080` | Expected proxy URL to check against. |
+
+### Examples
+
+```bash
+# Detect installed tools
+lumen-argus detect
+
+# Include version info
+lumen-argus detect --versions
+
+# JSON output for CI
+lumen-argus detect --json
+
+# Compliance audit
+lumen-argus detect --audit
+
+# Shell hook (add to .zshrc)
+eval "$(lumen-argus detect --check-quiet 2>/dev/null)"
+```
+
+### CI/CD Environment Detection
+
+When running in CI/CD or container environments, `detect` automatically identifies the platform via environment variables:
+
+- **GitHub Actions** (`GITHUB_ACTIONS`)
+- **GitLab CI** (`GITLAB_CI`)
+- **CircleCI**, **Jenkins**, **Travis CI**, **Buildkite**, **AWS CodeBuild**, **Azure Pipelines**, **Bitbucket Pipelines**, **TeamCity**
+- **Kubernetes** (`KUBERNETES_SERVICE_HOST`)
+- **Docker** (`/.dockerenv` file)
+- **Generic CI** (`CI=true`)
+
+---
+
+## `setup`
+
+Configure detected AI tools to route through the proxy.
+
+```bash
+lumen-argus setup [CLIENT] [OPTIONS]
+```
+
+### Arguments
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `client` | `str` (optional) | Configure only this specific client (e.g., `aider`). |
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--proxy-url` | `str` | `http://localhost:8080` | Proxy URL to configure. |
+| `--undo` | `bool` | `false` | Remove all proxy configuration and restore backups. |
+| `--dry-run` | `bool` | `false` | Show what would change without modifying files. |
+| `--non-interactive` | `bool` | `false` | Auto-configure without prompting. |
+
+### Examples
+
+```bash
+# Interactive setup wizard
+lumen-argus setup
+
+# Configure specific tool
+lumen-argus setup aider
+
+# Preview changes
+lumen-argus setup --dry-run
+
+# Auto-configure without prompts
+lumen-argus setup --non-interactive
+
+# Undo all changes
+lumen-argus setup --undo
+```
+
+### What setup modifies
+
+- **Shell profiles**: Adds `export VAR=URL` lines tagged with `# lumen-argus:managed` to `~/.zshrc`, `~/.bashrc`, `~/.config/fish/config.fish`, or PowerShell profiles.
+- **IDE settings**: Updates `settings.json` for VS Code, Cursor, Windsurf, and other IDE variants.
+- **Backups**: Every modification is backed up to `~/.lumen-argus/setup/backups/` with a manifest for undo.
+
+---
+
+## `watch`
+
+Background daemon that periodically scans for newly installed AI tools. Optionally auto-configures them.
+
+```bash
+lumen-argus watch [OPTIONS]
+```
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--proxy-url` | `str` | `http://localhost:8080` | Proxy URL to configure. |
+| `--interval` | `int` | `300` | Scan interval in seconds. |
+| `--auto-configure` | `bool` | `false` | Auto-configure new tools without prompting. |
+| `--install` | `bool` | `false` | Install as system service (launchd on macOS, systemd on Linux). |
+| `--uninstall` | `bool` | `false` | Remove the system service. |
+| `--status` | `bool` | `false` | Show watch daemon status. |
+
+### Examples
+
+```bash
+# Run foreground watch loop
+lumen-argus watch
+
+# Install as system service with auto-configure
+lumen-argus watch --install --auto-configure
+
+# Check status
+lumen-argus watch --status
+
+# Remove service
+lumen-argus watch --uninstall
+```
+
+---
+
+## `clients`
+
+List all 16 supported AI CLI agents with setup instructions.
+
+```bash
+lumen-argus clients [--json]
 ```
 
 ---

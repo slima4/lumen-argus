@@ -366,6 +366,11 @@ def main(argv: list[str] | None = None) -> None:
     detect_parser.add_argument("--versions", action="store_true", help="Detect versions (slower, runs subprocesses)")
     detect_parser.add_argument("--json", action="store_true", help="Output as JSON")
     detect_parser.add_argument("--audit", action="store_true", help="Audit proxy configuration compliance")
+    detect_parser.add_argument(
+        "--check-quiet",
+        action="store_true",
+        help="Shell hook mode: print warning if unconfigured tools found, exit silently otherwise",
+    )
     detect_parser.add_argument("--proxy-url", type=str, default="http://localhost:8080", help="Expected proxy URL")
 
     # setup subcommand — configure tools to use proxy
@@ -375,6 +380,17 @@ def main(argv: list[str] | None = None) -> None:
     setup_parser.add_argument("--undo", action="store_true", help="Remove all proxy configuration")
     setup_parser.add_argument("--dry-run", action="store_true", help="Show changes without applying")
     setup_parser.add_argument("--non-interactive", action="store_true", help="Auto-configure without prompting")
+
+    # watch subcommand — background daemon for new tool detection
+    watch_parser = subparsers.add_parser("watch", help="Background daemon to detect and configure new AI tools")
+    watch_parser.add_argument("--proxy-url", type=str, default="http://localhost:8080", help="Proxy URL to configure")
+    watch_parser.add_argument("--interval", type=int, default=300, help="Scan interval in seconds (default: 300)")
+    watch_parser.add_argument(
+        "--auto-configure", action="store_true", help="Auto-configure new tools without prompting"
+    )
+    watch_parser.add_argument("--install", action="store_true", help="Install as system service (launchd/systemd)")
+    watch_parser.add_argument("--uninstall", action="store_true", help="Remove system service")
+    watch_parser.add_argument("--status", action="store_true", help="Show watch daemon status")
 
     # mcp subcommand — unified MCP proxy with multiple transport modes
     mcp_parser = subparsers.add_parser(
@@ -452,7 +468,7 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(1)
         return
 
-    if args.command in ("scan", "logs", "rules", "mcp", "clients", "detect", "setup"):
+    if args.command in ("scan", "logs", "rules", "mcp", "clients", "detect", "setup", "watch"):
         _setup_minimal_logging()
         if args.command == "scan":
             _run_scan(args)
@@ -466,6 +482,8 @@ def main(argv: list[str] | None = None) -> None:
             _run_detect(args)
         elif args.command == "setup":
             _run_setup(args)
+        elif args.command == "watch":
+            _run_watch(args)
         else:
             _run_logs(args)
         return
@@ -1118,6 +1136,18 @@ def _run_detect(args: argparse.Namespace) -> None:
         include_versions=args.versions,
     )
 
+    if args.check_quiet:
+        # Shell hook mode: print warning only if unconfigured tools exist
+        unconfigured = [c for c in report.clients if c.installed and not c.proxy_configured]
+        if unconfigured:
+            names = ", ".join(c.display_name for c in unconfigured)
+            # Output a shell-visible warning (stderr so it doesn't interfere with eval)
+            sys.stderr.write(
+                "\033[33m[lumen-argus]\033[0m %d unconfigured tool(s): %s"
+                " — run 'lumen-argus setup'\n" % (len(unconfigured), names)
+            )
+        return
+
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
         return
@@ -1160,6 +1190,9 @@ def _run_detect(args: argparse.Namespace) -> None:
         method = c.install_method.value if hasattr(c.install_method, "value") else c.install_method
         print("  [%s] %-20s%-12s %-10s %s" % (marker, c.display_name, ver, method, status))
 
+    if report.ci_environment:
+        print("\nCI/CD environment: %s" % report.ci_environment.display_name)
+
     print("\n%d/%d configured for proxy (%s)" % (report.total_configured, report.total_detected, args.proxy_url))
     if report.total_configured < report.total_detected:
         print("Run 'lumen-argus setup' to configure remaining tools.")
@@ -1182,6 +1215,70 @@ def _run_setup(args: argparse.Namespace) -> None:
         client_id=args.client,
         non_interactive=args.non_interactive,
         dry_run=args.dry_run,
+    )
+
+
+def _run_watch(args: argparse.Namespace) -> None:
+    """Execute the 'watch' subcommand — background daemon for new tool detection."""
+    from lumen_argus.watch import (
+        get_service_status,
+        install_service,
+        run_watch_loop,
+        uninstall_service,
+    )
+
+    if args.status:
+        status = get_service_status()
+        print("Watch daemon status:")
+        print("  Platform:    %s" % status["platform"])
+        print("  Installed:   %s" % status["installed"])
+        if status["service_path"]:
+            print("  Service:     %s" % status["service_path"])
+        if status["last_scan"]:
+            print("  Last scan:   %s" % status["last_scan"])
+            print("  Known tools: %s" % status["known_tools"])
+        else:
+            print("  Last scan:   never")
+        return
+
+    if args.uninstall:
+        if uninstall_service():
+            print("Watch service removed.")
+            print("Note: stop the running service manually:")
+            if platform.system() == "Darwin":
+                print("  launchctl unload ~/Library/LaunchAgents/io.lumen-argus.watch.plist")
+            else:
+                print("  systemctl --user stop lumen-argus-watch")
+        else:
+            print("No watch service found to remove.")
+        return
+
+    if args.install:
+        path = install_service(
+            proxy_url=args.proxy_url,
+            interval=args.interval,
+            auto_configure=args.auto_configure,
+        )
+        if path:
+            print("Watch service installed: %s" % path)
+            print("\nTo start the service:")
+            if platform.system() == "Darwin":
+                print("  launchctl load %s" % path)
+            else:
+                print("  systemctl --user daemon-reload")
+                print("  systemctl --user enable --now lumen-argus-watch")
+        else:
+            print("Service install not supported on this platform.")
+            print("Run 'lumen-argus watch' directly instead.")
+        return
+
+    # Run foreground watch loop
+    print("Starting watch daemon (interval=%ds, proxy=%s)" % (args.interval, args.proxy_url))
+    print("Press Ctrl+C to stop.\n")
+    run_watch_loop(
+        proxy_url=args.proxy_url,
+        interval=args.interval,
+        auto_configure=args.auto_configure,
     )
 
 

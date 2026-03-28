@@ -61,6 +61,7 @@ nav:
     - Configuration: getting-started/configuration.md
   - User Guide:
     - Proxy Server: guide/proxy.md
+    - Client Detection & Setup: guide/client-detection.md
     - Detection: guide/detection.md
     - Allowlists: guide/allowlists.md
     - Custom Rules: guide/custom-rules.md

@@ -31,7 +31,20 @@ _SHELL_PROFILES = {
     "zsh": ("~/.zshrc", "~/.zshenv", "~/.zprofile"),
     "bash": ("~/.bashrc", "~/.bash_profile", "~/.profile"),
     "fish": ("~/.config/fish/config.fish",),
+    "powershell": (),  # dynamically resolved via _get_powershell_profiles()
 }
+
+
+def _get_powershell_profiles() -> tuple[str, ...]:
+    """Get PowerShell profile paths on Windows."""
+    if platform.system() != "Windows":
+        return ()
+    # PowerShell 7 (pwsh) and Windows PowerShell 5.1
+    docs = os.environ.get("USERPROFILE", os.path.expanduser("~"))
+    return (
+        os.path.join(docs, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1"),
+        os.path.join(docs, "Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"),
+    )
 
 
 @dataclass(frozen=True)
@@ -90,6 +103,50 @@ _VSCODE_VARIANTS: tuple[IDEVariant, ...] = (
     ),
 )
 
+# Windows-specific IDE paths (appended when on Windows)
+_WINDOWS_VSCODE_VARIANTS: tuple[IDEVariant, ...] = (
+    IDEVariant(
+        name="VS Code (Windows)",
+        extensions=("~/.vscode/extensions",),
+        settings=("%APPDATA%/Code/User/settings.json",),
+    ),
+    IDEVariant(
+        name="VS Code Insiders (Windows)",
+        extensions=("~/.vscode-insiders/extensions",),
+        settings=("%APPDATA%/Code - Insiders/User/settings.json",),
+    ),
+    IDEVariant(
+        name="VSCodium (Windows)",
+        extensions=("~/.vscode-oss/extensions",),
+        settings=("%APPDATA%/VSCodium/User/settings.json",),
+    ),
+    IDEVariant(
+        name="Cursor (Windows)",
+        extensions=("~/.cursor/extensions",),
+        settings=("%APPDATA%/Cursor/User/settings.json",),
+    ),
+    IDEVariant(
+        name="Windsurf (Windows)",
+        extensions=("~/.windsurf/extensions",),
+        settings=("%APPDATA%/Windsurf/User/settings.json",),
+    ),
+)
+
+
+def _get_vscode_variants() -> tuple[IDEVariant, ...]:
+    """Get VS Code variants for the current platform."""
+    if platform.system() == "Windows":
+        # Expand %APPDATA% in Windows paths
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            expanded = []
+            for v in _WINDOWS_VSCODE_VARIANTS:
+                settings = tuple(s.replace("%APPDATA%", appdata) for s in v.settings)
+                expanded.append(IDEVariant(name=v.name, extensions=v.extensions, settings=settings))
+            return tuple(expanded) + _VSCODE_VARIANTS
+    return _VSCODE_VARIANTS
+
+
 _VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)?(?:[.-]\w+)?)")
 
 
@@ -117,9 +174,90 @@ _ENV_VAR_PATTERNS = {
         re.compile(r"export\s+%s=[\"']?([^\s\"'#]+)" % re.escape(var)),
         re.compile(r"%s=[\"']?([^\s\"'#]+)" % re.escape(var)),
         re.compile(r"set\s+-x\s+%s\s+[\"']?([^\s\"'#]+)" % re.escape(var)),  # fish
+        # PowerShell: $env:VAR = "value"
+        re.compile(r"\$env:%s\s*=\s*[\"']?([^\s\"'#]+)" % re.escape(var)),
     ]
     for var in PROXY_ENV_VARS
 }
+
+
+# ---------------------------------------------------------------------------
+# CI/CD environment detection
+# ---------------------------------------------------------------------------
+
+# Known CI/CD environments detected via env vars
+_CI_ENVIRONMENTS = (
+    ("GITHUB_ACTIONS", "github_actions", "GitHub Actions"),
+    ("GITLAB_CI", "gitlab_ci", "GitLab CI"),
+    ("CIRCLECI", "circleci", "CircleCI"),
+    ("JENKINS_URL", "jenkins", "Jenkins"),
+    ("TRAVIS", "travis_ci", "Travis CI"),
+    ("BUILDKITE", "buildkite", "Buildkite"),
+    ("CODEBUILD_BUILD_ID", "aws_codebuild", "AWS CodeBuild"),
+    ("TF_BUILD", "azure_pipelines", "Azure Pipelines"),
+    ("BITBUCKET_BUILD_NUMBER", "bitbucket_pipelines", "Bitbucket Pipelines"),
+    ("TEAMCITY_VERSION", "teamcity", "TeamCity"),
+)
+
+# Container environments
+_CONTAINER_ENVIRONMENTS = (
+    ("KUBERNETES_SERVICE_HOST", "kubernetes", "Kubernetes"),
+    # /.dockerenv file check handled in code
+)
+
+
+@dataclass
+class CIEnvironment:
+    """Detected CI/CD or container environment."""
+
+    env_id: str = ""  # e.g., "github_actions", "kubernetes"
+    display_name: str = ""  # e.g., "GitHub Actions"
+    detected: bool = False
+    details: dict[str, str] = field(default_factory=dict)  # extra info
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def detect_ci_environment() -> CIEnvironment | None:
+    """Detect if running in a CI/CD or container environment.
+
+    Returns CIEnvironment if detected, None otherwise.
+    """
+    # Check CI/CD platforms
+    for env_var, env_id, display_name in _CI_ENVIRONMENTS:
+        if os.environ.get(env_var):
+            details: dict[str, str] = {}
+            if env_id == "github_actions":
+                details["repository"] = os.environ.get("GITHUB_REPOSITORY", "")
+                details["workflow"] = os.environ.get("GITHUB_WORKFLOW", "")
+                details["runner_os"] = os.environ.get("RUNNER_OS", "")
+            elif env_id == "gitlab_ci":
+                details["project"] = os.environ.get("CI_PROJECT_NAME", "")
+                details["pipeline_id"] = os.environ.get("CI_PIPELINE_ID", "")
+            log.debug("CI environment detected: %s", display_name)
+            return CIEnvironment(env_id=env_id, display_name=display_name, detected=True, details=details)
+
+    # Check container environments
+    for env_var, env_id, display_name in _CONTAINER_ENVIRONMENTS:
+        if os.environ.get(env_var):
+            details = {}
+            if env_id == "kubernetes":
+                details["namespace"] = os.environ.get("KUBERNETES_NAMESPACE", "")
+            log.debug("container environment detected: %s", display_name)
+            return CIEnvironment(env_id=env_id, display_name=display_name, detected=True, details=details)
+
+    # Check Docker (file-based)
+    if os.path.exists("/.dockerenv"):
+        log.debug("container environment detected: Docker")
+        return CIEnvironment(env_id="docker", display_name="Docker", detected=True)
+
+    # Generic CI flag (many CI systems set CI=true)
+    if os.environ.get("CI", "").lower() in ("true", "1", "yes"):
+        log.debug("generic CI environment detected via CI env var")
+        return CIEnvironment(env_id="ci_generic", display_name="CI (generic)", detected=True)
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -170,15 +308,19 @@ class DetectionReport:
     platform: str = ""
     total_detected: int = 0
     total_configured: int = 0
+    ci_environment: CIEnvironment | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "platform": self.platform,
             "total_detected": self.total_detected,
             "total_configured": self.total_configured,
             "clients": [c.to_dict() for c in self.clients],
             "shell_env_vars": {k: {"value": v[0], "file": v[1], "line": v[2]} for k, v in self.shell_env_vars.items()},
         }
+        if self.ci_environment:
+            result["ci_environment"] = self.ci_environment.to_dict()
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +386,7 @@ def _scan_vscode_extension(client: ClientDef) -> DetectedClient | None:
         return None
     ext_id_lower = client.detect_vscode_ext.lower()
 
-    for variant in _VSCODE_VARIANTS:
+    for variant in _get_vscode_variants():
         for ext_dir in variant.extensions:
             ext_dir = os.path.expanduser(ext_dir)
             if not os.path.isdir(ext_dir):
@@ -316,8 +458,12 @@ def _scan_jetbrains_plugin(client: ClientDef) -> DetectedClient | None:
         return None
 
     # JetBrains plugin dirs vary by product and OS
-    if platform.system() == "Darwin":
+    system = platform.system()
+    if system == "Darwin":
         base = os.path.expanduser("~/Library/Application Support/JetBrains")
+    elif system == "Windows":
+        appdata = os.environ.get("APPDATA", "")
+        base = os.path.join(appdata, "JetBrains") if appdata else ""
     else:
         base = os.path.expanduser("~/.local/share/JetBrains")
 
@@ -364,6 +510,47 @@ def _scan_npm_package(client: ClientDef) -> DetectedClient | None:
         current = os.path.join(nvm_dir, "current", "lib", "node_modules")
         if os.path.isdir(current):
             npm_prefixes.append(current)
+    # fnm-managed (Fast Node Manager)
+    fnm_dir = os.environ.get("FNM_DIR", "")
+    if not fnm_dir:
+        # Default fnm dirs per platform
+        if platform.system() == "Darwin":
+            fnm_dir = os.path.expanduser("~/Library/Application Support/fnm")
+        else:
+            fnm_dir = os.path.expanduser("~/.local/share/fnm")
+    if os.path.isdir(fnm_dir):
+        fnm_current = os.path.join(fnm_dir, "node-versions")
+        if os.path.isdir(fnm_current):
+            # fnm symlinks current version — check aliases/default
+            fnm_default = os.path.join(fnm_dir, "aliases", "default")
+            if os.path.isdir(fnm_default):
+                modules = os.path.join(fnm_default, "installation", "lib", "node_modules")
+                if os.path.isdir(modules):
+                    npm_prefixes.append(modules)
+            # Also check FNM_MULTISHELL_PATH (set when fnm env is active)
+            fnm_ms = os.environ.get("FNM_MULTISHELL_PATH", "")
+            if fnm_ms:
+                modules = os.path.join(fnm_ms, "lib", "node_modules")
+                if os.path.isdir(modules):
+                    npm_prefixes.append(modules)
+    # volta-managed
+    volta_home = os.environ.get("VOLTA_HOME", os.path.expanduser("~/.volta"))
+    if os.path.isdir(volta_home):
+        # volta installs global packages in its own tool chain
+        volta_bin = os.path.join(volta_home, "tools", "image", "packages")
+        if os.path.isdir(volta_bin):
+            npm_prefixes.append(volta_bin)
+        # Also check node global modules under volta
+        volta_node = os.path.join(volta_home, "tools", "image", "node")
+        if os.path.isdir(volta_node):
+            try:
+                versions = sorted(os.listdir(volta_node))
+                if versions:
+                    modules = os.path.join(volta_node, versions[-1], "lib", "node_modules")
+                    if os.path.isdir(modules):
+                        npm_prefixes.append(modules)
+            except OSError as e:
+                log.debug("could not list volta node versions: %s", e)
     # System defaults
     npm_prefixes.extend(
         [
@@ -373,6 +560,11 @@ def _scan_npm_package(client: ClientDef) -> DetectedClient | None:
             os.path.expanduser("~/.npm-global/lib/node_modules"),
         ]
     )
+    # Windows npm global
+    if platform.system() == "Windows":
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            npm_prefixes.append(os.path.join(appdata, "npm", "node_modules"))
 
     for prefix in npm_prefixes:
         pkg_dir = os.path.join(prefix, client.detect_npm)
@@ -525,6 +717,9 @@ def _scan_shell_profiles(proxy_url: str = "") -> dict[str, tuple[str, str, int]]
     for shell, profiles in _SHELL_PROFILES.items():
         if shell != current_shell:
             profiles_to_scan.extend(profiles)
+    # Add PowerShell profiles on Windows
+    if platform.system() == "Windows":
+        profiles_to_scan.extend(_get_powershell_profiles())
 
     for profile_path in profiles_to_scan:
         expanded = os.path.expanduser(profile_path)
@@ -569,7 +764,7 @@ def _extract_env_value(line: str, var_name: str) -> str:
 def _build_settings_cache() -> dict[str, tuple[dict[str, Any], str]]:
     """Load and parse all existing IDE settings files once. Returns {expanded_path: (settings, path)}."""
     cache: dict[str, tuple[dict[str, Any], str]] = {}
-    for variant in _VSCODE_VARIANTS:
+    for variant in _get_vscode_variants():
         for settings_path in variant.settings:
             expanded = os.path.expanduser(settings_path)
             if expanded in cache:
@@ -647,12 +842,16 @@ def detect_installed_clients(
     total_detected = sum(1 for r in results if r.installed)
     total_configured = sum(1 for r in results if r.installed and r.proxy_configured)
 
+    # Detect CI/CD environment
+    ci_env = detect_ci_environment()
+
     report = DetectionReport(
         clients=results,
         shell_env_vars=shell_env,
         platform="%s %s" % (platform.system(), platform.machine()),
         total_detected=total_detected,
         total_configured=total_configured,
+        ci_environment=ci_env,
     )
 
     log.info(

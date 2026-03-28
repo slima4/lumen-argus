@@ -61,29 +61,37 @@ pip install lumen-argus
 lumen-argus serve
 ```
 
-Then point your AI tool at the proxy. **16 agents supported** — run `lumen-argus clients` to see them all:
+Then point your AI tool at the proxy. **16 agents supported** — auto-detect and configure them all:
 
 ```bash
-# Claude Code
+# Auto-detect installed AI tools
+lumen-argus detect
+
+# Auto-configure all detected tools
+lumen-argus setup
+
+# Or configure manually:
 ANTHROPIC_BASE_URL=http://localhost:8080 claude
-
-# Cursor
-OPENAI_BASE_URL=http://localhost:8080 cursor
-
-# Aider
 OPENAI_BASE_URL=http://localhost:8080 aider
+```
 
-# Codex CLI
-OPENAI_BASE_URL=http://localhost:8080 codex
+**Background monitoring** — detect and configure new tools automatically:
 
-# Copilot / Continue / Cody / Windsurf / Cline / Roo Code / Augment / Aide
-# Set in your IDE settings:
-OPENAI_BASE_URL=http://localhost:8080
-# or for Anthropic-based providers:
-ANTHROPIC_BASE_URL=http://localhost:8080
+```bash
+# Run as a foreground watch daemon
+lumen-argus watch --auto-configure
 
-# Gemini Code Assist
-GEMINI_BASE_URL=http://localhost:8080
+# Or install as a system service (launchd/systemd)
+lumen-argus watch --install --auto-configure
+```
+
+**Shell hook** — warn about unconfigured tools on every new shell:
+
+```bash
+# Add to your .zshrc / .bashrc (runs in <100ms)
+eval "$(lumen-argus detect --check-quiet 2>/dev/null)"
+# Or install automatically:
+lumen-argus setup  # offers to install the hook
 ```
 
 **Docker:**

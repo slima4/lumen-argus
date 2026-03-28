@@ -12,6 +12,7 @@ All modifications are tagged with '# lumen-argus:managed' for easy identificatio
 import json
 import logging
 import os
+import platform
 import re
 import shutil
 from dataclasses import asdict, dataclass
@@ -54,6 +55,21 @@ class SetupChange:
 
 def _detect_shell_profile() -> str:
     """Detect the current user's primary shell profile file."""
+    # On Windows, use PowerShell profile
+    if platform.system() == "Windows":
+        from lumen_argus.detect import _get_powershell_profiles
+
+        ps_profiles = _get_powershell_profiles()
+        if ps_profiles:
+            # Prefer PowerShell 7 profile, fallback to Windows PowerShell 5.1
+            for p in ps_profiles:
+                if os.path.isfile(p):
+                    log.debug("detected PowerShell profile: %s", p)
+                    return p
+            # No existing profile — use PowerShell 7 path (will be created)
+            log.debug("using PowerShell 7 profile path: %s", ps_profiles[0])
+            return ps_profiles[0]
+
     shell = os.path.basename(os.environ.get("SHELL", ""))
     profiles = _SHELL_PROFILES.get(shell, _SHELL_PROFILES.get("bash", ("~/.bashrc",)))
     profile = profiles[0] if profiles else "~/.bashrc"
@@ -91,9 +107,12 @@ def _save_manifest(changes: list[SetupChange]) -> None:
 
     existing.extend(asdict(c) for c in changes)
 
-    with open(_MANIFEST_PATH, "w", encoding="utf-8") as f:
-        json.dump({"changes": existing}, f, indent=2)
-    log.debug("manifest updated: %d total changes", len(existing))
+    try:
+        with open(_MANIFEST_PATH, "w", encoding="utf-8") as f:
+            json.dump({"changes": existing}, f, indent=2)
+        log.debug("manifest updated: %d total changes", len(existing))
+    except OSError as e:
+        log.error("could not write manifest: %s", e, exc_info=True)
 
 
 def add_env_to_shell_profile(
@@ -131,7 +150,11 @@ def add_env_to_shell_profile(
             log.error("could not read %s: %s", profile_path, e, exc_info=True)
             return None
 
-    export_line = "export %s=%s  %s client=%s" % (var_name, value, MANAGED_TAG, client_id)
+    # Use PowerShell syntax on Windows, shell export otherwise
+    if platform.system() == "Windows" and profile_path.endswith(".ps1"):
+        export_line = '$env:%s = "%s"  %s client=%s' % (var_name, value, MANAGED_TAG, client_id)
+    else:
+        export_line = "export %s=%s  %s client=%s" % (var_name, value, MANAGED_TAG, client_id)
 
     if dry_run:
         log.info("[dry-run] would add to %s: %s", profile_path, export_line)
@@ -241,6 +264,78 @@ def update_ide_settings(
 
 
 # ---------------------------------------------------------------------------
+# Shell hook
+# ---------------------------------------------------------------------------
+
+# The shell hook line added to profiles for auto-detection
+_SHELL_HOOK_LINE = 'eval "$(lumen-argus detect --check-quiet 2>/dev/null)"'
+_SHELL_HOOK_TAG = "%s type=hook" % MANAGED_TAG
+
+
+def install_shell_hook(profile_path: str = "", dry_run: bool = False) -> SetupChange | None:
+    """Install a shell hook that warns about unconfigured tools on every new shell.
+
+    The hook runs `lumen-argus detect --check-quiet` which completes in <100ms
+    and prints a warning to stderr only if unconfigured tools are found.
+
+    Returns SetupChange if installed, None if already present or failed.
+    """
+    if not profile_path:
+        profile_path = _detect_shell_profile()
+
+    # Check if already installed
+    if os.path.isfile(profile_path):
+        try:
+            with open(profile_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            if "lumen-argus detect --check-quiet" in content:
+                log.info("shell hook already installed in %s", profile_path)
+                return None
+        except OSError as e:
+            log.error("could not read %s: %s", profile_path, e, exc_info=True)
+            return None
+
+    hook_line = "%s  %s" % (_SHELL_HOOK_LINE, _SHELL_HOOK_TAG)
+
+    if dry_run:
+        log.info("[dry-run] would add shell hook to %s", profile_path)
+        return SetupChange(
+            timestamp=now_iso(),
+            client_id="__hook__",
+            method="shell_profile",
+            file=profile_path,
+            detail=hook_line,
+        )
+
+    # Backup before modification
+    backup_path = ""
+    if os.path.isfile(profile_path):
+        try:
+            backup_path = _backup_file(profile_path)
+        except OSError as e:
+            log.error("cannot proceed without backup for %s: %s", profile_path, e)
+            return None
+
+    try:
+        with open(profile_path, "a", encoding="utf-8") as f:
+            f.write("\n# lumen-argus: auto-detect unconfigured AI tools on shell start\n")
+            f.write("%s\n" % hook_line)
+        log.info("shell hook installed in %s", profile_path)
+    except OSError as e:
+        log.error("could not write to %s: %s", profile_path, e, exc_info=True)
+        return None
+
+    return SetupChange(
+        timestamp=now_iso(),
+        client_id="__hook__",
+        method="shell_profile",
+        file=profile_path,
+        detail=hook_line,
+        backup_path=backup_path,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Undo
 # ---------------------------------------------------------------------------
 
@@ -254,6 +349,11 @@ def undo_setup() -> int:
 
     # Strategy 1: Find and remove tagged lines from all known shell profiles
     shell_profiles = [p for profiles in _SHELL_PROFILES.values() for p in profiles]
+    # Include PowerShell profiles on Windows
+    if platform.system() == "Windows":
+        from lumen_argus.detect import _get_powershell_profiles
+
+        shell_profiles.extend(_get_powershell_profiles())
     for profile in shell_profiles:
         expanded = os.path.expanduser(profile)
         if not os.path.isfile(expanded):
@@ -431,10 +531,10 @@ def _prompt_yes(message: str) -> bool:
 
 def _find_ide_settings(extension_path: str) -> str | None:
     """Find the IDE settings.json file that corresponds to an extension path."""
-    from lumen_argus.detect import _VSCODE_VARIANTS
+    from lumen_argus.detect import _get_vscode_variants
 
     # Determine which variant owns this extension path
-    for variant in _VSCODE_VARIANTS:
+    for variant in _get_vscode_variants():
         for ext_dir in variant.extensions:
             expanded = os.path.expanduser(ext_dir)
             if extension_path.startswith(expanded):
