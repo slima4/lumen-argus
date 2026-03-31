@@ -1,12 +1,17 @@
 """Setup wizard — configure AI CLI agents to route through lumen-argus proxy.
 
-Interactive (or non-interactive) tool configuration:
-- Adds proxy env vars to shell profiles
-- Updates IDE settings JSON files
-- Creates backups before every modification
-- Supports undo via tagged lines and manifest
+Two-layer approach for toggleable protection:
 
-All modifications are tagged with '# lumen-argus:managed' for easy identification.
+1. Shell profile gets a source block (written once, never touched again):
+   # lumen-argus:begin
+   [ -f "$HOME/.lumen-argus/env" ] && source "$HOME/.lumen-argus/env"
+   # lumen-argus:end
+
+2. Env vars are written to ~/.lumen-argus/env:
+   export OPENAI_BASE_URL=http://localhost:8080  # lumen-argus:managed client=aider
+
+The tray app toggles protection by writing/truncating the env file.
+CLI: `lumen-argus protection enable|disable|status`
 """
 
 import json
@@ -25,8 +30,16 @@ log = logging.getLogger("argus.setup")
 # Tag added to managed lines for identification and undo
 MANAGED_TAG = "# lumen-argus:managed"
 
+# Source block markers in shell profiles
+_SOURCE_BLOCK_BEGIN = "# lumen-argus:begin"
+_SOURCE_BLOCK_END = "# lumen-argus:end"
+
+# Env file — the tray app toggles this
+_ARGUS_DIR = os.path.expanduser("~/.lumen-argus")
+_ENV_FILE = os.path.join(_ARGUS_DIR, "env")
+
 # Backup directory
-_SETUP_DIR = os.path.expanduser("~/.lumen-argus/setup")
+_SETUP_DIR = os.path.join(_ARGUS_DIR, "setup")
 _BACKUP_DIR = os.path.join(_SETUP_DIR, "backups")
 _MANIFEST_PATH = os.path.join(_SETUP_DIR, "manifest.json")
 
@@ -42,7 +55,7 @@ class SetupChange:
 
     timestamp: str
     client_id: str
-    method: str  # "shell_profile" | "ide_settings"
+    method: str  # "shell_profile" | "ide_settings" | "env_file"
     file: str
     detail: str  # what was added/changed
     backup_path: str = ""
@@ -115,55 +128,59 @@ def _save_manifest(changes: list[SetupChange]) -> None:
         log.error("could not write manifest: %s", e, exc_info=True)
 
 
-def add_env_to_shell_profile(
-    var_name: str,
-    value: str,
-    client_id: str,
-    profile_path: str = "",
-    dry_run: bool = False,
-) -> SetupChange | None:
-    """Add an export line to the user's shell profile.
+# ---------------------------------------------------------------------------
+# Source block in shell profile
+# ---------------------------------------------------------------------------
 
-    Returns SetupChange if successful, None if already present or failed.
+
+def _has_source_block(profile_path: str) -> bool:
+    """Check if the shell profile already has the lumen-argus source block."""
+    if not os.path.isfile(profile_path):
+        return False
+    try:
+        with open(profile_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        return _SOURCE_BLOCK_BEGIN in content
+    except OSError:
+        return False
+
+
+def _source_block_lines(profile_path: str) -> str:
+    """Generate the source block for a shell profile."""
+    if platform.system() == "Windows" and profile_path.endswith(".ps1"):
+        # TODO: write_env_file() produces Unix `export` syntax — needs a
+        # separate env.ps1 with `$env:` syntax for PowerShell support.
+        env_path = "$env:USERPROFILE\\.lumen-argus\\env.ps1"
+        return '%s\nif (Test-Path "%s") { . "%s" }\n%s\n' % (_SOURCE_BLOCK_BEGIN, env_path, env_path, _SOURCE_BLOCK_END)
+    return '%s\n[ -f "$HOME/.lumen-argus/env" ] && source "$HOME/.lumen-argus/env"\n%s\n' % (
+        _SOURCE_BLOCK_BEGIN,
+        _SOURCE_BLOCK_END,
+    )
+
+
+def install_source_block(profile_path: str = "", dry_run: bool = False) -> SetupChange | None:
+    """Install the source block in a shell profile.
+
+    The source block is idempotent — written once, never touched again.
+    Returns SetupChange if installed, None if already present.
     """
     if not profile_path:
         profile_path = _detect_shell_profile()
 
-    # Check if already set
-    if os.path.isfile(profile_path):
-        try:
-            with open(profile_path, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
-            # Already has this exact export
-            if "export %s=%s" % (var_name, value) in content:
-                log.info("already configured: %s=%s in %s", var_name, value, profile_path)
-                return None
-            # Has the var with a different value (warn but don't overwrite)
-            if re.search(r"export\s+%s=" % re.escape(var_name), content):
-                log.warning(
-                    "%s already set in %s with a different value — skipping to avoid conflict",
-                    var_name,
-                    profile_path,
-                )
-                return None
-        except OSError as e:
-            log.error("could not read %s: %s", profile_path, e, exc_info=True)
-            return None
+    if _has_source_block(profile_path):
+        log.debug("source block already present in %s", profile_path)
+        return None
 
-    # Use PowerShell syntax on Windows, shell export otherwise
-    if platform.system() == "Windows" and profile_path.endswith(".ps1"):
-        export_line = '$env:%s = "%s"  %s client=%s' % (var_name, value, MANAGED_TAG, client_id)
-    else:
-        export_line = "export %s=%s  %s client=%s" % (var_name, value, MANAGED_TAG, client_id)
+    block = _source_block_lines(profile_path)
 
     if dry_run:
-        log.info("[dry-run] would add to %s: %s", profile_path, export_line)
+        log.info("[dry-run] would add source block to %s", profile_path)
         return SetupChange(
             timestamp=now_iso(),
-            client_id=client_id,
+            client_id="__source_block__",
             method="shell_profile",
             file=profile_path,
-            detail=export_line,
+            detail=block.strip(),
         )
 
     # Backup before modification
@@ -175,23 +192,187 @@ def add_env_to_shell_profile(
             log.error("cannot proceed without backup for %s: %s", profile_path, e)
             return None
 
-    # Append export line
     try:
         with open(profile_path, "a", encoding="utf-8") as f:
-            f.write("\n%s\n" % export_line)
-        log.info("added to %s: %s", profile_path, export_line)
+            f.write("\n%s" % block)
+        log.info("source block installed in %s", profile_path)
     except OSError as e:
         log.error("could not write to %s: %s", profile_path, e, exc_info=True)
         return None
 
     return SetupChange(
         timestamp=now_iso(),
-        client_id=client_id,
+        client_id="__source_block__",
         method="shell_profile",
         file=profile_path,
-        detail=export_line,
+        detail=block.strip(),
         backup_path=backup_path,
     )
+
+
+# ---------------------------------------------------------------------------
+# Env file operations (~/.lumen-argus/env)
+# ---------------------------------------------------------------------------
+
+
+def read_env_file() -> list[tuple[str, str, str]]:
+    """Read the env file and return list of (var_name, value, client_id) tuples."""
+    if not os.path.isfile(_ENV_FILE):
+        return []
+    entries = []
+    try:
+        with open(_ENV_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # Parse our own format: export VAR=value  # lumen-argus:managed client=<id>
+                # (no quoted values — we control the write format via write_env_file)
+                m = re.match(
+                    r"export\s+(\w+)=(\S+)\s+.*client=(\S+)",
+                    line,
+                )
+                if m:
+                    entries.append((m.group(1), m.group(2), m.group(3)))
+    except OSError as e:
+        log.warning("could not read env file: %s", e)
+    return entries
+
+
+def write_env_file(entries: list[tuple[str, str, str]]) -> None:
+    """Write env vars to ~/.lumen-argus/env.
+
+    Args:
+        entries: list of (var_name, value, client_id) tuples.
+    """
+    os.makedirs(_ARGUS_DIR, exist_ok=True)
+    lines = []
+    for var_name, value, client_id in entries:
+        lines.append("export %s=%s  %s client=%s" % (var_name, value, MANAGED_TAG, client_id))
+    try:
+        with open(_ENV_FILE, "w", encoding="utf-8") as f:
+            if lines:
+                f.write("\n".join(lines))
+                f.write("\n")
+        log.info("env file written: %d var(s)", len(lines))
+    except OSError as e:
+        log.error("could not write env file: %s", e, exc_info=True)
+
+
+def add_env_to_env_file(
+    var_name: str,
+    value: str,
+    client_id: str,
+    dry_run: bool = False,
+) -> SetupChange | None:
+    """Add an env var to ~/.lumen-argus/env.
+
+    Returns SetupChange if added, None if already present.
+    """
+    existing = read_env_file()
+
+    # Check if already set with same value
+    for ev, val, cid in existing:
+        if ev == var_name and val == value and cid == client_id:
+            log.info("already in env file: %s=%s (client=%s)", var_name, value, client_id)
+            return None
+
+    export_line = "export %s=%s  %s client=%s" % (var_name, value, MANAGED_TAG, client_id)
+
+    if dry_run:
+        log.info("[dry-run] would add to env file: %s", export_line)
+        return SetupChange(
+            timestamp=now_iso(),
+            client_id=client_id,
+            method="env_file",
+            file=_ENV_FILE,
+            detail=export_line,
+        )
+
+    # Remove any existing entry for this var+client before adding
+    filtered = [(ev, val, cid) for ev, val, cid in existing if not (ev == var_name and cid == client_id)]
+    filtered.append((var_name, value, client_id))
+    write_env_file(filtered)
+
+    return SetupChange(
+        timestamp=now_iso(),
+        client_id=client_id,
+        method="env_file",
+        file=_ENV_FILE,
+        detail=export_line,
+    )
+
+
+def add_env_to_shell_profile(
+    var_name: str,
+    value: str,
+    client_id: str,
+    profile_path: str = "",
+    dry_run: bool = False,
+) -> SetupChange | None:
+    """Add an env var for a client — writes to env file and ensures source block.
+
+    Returns SetupChange if successful, None if already present.
+    """
+    if not profile_path:
+        profile_path = _detect_shell_profile()
+
+    # Ensure source block exists in the shell profile
+    install_source_block(profile_path, dry_run=dry_run)
+
+    # Write the env var to ~/.lumen-argus/env
+    return add_env_to_env_file(var_name, value, client_id, dry_run=dry_run)
+
+
+# ---------------------------------------------------------------------------
+# Protection toggle (for tray app and CLI)
+# ---------------------------------------------------------------------------
+
+
+def enable_protection(proxy_url: str = "http://localhost:8080") -> dict[str, object]:
+    """Write all configured tool env vars to ~/.lumen-argus/env.
+
+    Returns status dict with enabled flag and tool count.
+    """
+    from lumen_argus.clients import CLIENT_REGISTRY, ProxyConfigType
+
+    entries = []
+    for client in CLIENT_REGISTRY:
+        pc = client.proxy_config
+        if pc.config_type == ProxyConfigType.ENV_VAR and pc.env_var:
+            entries.append((pc.env_var, proxy_url, client.id))
+            if pc.alt_config and pc.alt_config.config_type == ProxyConfigType.ENV_VAR and pc.alt_config.env_var:
+                entries.append((pc.alt_config.env_var, proxy_url, client.id))
+
+    write_env_file(entries)
+    log.info("protection enabled: %d env var(s) for %s", len(entries), proxy_url)
+    return {"enabled": True, "env_file": _ENV_FILE, "env_vars_set": len(entries)}
+
+
+def disable_protection() -> dict[str, object]:
+    """Truncate ~/.lumen-argus/env to disable all routing.
+
+    Returns status dict.
+    """
+    os.makedirs(_ARGUS_DIR, exist_ok=True)
+    try:
+        with open(_ENV_FILE, "w", encoding="utf-8") as f:
+            f.write("")
+        log.info("protection disabled: env file truncated")
+    except OSError as e:
+        log.error("could not truncate env file: %s", e, exc_info=True)
+    return {"enabled": False, "env_file": _ENV_FILE, "env_vars_set": 0}
+
+
+def protection_status() -> dict[str, object]:
+    """Return current protection status as JSON-serializable dict."""
+    entries = read_env_file()
+    enabled = len(entries) > 0
+    return {
+        "enabled": enabled,
+        "env_file": _ENV_FILE,
+        "env_vars_set": len(entries),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -341,13 +522,13 @@ def install_shell_hook(profile_path: str = "", dry_run: bool = False) -> SetupCh
 
 
 def undo_setup() -> int:
-    """Remove all lumen-argus:managed lines and restore IDE settings.
+    """Remove all lumen-argus configuration: source blocks, managed lines, env file, IDE settings.
 
     Returns the number of changes reverted.
     """
     reverted = 0
 
-    # Strategy 1: Find and remove tagged lines from all known shell profiles
+    # Strategy 1: Remove source blocks and managed lines from all known shell profiles
     shell_profiles = [p for profiles in _SHELL_PROFILES.values() for p in profiles]
     # Include PowerShell profiles on Windows
     if platform.system() == "Windows":
@@ -361,18 +542,45 @@ def undo_setup() -> int:
         try:
             with open(expanded, "r", encoding="utf-8") as f:
                 lines = f.readlines()
-            new_lines = [line for line in lines if MANAGED_TAG not in line]
+            new_lines = []
+            in_source_block = False
+            for line in lines:
+                if _SOURCE_BLOCK_BEGIN in line:
+                    in_source_block = True
+                    reverted += 1
+                    continue
+                if _SOURCE_BLOCK_END in line:
+                    in_source_block = False
+                    continue
+                if in_source_block:
+                    continue
+                if MANAGED_TAG in line:
+                    reverted += 1
+                    continue
+                new_lines.append(line)
             removed = len(lines) - len(new_lines)
             if removed > 0:
                 _backup_file(expanded)
                 with open(expanded, "w", encoding="utf-8") as f:
                     f.writelines(new_lines)
                 log.info("removed %d managed line(s) from %s", removed, profile)
-                reverted += removed
         except OSError as e:
             log.error("could not clean %s: %s", profile, e, exc_info=True)
 
-    # Strategy 2: Restore IDE settings from manifest backups
+    # Strategy 2: Truncate the env file
+    if os.path.isfile(_ENV_FILE):
+        try:
+            with open(_ENV_FILE, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            if content:
+                with open(_ENV_FILE, "w", encoding="utf-8") as f:
+                    f.write("")
+                log.info("env file cleared: %s", _ENV_FILE)
+                reverted += 1
+        except OSError as e:
+            log.error("could not clear env file: %s", e, exc_info=True)
+
+    # Strategy 3: Restore IDE settings from manifest backups
     if os.path.exists(_MANIFEST_PATH):
         try:
             with open(_MANIFEST_PATH, "r", encoding="utf-8") as f:
@@ -467,16 +675,16 @@ def run_setup(
         pc = client_def.proxy_config
 
         if pc.config_type == ProxyConfigType.ENV_VAR:
-            if non_interactive or _prompt_yes("  Add 'export %s=%s' to %s?" % (pc.env_var, proxy_url, profile_path)):
+            if non_interactive or _prompt_yes("  Add '%s=%s' to env file?" % (pc.env_var, proxy_url)):
                 change = add_env_to_shell_profile(
                     pc.env_var, proxy_url, target.client_id, profile_path, dry_run=dry_run
                 )
                 if change:
                     changes.append(change)
                     if not dry_run:
-                        print("  Added to %s" % profile_path)
+                        print("  Added to %s" % _ENV_FILE)
                 else:
-                    print("  Skipped (already set or conflict)")
+                    print("  Skipped (already set)")
 
         elif pc.config_type == ProxyConfigType.IDE_SETTINGS:
             settings_file = _find_ide_settings(target.install_path)
@@ -509,7 +717,7 @@ def run_setup(
     # Save manifest
     if changes and not dry_run:
         _save_manifest(changes)
-        print("\n%d tool(s) configured. Run: source %s" % (len(changes), profile_path))
+        print("\n%d tool(s) configured. Open a new terminal to apply." % len(changes))
     elif dry_run and changes:
         print("\n[dry-run] %d change(s) would be made." % len(changes))
     elif not changes:

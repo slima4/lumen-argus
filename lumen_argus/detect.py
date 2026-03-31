@@ -725,6 +725,11 @@ def _scan_shell_profiles(proxy_url: str = "") -> dict[str, list[tuple[str, str, 
     if platform.system() == "Windows":
         profiles_to_scan.extend(_get_powershell_profiles())
 
+    # Also scan the lumen-argus env file (appended last so entries win
+    # in last-applicable-line matching via _match_shell_entry)
+    env_file = os.path.expanduser("~/.lumen-argus/env")
+    profiles_to_scan.append(env_file)
+
     for profile_path in profiles_to_scan:
         expanded = os.path.expanduser(profile_path)
         if not os.path.isfile(expanded):

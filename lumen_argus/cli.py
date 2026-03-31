@@ -381,6 +381,15 @@ def main(argv: list[str] | None = None) -> None:
     setup_parser.add_argument("--dry-run", action="store_true", help="Show changes without applying")
     setup_parser.add_argument("--non-interactive", action="store_true", help="Auto-configure without prompting")
 
+    # protection subcommand — toggle proxy routing for tray app integration
+    protection_parser = subparsers.add_parser("protection", help="Toggle proxy routing (enable/disable/status)")
+    protection_parser.add_argument(
+        "action", choices=["enable", "disable", "status"], help="Enable, disable, or check protection status"
+    )
+    protection_parser.add_argument(
+        "--proxy-url", type=str, default="http://localhost:8080", help="Proxy URL (for enable)"
+    )
+
     # watch subcommand — background daemon for new tool detection
     watch_parser = subparsers.add_parser("watch", help="Background daemon to detect and configure new AI tools")
     watch_parser.add_argument("--proxy-url", type=str, default="http://localhost:8080", help="Proxy URL to configure")
@@ -484,6 +493,8 @@ def main(argv: list[str] | None = None) -> None:
             _run_setup(args)
         elif args.command == "watch":
             _run_watch(args)
+        elif args.command == "protection":
+            _run_protection(args)
         else:
             _run_logs(args)
         return
@@ -1272,6 +1283,21 @@ def _run_setup(args: argparse.Namespace) -> None:
         non_interactive=args.non_interactive,
         dry_run=args.dry_run,
     )
+
+
+def _run_protection(args: argparse.Namespace) -> None:
+    """Execute the 'protection' subcommand — toggle proxy routing."""
+    from lumen_argus.setup_wizard import disable_protection, enable_protection, protection_status
+
+    if args.action == "enable":
+        result = enable_protection(proxy_url=args.proxy_url)
+        print(json.dumps(result, indent=2))
+    elif args.action == "disable":
+        result = disable_protection()
+        print(json.dumps(result, indent=2))
+    elif args.action == "status":
+        result = protection_status()
+        print(json.dumps(result, indent=2))
 
 
 def _run_watch(args: argparse.Namespace) -> None:
