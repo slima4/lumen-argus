@@ -240,24 +240,39 @@ def read_env_file() -> list[tuple[str, str, str]]:
 
 
 def write_env_file(entries: list[tuple[str, str, str]]) -> None:
-    """Write env vars to ~/.lumen-argus/env.
+    """Write env vars to ~/.lumen-argus/env atomically.
 
-    File gets 0o600 permissions (owner-only) because it is sourced by the
-    shell — a writable env file is an arbitrary code execution vector.
+    Uses write-to-temp-then-rename to prevent corruption if the process
+    is killed mid-write (SIGKILL, OOM).  File gets 0o600 permissions
+    because it is sourced by the shell — a writable env file is an
+    arbitrary code execution vector.
 
     Args:
         entries: list of (var_name, value, client_id) tuples.
     """
+    import tempfile
+
     os.makedirs(_ARGUS_DIR, mode=0o700, exist_ok=True)
     lines = []
     for var_name, value, client_id in entries:
         lines.append("export %s=%s  %s client=%s" % (var_name, value, MANAGED_TAG, client_id))
     try:
-        with open(_ENV_FILE, "w", encoding="utf-8") as f:
-            if lines:
-                f.write("\n".join(lines))
-                f.write("\n")
-        os.chmod(_ENV_FILE, 0o600)
+        # Write to temp file in same directory, then atomic rename
+        fd, tmp_path = tempfile.mkstemp(dir=_ARGUS_DIR, prefix=".env.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                if lines:
+                    f.write("\n".join(lines))
+                    f.write("\n")
+            os.chmod(tmp_path, 0o600)
+            os.rename(tmp_path, _ENV_FILE)
+        except BaseException:
+            # Clean up temp file on any failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         log.info("env file written: %d var(s)", len(lines))
     except OSError as e:
         log.error("could not write env file: %s", e, exc_info=True)
@@ -358,14 +373,8 @@ def disable_protection() -> dict[str, object]:
 
     Returns status dict.
     """
-    os.makedirs(_ARGUS_DIR, mode=0o700, exist_ok=True)
-    try:
-        with open(_ENV_FILE, "w", encoding="utf-8") as f:
-            f.write("")
-        os.chmod(_ENV_FILE, 0o600)
-        log.info("protection disabled: env file truncated")
-    except OSError as e:
-        log.error("could not truncate env file: %s", e, exc_info=True)
+    # Write empty file atomically via write_env_file
+    write_env_file([])
     return {"enabled": False, "env_file": _ENV_FILE, "env_vars_set": 0}
 
 

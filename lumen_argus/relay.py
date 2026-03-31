@@ -90,6 +90,7 @@ class ArgusRelay:
         health_timeout: int = 1,
         queue_timeout: int = 2,
         timeout: int = 120,
+        max_connections: int = 20,
     ):
         self.bind = bind
         self.port = port
@@ -100,6 +101,7 @@ class ArgusRelay:
         self.health_timeout = health_timeout
         self.queue_timeout = queue_timeout
         self.timeout = timeout
+        self.max_connections = max_connections
 
         self.state = RelayState.STARTING
         self.start_time = time.monotonic()
@@ -111,17 +113,18 @@ class ArgusRelay:
         self._site: web.TCPSite | None = None
         self._health_task: asyncio.Task[Any] | None = None
         self._healthy_event = asyncio.Event()
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     # --- Lifecycle ---
 
     async def start(self) -> None:
         """Start the relay server and health checker."""
         self._engine_session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(limit=20),
+            connector=aiohttp.TCPConnector(limit=self.max_connections),
             auto_decompress=False,
         )
         self._upstream_session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(limit=20),
+            connector=aiohttp.TCPConnector(limit=self.max_connections),
             auto_decompress=False,
         )
 
@@ -216,9 +219,19 @@ class ArgusRelay:
     async def forward(self, request: web.Request) -> web.StreamResponse:
         """Forward a request based on current engine state."""
         request_id = next(_request_counter)
+        request_id_str = "relay-%d" % request_id
         path = request.path_qs
         method = request.method
         body = await request.read()
+
+        # Propagate client IP and request ID for cross-process tracing
+        existing_xff = request.headers.get("X-Forwarded-For", "")
+        relay_ip = request.remote or "127.0.0.1"
+        xff = "%s, %s" % (existing_xff, relay_ip) if existing_xff else relay_ip
+        extra_headers = {
+            "X-Forwarded-For": xff,
+            "X-Request-ID": request_id_str,
+        }
 
         # During startup, wait for engine to become healthy
         if self.state == RelayState.STARTING:
@@ -231,16 +244,29 @@ class ArgusRelay:
         if self.state == RelayState.HEALTHY:
             try:
                 return await self._forward_via(
-                    self._engine_session, "%s%s" % (self.engine_url, path), method, body, request, request_id, "engine"
+                    self._engine_session,
+                    "%s%s" % (self.engine_url, path),
+                    method,
+                    body,
+                    request,
+                    request_id,
+                    "engine",
+                    extra_headers=extra_headers,
                 )
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                log.warning("#%d engine forwarding failed: %s", request_id, e)
-                self._transition(RelayState.UNHEALTHY)
+                # Don't flip state on a single request failure — the
+                # health checker is the authority on engine state.
+                # Trigger an immediate check and fall through to
+                # fail_mode for THIS request only.
+                log.warning("#%d engine forwarding failed: %s — applying fail_mode for this request", request_id, e)
+                task = asyncio.ensure_future(self._check_engine())
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
 
-        # Engine unhealthy — apply fail_mode policy
+        # Engine unavailable (unhealthy or single request failure) — apply fail_mode
         if self.fail_mode == "open":
             log.info("#%d forwarding direct to upstream (engine down, fail-open)", request_id)
-            return await self._forward_direct(request_id, method, path, body, request)
+            return await self._forward_direct(request_id, method, path, body, request, extra_headers)
 
         log.info("#%d returning 503 (engine down, fail-closed)", request_id)
         return web.json_response(
@@ -255,6 +281,7 @@ class ArgusRelay:
         path: str,
         body: bytes,
         request: web.Request,
+        extra_headers: dict[str, str] | None = None,
     ) -> web.StreamResponse:
         """Forward request directly to upstream LLM provider (fail-open)."""
         headers_dict = {k.lower(): v for k, v in request.headers.items()}
@@ -273,6 +300,7 @@ class ArgusRelay:
                 "direct:%s" % provider,
                 host=host,
                 ssl=None if use_ssl else False,
+                extra_headers=extra_headers,
             )
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             log.error("#%d direct upstream failed: %s", request_id, e)
@@ -292,6 +320,7 @@ class ArgusRelay:
         via: str,
         host: str = "",
         ssl: Any = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> web.StreamResponse:
         """Forward request via a session and relay the response (buffered or SSE)."""
         if session is None:
@@ -300,6 +329,8 @@ class ArgusRelay:
         fwd_headers = _build_forward_headers(request, body)
         if host:
             fwd_headers["Host"] = host
+        if extra_headers:
+            fwd_headers.update(extra_headers)
 
         kwargs: dict[str, Any] = {
             "data": body,

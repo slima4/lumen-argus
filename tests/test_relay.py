@@ -391,5 +391,162 @@ class TestRelayConfig(unittest.TestCase):
         self.assertEqual(c.engine.port, 8090)
 
 
+class TestRelayWithRealEngine(unittest.TestCase):
+    """Full integration: relay → real AsyncArgusProxy engine → mock upstream."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+
+        cls.upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockUpstreamHandler)
+        cls.upstream.daemon_threads = True
+        cls.upstream_port = cls.upstream.server_address[1]
+        threading.Thread(target=cls.upstream.serve_forever, daemon=True).start()
+        cls.tmpdir = tempfile.mkdtemp()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.upstream.shutdown()
+
+    def test_relay_to_real_engine_forwards_and_scans(self):
+        """Relay → real engine → upstream. Engine should scan and forward."""
+        from lumen_argus.async_proxy import AsyncArgusProxy
+        from lumen_argus.audit import AuditLogger
+        from lumen_argus.display import TerminalDisplay
+        from lumen_argus.pipeline import ScannerPipeline
+        from lumen_argus.provider import ProviderRouter
+
+        engine_port = free_port()
+        relay_port = free_port()
+        upstreams = {"anthropic": "http://127.0.0.1:%d" % self.upstream_port}
+
+        engine = AsyncArgusProxy(
+            bind="127.0.0.1",
+            port=engine_port,
+            pipeline=ScannerPipeline(default_action="alert", action_overrides={"secrets": "block"}),
+            router=ProviderRouter(upstreams=upstreams),
+            audit=AuditLogger(log_dir=self.tmpdir),
+            display=TerminalDisplay(no_color=True),
+        )
+
+        relay = ArgusRelay(
+            bind="127.0.0.1",
+            port=relay_port,
+            engine_url="http://127.0.0.1:%d" % engine_port,
+            fail_mode="open",
+            router=ProviderRouter(upstreams=upstreams),
+            health_interval=0.5,
+            health_timeout=1,
+            queue_timeout=3,
+            timeout=10,
+        )
+
+        async def _test():
+            await engine.start()
+            await relay.start()
+            await asyncio.sleep(1)  # wait for health check
+            self.assertEqual(relay.state, RelayState.HEALTHY)
+            try:
+                # Clean request — should pass through engine and reach upstream
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        "http://127.0.0.1:%d/v1/messages" % relay_port,
+                        data=json.dumps(
+                            {
+                                "model": "claude-opus-4-6",
+                                "messages": [{"role": "user", "content": "hello"}],
+                                "max_tokens": 10,
+                            }
+                        ).encode(),
+                        headers={
+                            "Content-Type": "application/json",
+                            "x-api-key": "test-key",
+                            "anthropic-version": "2024-01-01",
+                        },
+                    ) as resp:
+                        self.assertEqual(resp.status, 200)
+                        data = await resp.json()
+                        self.assertEqual(data["type"], "message")
+
+                # Request with secret — engine should block it
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        "http://127.0.0.1:%d/v1/messages" % relay_port,
+                        data=json.dumps(
+                            {
+                                "model": "claude-opus-4-6",
+                                "messages": [{"role": "user", "content": "key: AKIAIOSFODNN7EXAMPLE"}],
+                                "max_tokens": 10,
+                            }
+                        ).encode(),
+                        headers={
+                            "Content-Type": "application/json",
+                            "x-api-key": "test-key",
+                            "anthropic-version": "2024-01-01",
+                        },
+                    ) as resp:
+                        # Engine blocks with 400
+                        self.assertEqual(resp.status, 400)
+            finally:
+                await relay.stop()
+                await engine.stop()
+
+        asyncio.run(_test())
+
+    def test_relay_and_engine_health_endpoints(self):
+        """Relay /health shows engine state, engine /health returns ready."""
+        from lumen_argus.async_proxy import AsyncArgusProxy
+        from lumen_argus.audit import AuditLogger
+        from lumen_argus.display import TerminalDisplay
+        from lumen_argus.pipeline import ScannerPipeline
+        from lumen_argus.provider import ProviderRouter
+
+        engine_port = free_port()
+        relay_port = free_port()
+        upstreams = {"anthropic": "http://127.0.0.1:%d" % self.upstream_port}
+
+        engine = AsyncArgusProxy(
+            bind="127.0.0.1",
+            port=engine_port,
+            pipeline=ScannerPipeline(default_action="alert"),
+            router=ProviderRouter(upstreams=upstreams),
+            audit=AuditLogger(log_dir=self.tmpdir),
+            display=TerminalDisplay(no_color=True),
+        )
+
+        relay = ArgusRelay(
+            bind="127.0.0.1",
+            port=relay_port,
+            engine_url="http://127.0.0.1:%d" % engine_port,
+            fail_mode="open",
+            health_interval=0.5,
+            health_timeout=1,
+            queue_timeout=3,
+            timeout=10,
+        )
+
+        async def _test():
+            await engine.start()
+            await relay.start()
+            await asyncio.sleep(1)
+            try:
+                # Relay health should show engine healthy
+                async with aiohttp.ClientSession() as session:
+                    async with session.get("http://127.0.0.1:%d/health" % relay_port) as resp:
+                        data = await resp.json()
+                        self.assertEqual(data["engine"], "healthy")
+
+                # Engine health should return "ready"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get("http://127.0.0.1:%d/health" % engine_port) as resp:
+                        data = await resp.json()
+                        self.assertEqual(data["status"], "ready")
+            finally:
+                await relay.stop()
+                await engine.stop()
+
+        asyncio.run(_test())
+
+
 if __name__ == "__main__":
     unittest.main()

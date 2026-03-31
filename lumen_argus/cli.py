@@ -813,6 +813,7 @@ def main(argv: list[str] | None = None) -> None:
             health_timeout=config.relay.health_check_timeout,
             queue_timeout=config.relay.queue_on_startup,
             timeout=config.proxy.timeout,
+            max_connections=config.proxy.max_connections,
         )
         log.info("combined mode: relay :%d → engine :%d (fail_mode=%s)", relay_port, port, relay_fail_mode)
 
@@ -1448,6 +1449,7 @@ def _run_relay(args: argparse.Namespace) -> None:
         health_timeout=config.relay.health_check_timeout,
         queue_timeout=config.relay.queue_on_startup,
         timeout=config.proxy.timeout,
+        max_connections=config.proxy.max_connections,
     )
 
     async def _run() -> None:
