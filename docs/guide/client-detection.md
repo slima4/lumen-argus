@@ -145,12 +145,25 @@ The setup wizard:
 
 ### What gets modified
 
-**CLI tools** (binary, pip, npm, brew, Neovim) get an export line appended to
-your shell profile:
+The setup wizard uses a **two-layer approach** for toggleable protection:
+
+**1. Shell profile** — a source block is written once and never touched again:
+
+```bash
+# In your .zshrc / .bashrc (written by lumen-argus setup):
+# lumen-argus:begin
+[ -f "$HOME/.lumen-argus/env" ] && source "$HOME/.lumen-argus/env"
+# lumen-argus:end
+```
+
+**2. Env file** — the actual env vars are written to `~/.lumen-argus/env`:
 
 ```bash
 export OPENAI_BASE_URL=http://localhost:8080  # lumen-argus:managed client=aider
+export ANTHROPIC_BASE_URL=http://localhost:8080  # lumen-argus:managed client=claude_code
 ```
+
+This separation lets the tray app toggle protection by writing or truncating the env file, without ever touching your shell profile.
 
 **IDE extensions** (VS Code, JetBrains) get their proxy setting updated in
 `settings.json`:
@@ -161,14 +174,8 @@ export OPENAI_BASE_URL=http://localhost:8080  # lumen-argus:managed client=aider
 }
 ```
 
-**Windows** uses PowerShell syntax:
-
-```powershell
-$env:OPENAI_BASE_URL = "http://localhost:8080"  # lumen-argus:managed client=aider
-```
-
-Every line is tagged with `# lumen-argus:managed` for clean identification and
-removal.
+Every managed line is tagged with `# lumen-argus:managed` for clean identification and
+removal. The env file is secured with `0o600` permissions (owner-only) because it is sourced by the shell.
 
 ### Modes
 
@@ -200,8 +207,7 @@ To revert everything:
 lumen-argus setup --undo
 ```
 
-This removes all `# lumen-argus:managed` tagged lines from shell profiles and
-restores IDE settings from backups.
+This removes source blocks and managed lines from shell profiles, truncates the env file, and restores IDE settings from backups.
 
 ---
 
@@ -294,6 +300,42 @@ system service that starts on login:
     ```
 
 Logs go to `~/.lumen-argus/logs/watch.log` (launchd) or the journal (systemd).
+
+---
+
+## Protection Toggle
+
+The `protection` command provides a VPN-like toggle for the tray app (or CLI):
+
+```bash
+# Enable — write all tool env vars to ~/.lumen-argus/env
+lumen-argus protection enable
+
+# Disable — truncate the env file (tools connect directly to providers)
+lumen-argus protection disable
+
+# Check status (JSON output for tray app consumption)
+lumen-argus protection status
+```
+
+Output:
+
+```json
+{
+  "enabled": true,
+  "env_file": "/Users/you/.lumen-argus/env",
+  "env_vars_set": 7
+}
+```
+
+**How it works:**
+
+- `enable` writes env vars for ALL CLI tools (not just installed ones) to `~/.lumen-argus/env`
+- `disable` truncates the file to empty — new terminal sessions connect directly
+- Existing terminal sessions are not affected until restarted (inherent OS limitation)
+- For instant effect on running sessions, combine with passthrough mode (see [Proxy Guide](proxy.md#passthrough-mode))
+
+The env file uses atomic writes (temp file + rename) and file locking (`fcntl.flock`) to prevent corruption from concurrent access.
 
 ---
 

@@ -282,6 +282,143 @@ Settings that take effect on next shutdown:
 
 ---
 
+## Passthrough Mode
+
+The proxy supports an `active`/`passthrough` mode toggle for disabling inspection without stopping the proxy:
+
+```bash
+# Disable inspection (forward everything without scanning)
+curl -X PUT localhost:8081/api/v1/config \
+  -H "Content-Type: application/json" \
+  -d '{"proxy.mode": "passthrough"}'
+
+# Re-enable inspection
+curl -X PUT localhost:8081/api/v1/config \
+  -H "Content-Type: application/json" \
+  -d '{"proxy.mode": "active"}'
+```
+
+In passthrough mode:
+
+- All requests are forwarded without scanning (no findings, no blocking)
+- Audit trail still logs requests with `action=pass`
+- MCP scanning, response scanning, and WebSocket frame scanning are all skipped
+- `GET /api/v1/status` includes `"mode": "active"` or `"mode": "passthrough"`
+- SSE emits a `mode-changed` event on transition
+- A `mode_changed` finding (severity=warning) is recorded when switching to passthrough
+
+The mode is persisted in the SQLite config overrides — it survives proxy restarts.
+
+!!! warning "No auth required"
+    Any process that can reach the dashboard API can change the mode. This will be gated on auth/RBAC when available.
+
+---
+
+## Internal Fail-Open
+
+The proxy never returns 5xx to an AI tool because of an internal scanning bug. All scanning paths are wrapped in try/except:
+
+- **Pipeline scan failure** → request forwarded unscanned, `scan_error` finding logged (severity=critical)
+- **MCP detection failure** → MCP scanning skipped, request forwarded normally
+- **MCP argument scan failure** → arguments not scanned, request forwarded
+- **WebSocket frame scan failure** → frame relayed without scanning
+- **Response scan failure** → response returned unmodified (already had try/except)
+
+A spike in `scan_error` findings is a clear signal that a detector or rule has a bug.
+
+---
+
+## Relay + Engine Architecture
+
+For fault isolation, the proxy can run as two separate processes:
+
+```
+AI Tool → Relay (:8080) → Engine (:8090) → Upstream LLM Provider
+                ↓ (engine down, fail-open)
+                └──────────────────────────→ Upstream LLM Provider
+```
+
+- **Relay** (port 8080): lightweight HTTP forwarder, ~400 lines, no scanning imports, near-zero crash risk
+- **Engine** (port 8090): full inspection pipeline, rules, findings, dashboard — this is where bugs happen
+
+### Three runtime modes
+
+```bash
+# Separate processes (tray app spawns both)
+lumen-argus engine --port 8090
+lumen-argus relay --port 8080 --engine http://localhost:8090 --fail-mode open
+
+# Combined in one process
+lumen-argus serve --engine-port 8090 --fail-mode open
+
+# Standard (no relay, backwards compatible)
+lumen-argus serve
+```
+
+### How the relay works
+
+The relay has a 3-state machine:
+
+| State | Behavior |
+|-------|----------|
+| **STARTING** | Queue requests for `queue_on_startup` seconds, then apply fail_mode |
+| **HEALTHY** | Forward all traffic to engine |
+| **UNHEALTHY** | Apply fail_mode policy |
+
+A background task health-checks the engine every `health_check_interval` seconds via `GET /health`. The engine returns 503 while its pipeline is loading ("starting"), then 200 when ready ("ready"). The relay only marks the engine as healthy on 200.
+
+### Fail modes
+
+| Engine state | `fail_mode` | Relay behavior | Tool experience |
+|---|---|---|---|
+| Healthy | any | Forward via engine | Normal (inspected) |
+| Unhealthy | `open` | Forward directly to upstream provider | Normal (uninspected) |
+| Unhealthy | `closed` | Return 503 | Request fails |
+| Starting | any | Queue briefly, then apply fail_mode | Brief delay |
+
+Default: `open` (developer tools keep working even if the engine crashes).
+
+### Relay health endpoint
+
+```
+GET http://localhost:8080/health
+```
+
+```json
+{"status": "ok", "engine": "healthy", "fail_mode": "open", "uptime": 42.1}
+```
+
+### Configuration
+
+```yaml
+relay:
+  port: 8080
+  fail_mode: open
+  engine_url: http://localhost:8090
+  health_check_interval: 2
+  health_check_timeout: 1
+  queue_on_startup: 2
+  timeout: 150
+
+engine:
+  port: 8090
+```
+
+The relay timeout (150s) is intentionally higher than the engine timeout (120s) to account for scanning overhead.
+
+### SIGHUP reload
+
+Both relay and engine support `kill -HUP <pid>` for config reload:
+
+- **Engine**: reloads rules, allowlists, detectors, timeouts, port/bind, mode
+- **Relay**: reloads fail_mode, engine_url, health check intervals, timeout
+
+### Request tracing
+
+The relay adds `X-Request-ID: relay-N` and `X-Forwarded-For` headers when forwarding to the engine. This enables correlating logs across the two processes.
+
+---
+
 ## Security Model
 
 !!! info "Localhost only"
