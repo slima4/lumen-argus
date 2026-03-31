@@ -617,6 +617,54 @@ class TestDetectedClientDict(unittest.TestCase):
         self.assertEqual(d["client_id"], "aider")
         self.assertTrue(d["installed"])
 
+    def test_to_dict_includes_routing_active(self):
+        c = DetectedClient(client_id="aider", installed=True, routing_active=True)
+        d = c.to_dict()
+        self.assertTrue(d["routing_active"])
+
+    def test_routing_active_defaults_false(self):
+        c = DetectedClient(client_id="aider", installed=True)
+        self.assertFalse(c.routing_active)
+
+
+class TestReadEnvFileVars(unittest.TestCase):
+    """Test reading env file for routing_active check."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.env_file = os.path.join(self.tmpdir, "env")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_reads_var_names(self):
+        from lumen_argus.detect import _read_env_file_vars
+
+        with open(self.env_file, "w") as f:
+            f.write("export OPENAI_BASE_URL=http://localhost:8080  # lumen-argus:managed client=aider\n")
+            f.write("export ANTHROPIC_BASE_URL=http://localhost:8080  # lumen-argus:managed client=claude_code\n")
+        with patch("lumen_argus.detect.os.path.expanduser", return_value=self.env_file):
+            result = _read_env_file_vars()
+        self.assertIn("OPENAI_BASE_URL", result)
+        self.assertIn("ANTHROPIC_BASE_URL", result)
+        self.assertEqual(len(result), 2)
+
+    def test_empty_file_returns_empty_set(self):
+        from lumen_argus.detect import _read_env_file_vars
+
+        with open(self.env_file, "w") as f:
+            f.write("")
+        with patch("lumen_argus.detect.os.path.expanduser", return_value=self.env_file):
+            result = _read_env_file_vars()
+        self.assertEqual(result, set())
+
+    def test_missing_file_returns_empty_set(self):
+        from lumen_argus.detect import _read_env_file_vars
+
+        with patch("lumen_argus.detect.os.path.expanduser", return_value="/nonexistent/env"):
+            result = _read_env_file_vars()
+        self.assertEqual(result, set())
+
 
 class TestCIEnvironmentDetection(unittest.TestCase):
     """Test CI/CD environment detection via env vars."""

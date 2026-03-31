@@ -291,6 +291,7 @@ class DetectedClient:
     proxy_config_type: str = ""  # ProxyConfigType value
     setup_instructions: str = ""
     website: str = ""
+    routing_active: bool = False  # env var present in ~/.lumen-argus/env
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -699,6 +700,31 @@ def _detect_version(client: ClientDef, detected: DetectedClient) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Env file reading (for routing_active)
+# ---------------------------------------------------------------------------
+
+
+def _read_env_file_vars() -> set[str]:
+    """Read ~/.lumen-argus/env and return the set of env var names present."""
+    env_file = os.path.expanduser("~/.lumen-argus/env")
+    if not os.path.isfile(env_file):
+        return set()
+    result: set[str] = set()
+    try:
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                m = re.match(r"export\s+(\w+)=\S+", line)
+                if m:
+                    result.add(m.group(1))
+    except OSError:
+        log.debug("could not read env file for routing_active check")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Shell profile scanning
 # ---------------------------------------------------------------------------
 
@@ -875,9 +901,19 @@ def detect_installed_clients(
     shell_env = _scan_shell_profiles(proxy_url)
     settings_cache = _build_settings_cache()
 
+    # Read env file once for routing_active check
+    env_file_vars = _read_env_file_vars()
+
     results = []
     for client in clients_to_scan:
         detected = _detect_single_client(client, shell_env, proxy_url, include_versions, settings_cache)
+        # Check routing_active: env var present in ~/.lumen-argus/env
+        if detected.installed and client.proxy_config.config_type == ProxyConfigType.ENV_VAR:
+            pc = client.proxy_config
+            if pc.env_var and pc.env_var in env_file_vars:
+                detected.routing_active = True
+            elif pc.alt_config and pc.alt_config.env_var and pc.alt_config.env_var in env_file_vars:
+                detected.routing_active = True
         results.append(detected)
 
     total_detected = sum(1 for r in results if r.installed)
