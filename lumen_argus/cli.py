@@ -519,7 +519,7 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(1)
         return
 
-    if args.command in ("scan", "logs", "rules", "mcp", "clients", "detect", "setup", "watch"):
+    if args.command in ("scan", "logs", "rules", "mcp", "clients", "detect", "setup", "watch", "protection", "relay"):
         _setup_minimal_logging()
         if args.command == "scan":
             _run_scan(args)
