@@ -130,7 +130,7 @@ async def _handle_health(request: web.Request) -> web.Response:
     """Respond to /health endpoint."""
     server = request.app[_PROXY_KEY]
     data = {
-        "status": "ok",
+        "status": "ready",
         "version": __import__("lumen_argus").__version__,
         "uptime": round(time.monotonic() - server.start_time, 1),
         "requests": server.stats.total_requests,

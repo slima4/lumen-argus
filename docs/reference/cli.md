@@ -35,6 +35,8 @@ lumen-argus serve [OPTIONS]
 | `--log-level` | | `str` | `warning` | Console logging verbosity. Choices: `debug`, `info`, `warning`, `error`. |
 | `--no-color` | | `bool` | `false` | Disable ANSI color codes in terminal output. |
 | `--no-default-rules` | | `bool` | `false` | Skip auto-import of community rules on first run. |
+| `--engine-port` | | `int` | | Enable relay+engine combined mode. Engine binds to this port, relay on `--port`. |
+| `--fail-mode` | | `str` | `open` | Relay fail mode when engine is down. Choices: `open`, `closed`. |
 
 ### Examples
 
@@ -45,6 +47,9 @@ lumen-argus serve
 # Custom port and config
 lumen-argus serve --port 9090 --config /path/to/config.yaml
 
+# Combined relay+engine mode
+lumen-argus serve --port 8080 --engine-port 8090 --fail-mode open
+
 # JSON output for log aggregation
 lumen-argus serve --format json --log-level info
 
@@ -54,6 +59,69 @@ lumen-argus serve --log-level debug --no-color
 
 !!! note "Bind address"
     The proxy binds to `127.0.0.1` by default. Use `--host 0.0.0.0` for Docker containers. Non-loopback binds log a warning. The `--host` flag overrides `proxy.bind` and `dashboard.bind` simultaneously.
+
+---
+
+## `relay`
+
+Run the lightweight relay process for fault-isolated deployments. The relay forwards all traffic to the engine and applies fail-mode policy when the engine is down.
+
+```bash
+lumen-argus relay [OPTIONS]
+```
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--port` | `-p` | `int` | `8080` | Relay listening port. |
+| `--host` | `-H` | `str` | `127.0.0.1` | Bind address. |
+| `--engine` | | `str` | `http://localhost:8090` | Engine URL. |
+| `--fail-mode` | | `str` | `open` | `open` = forward direct to upstream when engine down. `closed` = return 503. |
+| `--config` | `-c` | `str` | | Config YAML path. |
+| `--log-level` | | `str` | `info` | Logging verbosity. |
+
+```bash
+lumen-argus relay --port 8080 --engine http://localhost:8090 --fail-mode open
+```
+
+---
+
+## `engine`
+
+Run the full inspection engine on an internal port. Equivalent to `serve` with a different default port.
+
+```bash
+lumen-argus engine [OPTIONS]
+```
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--port` | `-p` | `int` | `8090` | Engine listening port. |
+| `--host` | `-H` | `str` | `127.0.0.1` | Bind address. |
+| `--config` | `-c` | `str` | | Config YAML path. |
+| `--log-dir` | | `str` | | Audit log directory. |
+| `--log-level` | | `str` | `warning` | Logging verbosity. |
+| `--no-default-rules` | | `bool` | `false` | Skip auto-import of community rules. |
+
+```bash
+lumen-argus engine --port 8090
+```
+
+---
+
+## `protection`
+
+Toggle proxy routing on/off. Used by the tray app for the "Enable/Disable Protection" toggle.
+
+```bash
+lumen-argus protection <enable|disable|status> [OPTIONS]
+```
+
+| Arg/Flag | Type | Description |
+|----------|------|-------------|
+| `action` | `str` | `enable`, `disable`, or `status`. |
+| `--proxy-url` | `str` | Proxy URL for `enable` (default: `http://localhost:8080`). |
+
+`enable` writes all ENV_VAR client env vars to `~/.lumen-argus/env`. `disable` truncates the file. `status` returns JSON with `enabled`, `env_file`, and `env_vars_set`.
 
 ---
 

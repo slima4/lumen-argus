@@ -407,6 +407,46 @@ mcp:
 
 ---
 
+## `relay`
+
+Configuration for the relay process in fault-isolated mode.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `relay.port` | `int` | `8080` | Relay listening port. |
+| `relay.fail_mode` | `str` | `open` | Action when engine is down. `open` = forward directly to upstream. `closed` = return 503. |
+| `relay.engine_url` | `str` | `http://localhost:8090` | Engine process URL. |
+| `relay.health_check_interval` | `int` | `2` | Seconds between engine health checks. |
+| `relay.health_check_timeout` | `int` | `1` | Seconds before a health check times out. |
+| `relay.queue_on_startup` | `int` | `2` | Seconds to buffer requests while engine starts. |
+
+```yaml title="Example"
+relay:
+  port: 8080
+  fail_mode: open
+  engine_url: http://localhost:8090
+  health_check_interval: 2
+  health_check_timeout: 1
+  queue_on_startup: 2
+```
+
+---
+
+## `engine`
+
+Configuration for the engine process in fault-isolated mode.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `engine.port` | `int` | `8090` | Engine listening port. |
+
+```yaml title="Example"
+engine:
+  port: 8090
+```
+
+---
+
 ## Full config example
 
 ```yaml

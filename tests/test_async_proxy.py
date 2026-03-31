@@ -374,7 +374,7 @@ class TestAsyncProxy(unittest.TestCase):
                     async with session.get("http://127.0.0.1:%d/health" % port) as resp:
                         self.assertEqual(resp.status, 200)
                         data = await resp.json()
-                        self.assertEqual(data["status"], "ok")
+                        self.assertEqual(data["status"], "ready")
                         self.assertIn("version", data)
                         self.assertIn("uptime", data)
 

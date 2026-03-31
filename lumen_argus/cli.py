@@ -308,6 +308,48 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip auto-import of community rules on first run",
     )
+    serve_parser.add_argument(
+        "--engine-port",
+        type=int,
+        default=None,
+        help="Enable relay+engine mode: engine binds to this port, relay on --port",
+    )
+    serve_parser.add_argument(
+        "--fail-mode",
+        type=str,
+        default=None,
+        choices=["open", "closed"],
+        help="Relay fail mode when engine is down (default: open)",
+    )
+
+    # relay subcommand — lightweight forwarder for fault isolation
+    relay_parser = subparsers.add_parser("relay", help="Run the relay (lightweight forwarder to engine)")
+    relay_parser.add_argument("--port", "-p", type=int, default=None, help="Relay port (default: 8080)")
+    relay_parser.add_argument("--host", "-H", type=str, default=None, help="Bind address")
+    relay_parser.add_argument("--engine", type=str, default=None, help="Engine URL (default: http://localhost:8090)")
+    relay_parser.add_argument(
+        "--fail-mode", type=str, default=None, choices=["open", "closed"], help="Fail mode (default: open)"
+    )
+    relay_parser.add_argument("--config", "-c", type=str, default=None, help="Config YAML path")
+    relay_parser.add_argument(
+        "--log-level", type=str, default="info", choices=["debug", "info", "warning", "error"], help="Log level"
+    )
+
+    # engine subcommand — full inspection pipeline on internal port
+    engine_parser = subparsers.add_parser("engine", help="Run the engine (inspection pipeline, internal port)")
+    engine_parser.add_argument("--port", "-p", type=int, default=None, help="Engine port (default: 8090)")
+    engine_parser.add_argument("--host", "-H", type=str, default=None, help="Bind address")
+    engine_parser.add_argument("--config", "-c", type=str, default=None, help="Config YAML path")
+    engine_parser.add_argument("--log-dir", type=str, default=None, help="Audit log directory")
+    engine_parser.add_argument("--no-color", action="store_true", help="Disable ANSI colors")
+    engine_parser.add_argument(
+        "--format", "-f", type=str, default="text", choices=["text", "json"], dest="output_format", help="Output format"
+    )
+    engine_parser.add_argument(
+        "--log-level", type=str, default="warning", choices=["debug", "info", "warning", "error"], help="Log level"
+    )
+    engine_parser.add_argument("--no-default-rules", action="store_true", help="Skip auto-import of community rules")
+
     # --- "scan" command ---
     scan_parser = subparsers.add_parser("scan", help="Scan files or stdin for secrets/PII (pre-commit hook)")
     scan_parser.add_argument("files", nargs="*", help="Files to scan (reads stdin if none)")
@@ -495,11 +537,25 @@ def main(argv: list[str] | None = None) -> None:
             _run_watch(args)
         elif args.command == "protection":
             _run_protection(args)
+        elif args.command == "relay":
+            _run_relay(args)
+        elif args.command == "engine":
+            # Engine = full proxy on engine port — fall through to serve path below
+            config = load_config(config_path=args.config)
+            if not args.port:
+                args.port = config.engine.port
+            # Set serve-only attributes that engine parser doesn't have
+            if not hasattr(args, "engine_port"):
+                args.engine_port = None
+            if not hasattr(args, "fail_mode"):
+                args.fail_mode = None
         else:
             _run_logs(args)
-        return
+            return
+        if args.command not in ("serve", "engine"):
+            return
 
-    # command == "serve"
+    # command == "serve" or "engine"
 
     # Configure logging — explicit handler setup instead of basicConfig()
     # to avoid silent no-op if any import triggered basicConfig earlier.
@@ -530,6 +586,13 @@ def main(argv: list[str] | None = None) -> None:
     port = args.port or config.proxy.port
     bind = args.host or config.proxy.bind
     audit_log_dir = args.log_dir or config.audit.log_dir
+
+    # Combined relay+engine mode: engine binds to --engine-port, relay on --port
+    engine_port = getattr(args, "engine_port", None)
+    relay_fail_mode = getattr(args, "fail_mode", None) or config.relay.fail_mode
+    if engine_port:
+        relay_port = port  # user-facing port goes to relay
+        port = engine_port  # engine binds to engine-port
 
     # Startup summary — always at INFO regardless of console level
     config_path_display = args.config or "~/.lumen-argus/config.yaml"
@@ -735,8 +798,28 @@ def main(argv: list[str] | None = None) -> None:
     # --- Async run loop ---
     import asyncio
 
+    # Combined mode: create relay if --engine-port was given
+    relay_instance = None
+    if engine_port:
+        from lumen_argus.relay import ArgusRelay
+
+        relay_instance = ArgusRelay(
+            bind=bind,
+            port=relay_port,
+            engine_url="http://%s:%d" % (bind, port),
+            fail_mode=relay_fail_mode,
+            router=router,
+            health_interval=config.relay.health_check_interval,
+            health_timeout=config.relay.health_check_timeout,
+            queue_timeout=config.relay.queue_on_startup,
+            timeout=config.proxy.timeout,
+        )
+        log.info("combined mode: relay :%d → engine :%d (fail_mode=%s)", relay_port, port, relay_fail_mode)
+
     async def _run_async() -> None:
         await server.start()
+        if relay_instance:
+            await relay_instance.start()
 
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
@@ -776,6 +859,9 @@ def main(argv: list[str] | None = None) -> None:
         if remaining and drain_timeout > 0:
             log.warning("shutdown: %d requests force-closed after %ds drain timeout", remaining, drain_timeout)
 
+        if relay_instance:
+            await relay_instance.drain(timeout=5)
+            await relay_instance.stop()
         await server.stop()
 
         uptime = time.monotonic() - start_time
@@ -1330,6 +1416,55 @@ def _run_protection(args: argparse.Namespace) -> None:
     elif args.action == "status":
         result = protection_status()
         print(json.dumps(result, indent=2))
+
+
+def _run_relay(args: argparse.Namespace) -> None:
+    """Execute the 'relay' subcommand — lightweight forwarder to engine."""
+    import asyncio
+    import signal
+
+    from lumen_argus.config import load_config
+    from lumen_argus.provider import ProviderRouter
+    from lumen_argus.relay import ArgusRelay
+
+    config = load_config(config_path=args.config)
+    bind = args.host or "127.0.0.1"
+    port = args.port or config.relay.port
+    engine_url = args.engine or config.relay.engine_url
+    fail_mode = getattr(args, "fail_mode", None) or config.relay.fail_mode
+    router = ProviderRouter(upstreams=config.upstreams)
+
+    # Configure logging
+    log_level = getattr(logging, args.log_level.upper())
+    logging.basicConfig(level=log_level, format="%(levelname)s %(name)s: %(message)s")
+
+    relay = ArgusRelay(
+        bind=bind,
+        port=port,
+        engine_url=engine_url,
+        fail_mode=fail_mode,
+        router=router,
+        health_interval=config.relay.health_check_interval,
+        health_timeout=config.relay.health_check_timeout,
+        queue_timeout=config.relay.queue_on_startup,
+        timeout=config.proxy.timeout,
+    )
+
+    async def _run() -> None:
+        await relay.start()
+        loop = asyncio.get_running_loop()
+        shutdown = asyncio.Event()
+        loop.add_signal_handler(signal.SIGINT, shutdown.set)
+        loop.add_signal_handler(signal.SIGTERM, shutdown.set)
+        await shutdown.wait()
+        await relay.drain(timeout=5)
+        await relay.stop()
+
+    try:
+        asyncio.run(_run())
+    except OSError as e:
+        print("Error: Could not bind relay to %s:%d — %s" % (bind, port, e), file=sys.stderr)
+        sys.exit(1)
 
 
 def _run_watch(args: argparse.Namespace) -> None:

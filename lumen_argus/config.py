@@ -210,6 +210,25 @@ PIPELINE_AVAILABLE_STAGES = _PIPELINE_STAGE_NAMES  # all stages are now implemen
 
 
 @dataclass
+class RelayConfig:
+    """Configuration for the relay process (fault-isolation mode)."""
+
+    port: int = 8080
+    fail_mode: str = "open"  # "open" or "closed"
+    engine_url: str = "http://localhost:8090"
+    health_check_interval: int = 2  # seconds between engine health checks
+    health_check_timeout: int = 1  # seconds before health check times out
+    queue_on_startup: int = 2  # seconds to buffer requests while engine starts
+
+
+@dataclass
+class EngineConfig:
+    """Configuration for the engine process (fault-isolation mode)."""
+
+    port: int = 8090
+
+
+@dataclass
 class Config:
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     default_action: str = "alert"
@@ -230,6 +249,8 @@ class Config:
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     websocket: WebSocketConfig = field(default_factory=WebSocketConfig)
+    relay: RelayConfig = field(default_factory=RelayConfig)
+    engine: EngineConfig = field(default_factory=EngineConfig)
     notifications: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -1078,6 +1099,28 @@ def _apply_config(config: Config, data: dict[str, Any]) -> None:
                             stage_cfg.min_decoded_length = int(stage_data["min_decoded_length"])
                         if "max_decoded_length" in stage_data:
                             stage_cfg.max_decoded_length = int(stage_data["max_decoded_length"])
+
+    # Relay config (fault-isolation mode)
+    relay_data = data.get("relay", {})
+    if isinstance(relay_data, dict):
+        if "port" in relay_data:
+            config.relay.port = int(relay_data["port"])
+        if "fail_mode" in relay_data:
+            config.relay.fail_mode = str(relay_data["fail_mode"])
+        if "engine_url" in relay_data:
+            config.relay.engine_url = str(relay_data["engine_url"])
+        if "health_check_interval" in relay_data:
+            config.relay.health_check_interval = int(relay_data["health_check_interval"])
+        if "health_check_timeout" in relay_data:
+            config.relay.health_check_timeout = int(relay_data["health_check_timeout"])
+        if "queue_on_startup" in relay_data:
+            config.relay.queue_on_startup = int(relay_data["queue_on_startup"])
+
+    # Engine config (fault-isolation mode)
+    engine_data = data.get("engine", {})
+    if isinstance(engine_data, dict):
+        if "port" in engine_data:
+            config.engine.port = int(engine_data["port"])
 
     # Notifications (optional — reconciled to DB on startup)
     notifications = data.get("notifications", [])

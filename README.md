@@ -49,6 +49,8 @@ lumen-argus sits between your AI tool and the provider, scanning every outbound 
 - **Notification channels** — webhook, email, Slack, Teams, PagerDuty, OpsGenie, Jira
 - **DB-backed rules engine** — import, export, toggle, and manage detection rules via CLI and dashboard. Aho-Corasick pre-filter scans 1,700+ rules in <50ms
 - **Pre-commit scanner** — catch secrets before they enter conversation history
+- **Relay + engine split** — fault-isolated two-process architecture; relay forwards when engine crashes (fail-open/closed)
+- **Protection toggle** — `lumen-argus protection enable/disable/status` for tray app integration
 - **Hot-reload** — update config via SIGHUP, no downtime
 - **Docker ready** — single command, data persists across upgrades
 
@@ -92,6 +94,22 @@ lumen-argus watch --install --auto-configure
 eval "$(lumen-argus detect --check-quiet 2>/dev/null)"
 # Or install automatically:
 lumen-argus setup  # offers to install the hook
+```
+
+**Fault-isolated mode** (relay + engine):
+
+```bash
+# Two separate processes — relay survives engine crashes
+lumen-argus engine --port 8090 &
+lumen-argus relay --port 8080 --engine http://localhost:8090 --fail-mode open
+
+# Or combined in one process
+lumen-argus serve --engine-port 8090 --fail-mode open
+
+# Toggle protection on/off (for tray app integration)
+lumen-argus protection enable
+lumen-argus protection disable
+lumen-argus protection status
 ```
 
 **Docker:**
