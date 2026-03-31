@@ -256,6 +256,46 @@ class TestAsyncProxy(unittest.TestCase):
 
         asyncio.run(_test())
 
+    def test_scan_error_fails_open(self):
+        """If pipeline.scan() throws, request should be forwarded (fail-open)."""
+        proxy, port = self._create_proxy()
+
+        async def _test():
+            async def _inner():
+                # Monkey-patch pipeline.scan to throw
+                original_scan = proxy.pipeline.scan
+                proxy.pipeline.scan = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("detector bug"))
+
+                # Secret that would normally be blocked — should be forwarded
+                status, data = await self._post(
+                    port,
+                    {
+                        "model": "claude-opus-4-6",
+                        "messages": [
+                            {"role": "user", "content": "My key: AKIAIOSFODNN7EXAMPLE"},
+                        ],
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(data["type"], "message")
+
+                # Restore and verify scanning works again
+                proxy.pipeline.scan = original_scan
+                status, _data = await self._post(
+                    port,
+                    {
+                        "model": "claude-opus-4-6",
+                        "messages": [
+                            {"role": "user", "content": "My key: AKIAIOSFODNN7EXAMPLE"},
+                        ],
+                    },
+                )
+                self.assertEqual(status, 400)  # scanning restored, should block
+
+            return await self._run_with_proxy(proxy, _inner)
+
+        asyncio.run(_test())
+
     def test_pii_alerted_but_forwarded(self):
         """PII with alert action should forward (not block)."""
         proxy, port = self._create_proxy()

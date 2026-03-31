@@ -304,7 +304,11 @@ async def _handle_websocket(request: web.Request, server: "AsyncArgusProxy") -> 
                             break
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             if server.mode != "passthrough":
-                                findings = server.ws_scanner.scan_outbound_frame(msg.data)
+                                try:
+                                    findings = server.ws_scanner.scan_outbound_frame(msg.data)
+                                except Exception:
+                                    log.error("ws outbound scan failed (fail-open)", exc_info=True)
+                                    findings = []
                             else:
                                 findings = []
                             frames_sent += 1
@@ -332,7 +336,11 @@ async def _handle_websocket(request: web.Request, server: "AsyncArgusProxy") -> 
                             break
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             if server.mode != "passthrough":
-                                findings = server.ws_scanner.scan_inbound_frame(msg.data)
+                                try:
+                                    findings = server.ws_scanner.scan_inbound_frame(msg.data)
+                                except Exception:
+                                    log.error("ws inbound scan failed (fail-open)", exc_info=True)
+                                    findings = []
                             else:
                                 findings = []
                             frames_received += 1
@@ -543,28 +551,49 @@ async def _do_forward(
 
         # Scan request body (CPU-bound — run in thread pool)
         elif body and len(body) <= server.max_body_size:
-            scan_result = await asyncio.to_thread(
-                server.pipeline.scan,
-                body,
-                provider,
-                model=model,
-                session=session,
-            )
-            log.debug(
-                "#%d scan: %d findings, action=%s, %.1fms",
-                request_id,
-                len(scan_result.findings),
-                scan_result.action,
-                scan_result.scan_duration_ms,
-            )
-            if span and hasattr(span, "set_attribute"):
-                span.set_attribute("findings.count", len(scan_result.findings))
-                span.set_attribute("action", scan_result.action)
-                span.set_attribute("scan.duration_ms", scan_result.scan_duration_ms)
-            if scan_result.action in ("block", "redact") and scan_result.findings:
-                types = ", ".join(f.type for f in scan_result.findings)
-                log.info(
-                    "#%d %s %s (%d findings)", request_id, scan_result.action.upper(), types, len(scan_result.findings)
+            try:
+                scan_result = await asyncio.to_thread(
+                    server.pipeline.scan,
+                    body,
+                    provider,
+                    model=model,
+                    session=session,
+                )
+                log.debug(
+                    "#%d scan: %d findings, action=%s, %.1fms",
+                    request_id,
+                    len(scan_result.findings),
+                    scan_result.action,
+                    scan_result.scan_duration_ms,
+                )
+                if span and hasattr(span, "set_attribute"):
+                    span.set_attribute("findings.count", len(scan_result.findings))
+                    span.set_attribute("action", scan_result.action)
+                    span.set_attribute("scan.duration_ms", scan_result.scan_duration_ms)
+                if scan_result.action in ("block", "redact") and scan_result.findings:
+                    types = ", ".join(f.type for f in scan_result.findings)
+                    log.info(
+                        "#%d %s %s (%d findings)",
+                        request_id,
+                        scan_result.action.upper(),
+                        types,
+                        len(scan_result.findings),
+                    )
+            except Exception:
+                log.error("#%d scan failed — forwarding request (fail-open)", request_id, exc_info=True)
+                scan_result = ScanResult(
+                    action="pass",
+                    findings=[
+                        Finding(
+                            detector="proxy",
+                            type="scan_error",
+                            severity="critical",
+                            location="pipeline",
+                            value_preview="scan failed — request forwarded unscanned",
+                            matched_value="",
+                            action="log",
+                        )
+                    ],
                 )
         elif len(body) > server.max_body_size:
             scan_result = ScanResult(
@@ -598,8 +627,11 @@ async def _do_forward(
         if body and server.mcp_scanner and server.mode != "passthrough":
             from lumen_argus.mcp.scanner import detect_mcp_method, detect_mcp_request
 
-            _mcp_method = detect_mcp_method(body)
-            _mcp_info = detect_mcp_request(body) if _mcp_method == "tools/call" else None
+            try:
+                _mcp_method = detect_mcp_method(body)
+                _mcp_info = detect_mcp_request(body) if _mcp_method == "tools/call" else None
+            except Exception:
+                log.error("#%d MCP detection failed (fail-open)", request_id, exc_info=True)
             if _mcp_info:
                 tool_name = _mcp_info["tool_name"]
                 log.debug("#%d MCP tools/call detected: %s", request_id, tool_name)
@@ -669,7 +701,11 @@ async def _do_forward(
                     return web.Response(body=block_body, status=400, content_type="application/json")
 
                 # Scan tool arguments
-                mcp_findings = server.mcp_scanner.scan_arguments(tool_name, _mcp_info["arguments"])
+                try:
+                    mcp_findings = server.mcp_scanner.scan_arguments(tool_name, _mcp_info["arguments"])
+                except Exception:
+                    log.error("#%d MCP argument scan failed (fail-open)", request_id, exc_info=True)
+                    mcp_findings = []
                 if mcp_findings:
                     scan_result.findings.extend(mcp_findings)
                     log.info("#%d MCP argument scan: %d finding(s) in '%s'", request_id, len(mcp_findings), tool_name)
