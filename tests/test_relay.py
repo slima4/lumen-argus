@@ -428,6 +428,7 @@ class TestRelayWithRealEngine(unittest.TestCase):
             audit=AuditLogger(log_dir=self.tmpdir),
             display=TerminalDisplay(no_color=True),
         )
+        engine.ready = True
 
         relay = ArgusRelay(
             bind="127.0.0.1",
@@ -513,6 +514,7 @@ class TestRelayWithRealEngine(unittest.TestCase):
             audit=AuditLogger(log_dir=self.tmpdir),
             display=TerminalDisplay(no_color=True),
         )
+        engine.ready = True
 
         relay = ArgusRelay(
             bind="127.0.0.1",

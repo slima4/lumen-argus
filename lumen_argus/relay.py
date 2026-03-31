@@ -171,6 +171,31 @@ class ArgusRelay:
             await asyncio.sleep(0.1)
         return self._active_requests
 
+    def reload(
+        self,
+        fail_mode: str | None = None,
+        engine_url: str | None = None,
+        health_interval: int | None = None,
+        health_timeout: int | None = None,
+        timeout: int | None = None,
+    ) -> None:
+        """Hot-reload relay configuration without restart."""
+        if fail_mode is not None and fail_mode in ("open", "closed"):
+            if self.fail_mode != fail_mode:
+                log.info("relay config: fail_mode %s → %s", self.fail_mode, fail_mode)
+            self.fail_mode = fail_mode
+        if engine_url is not None:
+            url = engine_url.rstrip("/")
+            if self.engine_url != url:
+                log.info("relay config: engine_url %s → %s", self.engine_url, url)
+            self.engine_url = url
+        if health_interval is not None:
+            self.health_interval = max(1, health_interval)
+        if health_timeout is not None:
+            self.health_timeout = max(1, health_timeout)
+        if timeout is not None:
+            self.timeout = max(1, timeout)
+
     # --- Health checker ---
 
     async def _health_loop(self) -> None:
@@ -220,6 +245,7 @@ class ArgusRelay:
         """Forward a request based on current engine state."""
         request_id = next(_request_counter)
         request_id_str = "relay-%d" % request_id
+        t0 = time.monotonic()
         path = request.path_qs
         method = request.method
         body = await request.read()
@@ -243,7 +269,7 @@ class ArgusRelay:
         # Try engine first when healthy
         if self.state == RelayState.HEALTHY:
             try:
-                return await self._forward_via(
+                resp = await self._forward_via(
                     self._engine_session,
                     "%s%s" % (self.engine_url, path),
                     method,
@@ -253,6 +279,9 @@ class ArgusRelay:
                     "engine",
                     extra_headers=extra_headers,
                 )
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                log.info("#%d %s %s %dms via engine", request_id, method, path, elapsed_ms)
+                return resp
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 # Don't flip state on a single request failure — the
                 # health checker is the authority on engine state.
@@ -266,9 +295,13 @@ class ArgusRelay:
         # Engine unavailable (unhealthy or single request failure) — apply fail_mode
         if self.fail_mode == "open":
             log.info("#%d forwarding direct to upstream (engine down, fail-open)", request_id)
-            return await self._forward_direct(request_id, method, path, body, request, extra_headers)
+            resp = await self._forward_direct(request_id, method, path, body, request, extra_headers)
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            log.info("#%d %s %s %dms via direct (fail-open)", request_id, method, path, elapsed_ms)
+            return resp
 
-        log.info("#%d returning 503 (engine down, fail-closed)", request_id)
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        log.info("#%d %s %s %dms → 503 (fail-closed)", request_id, method, path, elapsed_ms)
         return web.json_response(
             {"error": {"type": "service_unavailable", "message": "lumen-argus engine unavailable"}},
             status=503,

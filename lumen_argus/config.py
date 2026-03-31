@@ -219,6 +219,7 @@ class RelayConfig:
     health_check_interval: int = 2  # seconds between engine health checks
     health_check_timeout: int = 1  # seconds before health check times out
     queue_on_startup: int = 2  # seconds to buffer requests while engine starts
+    timeout: int = 150  # relay timeout (> proxy.timeout to account for scanning overhead)
 
 
 @dataclass
@@ -1104,23 +1105,41 @@ def _apply_config(config: Config, data: dict[str, Any]) -> None:
     relay_data = data.get("relay", {})
     if isinstance(relay_data, dict):
         if "port" in relay_data:
-            config.relay.port = int(relay_data["port"])
+            p = int(relay_data["port"])
+            if not 1 <= p <= 65535:
+                log.warning("relay.port %d out of range (1-65535), using default", p)
+            else:
+                config.relay.port = p
         if "fail_mode" in relay_data:
-            config.relay.fail_mode = str(relay_data["fail_mode"])
+            fm = str(relay_data["fail_mode"])
+            if fm not in ("open", "closed"):
+                log.warning("relay.fail_mode '%s' invalid (must be 'open' or 'closed'), using default", fm)
+            else:
+                config.relay.fail_mode = fm
         if "engine_url" in relay_data:
-            config.relay.engine_url = str(relay_data["engine_url"])
+            eu = str(relay_data["engine_url"])
+            if not eu.startswith(("http://", "https://")):
+                log.warning("relay.engine_url '%s' must start with http:// or https://, using default", eu)
+            else:
+                config.relay.engine_url = eu
         if "health_check_interval" in relay_data:
-            config.relay.health_check_interval = int(relay_data["health_check_interval"])
+            config.relay.health_check_interval = max(1, int(relay_data["health_check_interval"]))
         if "health_check_timeout" in relay_data:
-            config.relay.health_check_timeout = int(relay_data["health_check_timeout"])
+            config.relay.health_check_timeout = max(1, int(relay_data["health_check_timeout"]))
         if "queue_on_startup" in relay_data:
-            config.relay.queue_on_startup = int(relay_data["queue_on_startup"])
+            config.relay.queue_on_startup = max(0, int(relay_data["queue_on_startup"]))
+        if "timeout" in relay_data:
+            config.relay.timeout = max(1, int(relay_data["timeout"]))
 
     # Engine config (fault-isolation mode)
     engine_data = data.get("engine", {})
     if isinstance(engine_data, dict):
         if "port" in engine_data:
-            config.engine.port = int(engine_data["port"])
+            p = int(engine_data["port"])
+            if not 1 <= p <= 65535:
+                log.warning("engine.port %d out of range (1-65535), using default", p)
+            else:
+                config.engine.port = p
 
     # Notifications (optional — reconciled to DB on startup)
     notifications = data.get("notifications", [])

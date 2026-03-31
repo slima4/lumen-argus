@@ -37,6 +37,7 @@ _SOURCE_BLOCK_END = "# lumen-argus:end"
 # Env file — the tray app toggles this
 _ARGUS_DIR = os.path.expanduser("~/.lumen-argus")
 _ENV_FILE = os.path.join(_ARGUS_DIR, "env")
+_ENV_LOCK = os.path.join(_ARGUS_DIR, ".env.lock")
 
 # Backup directory
 _SETUP_DIR = os.path.join(_ARGUS_DIR, "setup")
@@ -215,6 +216,41 @@ def install_source_block(profile_path: str = "", dry_run: bool = False) -> Setup
 # ---------------------------------------------------------------------------
 
 
+class _env_file_lock:
+    """Context manager for exclusive access to the env file.
+
+    Uses ``fcntl.flock`` on Unix to prevent concurrent read-modify-write
+    races between the CLI and tray app.  No-op on Windows (the env file
+    is Unix-only anyway).
+    """
+
+    def __init__(self) -> None:
+        self._fd: int | None = None
+
+    def __enter__(self) -> "_env_file_lock":
+        os.makedirs(_ARGUS_DIR, mode=0o700, exist_ok=True)
+        try:
+            import fcntl
+
+            self._fd = os.open(_ENV_LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(self._fd, fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            # Windows or lock failure — proceed without lock
+            self._fd = None
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        if self._fd is not None:
+            try:
+                import fcntl
+
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+            except (ImportError, OSError):
+                pass
+            os.close(self._fd)
+            self._fd = None
+
+
 def read_env_file() -> list[tuple[str, str, str]]:
     """Read the env file and return list of (var_name, value, client_id) tuples."""
     if not os.path.isfile(_ENV_FILE):
@@ -286,19 +322,18 @@ def add_env_to_env_file(
 ) -> SetupChange | None:
     """Add an env var to ~/.lumen-argus/env.
 
+    Uses file locking to prevent concurrent read-modify-write races
+    between CLI and tray app.
+
     Returns SetupChange if added, None if already present.
     """
-    existing = read_env_file()
-
-    # Check if already set with same value
-    for ev, val, cid in existing:
-        if ev == var_name and val == value and cid == client_id:
-            log.info("already in env file: %s=%s (client=%s)", var_name, value, client_id)
-            return None
-
     export_line = "export %s=%s  %s client=%s" % (var_name, value, MANAGED_TAG, client_id)
 
     if dry_run:
+        existing = read_env_file()
+        for ev, val, cid in existing:
+            if ev == var_name and val == value and cid == client_id:
+                return None
         log.info("[dry-run] would add to env file: %s", export_line)
         return SetupChange(
             timestamp=now_iso(),
@@ -308,10 +343,19 @@ def add_env_to_env_file(
             detail=export_line,
         )
 
-    # Remove any existing entry for this var+client before adding
-    filtered = [(ev, val, cid) for ev, val, cid in existing if not (ev == var_name and cid == client_id)]
-    filtered.append((var_name, value, client_id))
-    write_env_file(filtered)
+    with _env_file_lock():
+        existing = read_env_file()
+
+        # Check if already set with same value
+        for ev, val, cid in existing:
+            if ev == var_name and val == value and cid == client_id:
+                log.info("already in env file: %s=%s (client=%s)", var_name, value, client_id)
+                return None
+
+        # Remove any existing entry for this var+client before adding
+        filtered = [(ev, val, cid) for ev, val, cid in existing if not (ev == var_name and cid == client_id)]
+        filtered.append((var_name, value, client_id))
+        write_env_file(filtered)
 
     return SetupChange(
         timestamp=now_iso(),

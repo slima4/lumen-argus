@@ -127,10 +127,15 @@ def _log_audit(
 
 
 async def _handle_health(request: web.Request) -> web.Response:
-    """Respond to /health endpoint."""
+    """Respond to /health endpoint.
+
+    Returns 200 when ready, 503 when still starting (pipeline loading).
+    The relay uses the HTTP status code to decide engine health.
+    """
     server = request.app[_PROXY_KEY]
+    ready = server.ready
     data = {
-        "status": "ready",
+        "status": "ready" if ready else "starting",
         "version": __import__("lumen_argus").__version__,
         "uptime": round(time.monotonic() - server.start_time, 1),
         "requests": server.stats.total_requests,
@@ -142,7 +147,7 @@ async def _handle_health(request: web.Request) -> web.Response:
             data.update(extra)
         except Exception:
             log.debug("health hook failed", exc_info=True)
-    return web.json_response(data)
+    return web.json_response(data, status=200 if ready else 503)
 
 
 async def _handle_metrics(request: web.Request) -> web.Response:
@@ -1220,6 +1225,7 @@ class AsyncArgusProxy:
         self.response_scanner: Any = None
         self.mcp_scanner: Any = None
         self.ws_scanner: Any = None  # WebSocketScanner, set by cli.py
+        self.ready: bool = False  # set True after pipeline is fully loaded
         self.ws_allowed_origins: list[str] = []  # set by cli.py
         self.mode: str = "active"  # "active" or "passthrough"
         self.client_session: aiohttp.ClientSession | None = None

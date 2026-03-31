@@ -365,8 +365,9 @@ class TestAsyncProxy(unittest.TestCase):
         asyncio.run(_test())
 
     def test_health_endpoint(self):
-        """GET /health should return 200 with status ok."""
+        """GET /health should return 200 with status ready."""
         proxy, port = self._create_proxy()
+        proxy.ready = True
 
         async def _test():
             async def _inner():
@@ -377,6 +378,23 @@ class TestAsyncProxy(unittest.TestCase):
                         self.assertEqual(data["status"], "ready")
                         self.assertIn("version", data)
                         self.assertIn("uptime", data)
+
+            return await self._run_with_proxy(proxy, _inner)
+
+        asyncio.run(_test())
+
+    def test_health_endpoint_starting(self):
+        """GET /health should return 503 with status starting when not ready."""
+        proxy, port = self._create_proxy()
+        # ready defaults to False — engine is still starting
+
+        async def _test():
+            async def _inner():
+                async with aiohttp.ClientSession() as session:
+                    async with session.get("http://127.0.0.1:%d/health" % port) as resp:
+                        self.assertEqual(resp.status, 503)
+                        data = await resp.json()
+                        self.assertEqual(data["status"], "starting")
 
             return await self._run_with_proxy(proxy, _inner)
 
