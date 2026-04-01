@@ -4,8 +4,8 @@ Uses stdlib-only HTTP clients and temp directories. Starts actual HTTP servers
 on random ports for integration tests.
 """
 
+import asyncio
 import http.client
-import io
 import json
 import os
 import shutil
@@ -23,7 +23,7 @@ from lumen_argus.dashboard.html import (
 )
 from lumen_argus.dashboard.server import (
     _SESSION_TIMEOUT,
-    DashboardServer,
+    AsyncDashboardServer,
 )
 from lumen_argus.dashboard.sse import SSEBroadcaster
 from lumen_argus.extensions import ExtensionRegistry
@@ -38,11 +38,16 @@ def _make_store(tmpdir):
 
 
 def _start_server(password="", store=None, extensions=None, audit_reader=None, config=None, sse_broadcaster=None):
-    """Start a DashboardServer on a random port. Returns (server, port)."""
+    """Start an AsyncDashboardServer on a random port in a background event loop.
+
+    Returns (server, port, loop, sse_broadcaster).
+    """
     port = _free_port()
     if extensions is None:
         extensions = ExtensionRegistry()
-    server = DashboardServer(
+    if sse_broadcaster is None:
+        sse_broadcaster = SSEBroadcaster(heartbeat_interval=9999)
+    server = AsyncDashboardServer(
         "127.0.0.1",
         port,
         store,
@@ -52,9 +57,20 @@ def _start_server(password="", store=None, extensions=None, audit_reader=None, c
         sse_broadcaster=sse_broadcaster,
         config=config,
     )
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True, name="test-dashboard")
     thread.start()
-    return server, port
+    asyncio.run_coroutine_threadsafe(sse_broadcaster.start(), loop).result(5)
+    asyncio.run_coroutine_threadsafe(server.start(), loop).result(5)
+    return server, port, loop, sse_broadcaster
+
+
+def _stop_server(server, loop, sse_broadcaster):
+    """Stop the async dashboard server and its event loop."""
+    asyncio.run_coroutine_threadsafe(server.stop(), loop).result(5)
+    asyncio.run_coroutine_threadsafe(sse_broadcaster.stop(), loop).result(5)
+    loop.call_soon_threadsafe(loop.stop)
 
 
 def _get(port, path, headers=None, follow_redirects=False):
@@ -201,47 +217,47 @@ class TestDashboardServer(unittest.TestCase):
         shutil.rmtree(cls.tmpdir, ignore_errors=True)
 
     def test_serves_html_on_root(self):
-        server, port = _start_server(store=self.store)
+        server, port, loop, sse = _start_server(store=self.store)
         try:
             status, headers, body = _get(port, "/")
             self.assertEqual(status, 200)
             self.assertIn("text/html", headers.get("content-type", ""))
             self.assertIn("</html>", body)
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_no_password_open_access(self):
-        server, port = _start_server(store=self.store)
+        server, port, loop, sse = _start_server(store=self.store)
         try:
             status, _, body = _get(port, "/api/v1/status")
             self.assertEqual(status, 200)
             data = json.loads(body)
             self.assertIn("version", data)
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_auth_password_required_redirects_to_login(self):
-        server, port = _start_server(password="hunter2", store=self.store)
+        server, port, loop, sse = _start_server(password="hunter2", store=self.store)
         try:
             # GET / without session should redirect to /login
             status, headers, _ = _get(port, "/")
             self.assertEqual(status, 302)
             self.assertIn("/login", headers.get("location", ""))
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_auth_api_returns_401_without_session(self):
-        server, port = _start_server(password="hunter2", store=self.store)
+        server, port, loop, sse = _start_server(password="hunter2", store=self.store)
         try:
             status, _, body = _get(port, "/api/v1/status")
             self.assertEqual(status, 401)
             data = json.loads(body)
             self.assertEqual(data["error"], "authentication_required")
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_auth_login_and_access(self):
-        server, port = _start_server(password="hunter2", store=self.store)
+        server, port, loop, sse = _start_server(password="hunter2", store=self.store)
         try:
             # Login
             status, _, session, csrf = _login(port, "hunter2")
@@ -256,19 +272,19 @@ class TestDashboardServer(unittest.TestCase):
             data = json.loads(body)
             self.assertEqual(data["status"], "operational")
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_auth_bad_password_redirects_with_error(self):
-        server, port = _start_server(password="hunter2", store=self.store)
+        server, port, loop, sse = _start_server(password="hunter2", store=self.store)
         try:
             status, headers, _, _ = _login(port, "wrong")
             self.assertEqual(status, 302)
             self.assertIn("error=1", headers.get("location", ""))
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_auth_logout(self):
-        server, port = _start_server(password="hunter2", store=self.store)
+        server, port, loop, sse = _start_server(password="hunter2", store=self.store)
         try:
             _, _, session, csrf = _login(port, "hunter2")
             cookie = "argus_session=%s; csrf_token=%s" % (session, csrf)
@@ -282,24 +298,23 @@ class TestDashboardServer(unittest.TestCase):
             status, _, _body = _get(port, "/api/v1/status", headers={"Cookie": cookie})
             self.assertEqual(status, 401)
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_session_expiry(self):
-        server, _port = _start_server(password="hunter2", store=self.store)
+        server, _port, loop, sse = _start_server(password="hunter2", store=self.store)
         try:
             session_id = server.create_session()
             self.assertTrue(server.validate_session(session_id))
 
             # Simulate expiry by backdating the session
-            with server._session_lock:
-                server._sessions[session_id] = time.monotonic() - _SESSION_TIMEOUT - 1
+            server._sessions[session_id] = time.monotonic() - _SESSION_TIMEOUT - 1
 
             self.assertFalse(server.validate_session(session_id))
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_csrf_double_submit_on_post(self):
-        server, port = _start_server(password="hunter2", store=self.store)
+        server, port, loop, sse = _start_server(password="hunter2", store=self.store)
         try:
             _, _, session, csrf = _login(port, "hunter2")
             cookie = "argus_session=%s; csrf_token=%s" % (session, csrf)
@@ -319,10 +334,10 @@ class TestDashboardServer(unittest.TestCase):
             )
             self.assertEqual(status, 200)
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_csrf_missing_header_rejected(self):
-        server, port = _start_server(password="hunter2", store=self.store)
+        server, port, loop, sse = _start_server(password="hunter2", store=self.store)
         try:
             _, _, session, csrf = _login(port, "hunter2")
             cookie = "argus_session=%s; csrf_token=%s" % (session, csrf)
@@ -341,10 +356,10 @@ class TestDashboardServer(unittest.TestCase):
             data = json.loads(body)
             self.assertEqual(data["error"], "csrf_validation_failed")
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_csrf_mismatched_token_rejected(self):
-        server, port = _start_server(password="hunter2", store=self.store)
+        server, port, loop, sse = _start_server(password="hunter2", store=self.store)
         try:
             _, _, session, csrf = _login(port, "hunter2")
             cookie = "argus_session=%s; csrf_token=%s" % (session, csrf)
@@ -362,11 +377,11 @@ class TestDashboardServer(unittest.TestCase):
             )
             self.assertEqual(status, 403)
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_csrf_exempt_on_get(self):
         """GET requests should not require CSRF validation."""
-        server, port = _start_server(password="hunter2", store=self.store)
+        server, port, loop, sse = _start_server(password="hunter2", store=self.store)
         try:
             _, _, session, _csrf = _login(port, "hunter2")
             cookie = "argus_session=%s" % session  # No csrf_token cookie
@@ -374,10 +389,10 @@ class TestDashboardServer(unittest.TestCase):
             status, _, _body = _get(port, "/api/v1/status", headers={"Cookie": cookie})
             self.assertEqual(status, 200)
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
     def test_security_headers(self):
-        server, port = _start_server(store=self.store)
+        server, port, loop, sse = _start_server(store=self.store)
         try:
             status, headers, _ = _get(port, "/")
             self.assertEqual(status, 200)
@@ -385,7 +400,7 @@ class TestDashboardServer(unittest.TestCase):
             self.assertEqual(headers.get("x-content-type-options"), "nosniff")
             self.assertIn("default-src", headers.get("content-security-policy", ""))
         finally:
-            server.shutdown()
+            _stop_server(server, loop, sse)
 
 
 # ---------------------------------------------------------------------------
@@ -429,7 +444,7 @@ class TestAPIEndpoints(unittest.TestCase):
 
         cls.config = Config(logging_config=LoggingConfig(log_dir=cls.log_dir))
 
-        cls.server, cls.port = _start_server(
+        cls.server, cls.port, cls.loop, cls.sse = _start_server(
             store=cls.store,
             audit_reader=cls.audit_reader,
             config=cls.config,
@@ -437,7 +452,7 @@ class TestAPIEndpoints(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        cls.server.shutdown()
+        _stop_server(cls.server, cls.loop, cls.sse)
         shutil.rmtree(cls.tmpdir, ignore_errors=True)
 
     def test_status(self):
@@ -579,11 +594,11 @@ class TestTierGating(unittest.TestCase):
     def setUpClass(cls):
         cls.tmpdir = tempfile.mkdtemp()
         cls.store = _make_store(cls.tmpdir)
-        cls.server, cls.port = _start_server(store=cls.store)
+        cls.server, cls.port, cls.loop, cls.sse = _start_server(store=cls.store)
 
     @classmethod
     def tearDownClass(cls):
-        cls.server.shutdown()
+        _stop_server(cls.server, cls.loop, cls.sse)
         shutil.rmtree(cls.tmpdir, ignore_errors=True)
 
     def test_post_notifications_channels_without_pro(self):
@@ -639,7 +654,7 @@ class TestExtensionHooks(unittest.TestCase):
     def test_register_and_get_dashboard_api(self):
         reg = ExtensionRegistry()
 
-        def my_handler(path, method, body, store, audit_reader):
+        async def my_handler(path, method, body, store, audit_reader):
             if path == "/api/v1/custom":
                 return 200, json.dumps({"custom": True}).encode()
             return None
@@ -660,7 +675,7 @@ class TestExtensionHooks(unittest.TestCase):
         self.assertEqual(reg.get_auth_providers(), [])
 
         class FakeAuthProvider:
-            def authenticate(self, headers):
+            async def authenticate(self, headers):
                 return {"user_id": "test"}
 
         provider = FakeAuthProvider()
@@ -700,7 +715,7 @@ class TestExtensionHooks(unittest.TestCase):
             store = _make_store(tmpdir)
             ext = ExtensionRegistry()
             ext.register_dashboard_css(".injected-class { display: block; }")
-            server, port = _start_server(store=store, extensions=ext)
+            server, port, loop, sse = _start_server(store=store, extensions=ext)
             try:
                 status, _, body = _get(port, "/")
                 self.assertEqual(status, 200)
@@ -710,7 +725,7 @@ class TestExtensionHooks(unittest.TestCase):
                 self.assertGreater(injected_pos, -1, "Injected CSS not found in HTML")
                 self.assertLess(injected_pos, style_end, "Injected CSS should appear before </style>")
             finally:
-                server.shutdown()
+                _stop_server(server, loop, sse)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -730,7 +745,7 @@ class TestExtensionHooks(unittest.TestCase):
                     }
                 ]
             )
-            server, port = _start_server(store=store, extensions=ext)
+            server, port, loop, sse = _start_server(store=store, extensions=ext)
             try:
                 status, _, body = _get(port, "/")
                 self.assertEqual(status, 200)
@@ -739,7 +754,7 @@ class TestExtensionHooks(unittest.TestCase):
                 self.assertGreater(js_pos, -1, "Injected JS not found in HTML")
                 self.assertLess(js_pos, body_end, "Injected JS should appear before </body>")
             finally:
-                server.shutdown()
+                _stop_server(server, loop, sse)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -750,13 +765,13 @@ class TestExtensionHooks(unittest.TestCase):
             store = _make_store(tmpdir)
             ext = ExtensionRegistry()
 
-            def pro_handler(path, method, body, store, audit_reader):
+            async def pro_handler(path, method, body, store, audit_reader):
                 if path == "/api/v1/status" and method == "GET":
                     return 200, json.dumps({"pro": True}).encode()
                 return None  # Fall through
 
             ext.register_dashboard_api(pro_handler)
-            server, port = _start_server(store=store, extensions=ext)
+            server, port, loop, sse = _start_server(store=store, extensions=ext)
             try:
                 # /api/v1/status intercepted by plugin
                 status, _, body = _get(port, "/api/v1/status")
@@ -770,7 +785,7 @@ class TestExtensionHooks(unittest.TestCase):
                 data = json.loads(body)
                 self.assertIn("total_findings", data)
             finally:
-                server.shutdown()
+                _stop_server(server, loop, sse)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -781,67 +796,60 @@ class TestExtensionHooks(unittest.TestCase):
 
 
 class TestSSEBroadcaster(unittest.TestCase):
-    def test_register_unregister(self):
+    def test_subscribe_unsubscribe(self):
         broadcaster = SSEBroadcaster(heartbeat_interval=9999)
-        buf = io.BytesIO()
         self.assertEqual(broadcaster.client_count, 0)
 
-        broadcaster.register(buf)
+        queue = broadcaster.subscribe()
         self.assertEqual(broadcaster.client_count, 1)
 
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
         self.assertEqual(broadcaster.client_count, 0)
 
     def test_broadcast_to_clients(self):
         broadcaster = SSEBroadcaster(heartbeat_interval=9999)
-        buf1 = io.BytesIO()
-        buf2 = io.BytesIO()
-        broadcaster.register(buf1)
-        broadcaster.register(buf2)
+        q1 = broadcaster.subscribe()
+        q2 = broadcaster.subscribe()
 
         broadcaster.broadcast("finding", {"id": 1, "type": "aws_key"})
 
-        for buf in (buf1, buf2):
-            output = buf.getvalue().decode("utf-8")
-            self.assertIn("event: finding", output)
-            self.assertIn('"id": 1', output)
+        for q in (q1, q2):
+            payload = q.get_nowait()
+            self.assertIn("event: finding", payload)
+            self.assertIn('"id": 1', payload)
 
-        broadcaster.unregister(buf1)
-        broadcaster.unregister(buf2)
+        broadcaster.unsubscribe(q1)
+        broadcaster.unsubscribe(q2)
 
-    def test_broadcast_removes_dead_clients(self):
+    def test_broadcast_drops_full_queue_clients(self):
         broadcaster = SSEBroadcaster(heartbeat_interval=9999)
+        q_good = broadcaster.subscribe()
+        q_full = broadcaster.subscribe()
 
-        class DeadWriter:
-            def write(self, data):
-                raise BrokenPipeError("gone")
+        # Fill the full queue to capacity
+        from lumen_argus.dashboard.sse import _MAX_QUEUE_SIZE
 
-            def flush(self):
-                raise BrokenPipeError("gone")
+        for i in range(_MAX_QUEUE_SIZE):
+            q_full.put_nowait("filler-%d" % i)
 
-        dead = DeadWriter()
-        alive = io.BytesIO()
-        broadcaster.register(dead)
-        broadcaster.register(alive)
         self.assertEqual(broadcaster.client_count, 2)
 
+        # This broadcast should drop the full client
         broadcaster.broadcast("test", {"x": 1})
 
-        # Dead client should be removed
         self.assertEqual(broadcaster.client_count, 1)
-        # Alive client should have received the message
-        self.assertIn(b"event: test", alive.getvalue())
+        # Good client should have received the message
+        payload = q_good.get_nowait()
+        self.assertIn("event: test", payload)
 
-        broadcaster.unregister(alive)
+        broadcaster.unsubscribe(q_good)
 
     def test_client_count(self):
         broadcaster = SSEBroadcaster(heartbeat_interval=9999)
-        bufs = [io.BytesIO() for _ in range(5)]
-        for b in bufs:
-            broadcaster.register(b)
+        queues = [broadcaster.subscribe() for _ in range(5)]
         self.assertEqual(broadcaster.client_count, 5)
-        for b in bufs:
-            broadcaster.unregister(b)
+        for q in queues:
+            broadcaster.unsubscribe(q)
         self.assertEqual(broadcaster.client_count, 0)
 
 

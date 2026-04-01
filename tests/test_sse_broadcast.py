@@ -1,6 +1,5 @@
 """Tests for SSE event broadcasting from pipeline and dashboard API."""
 
-import io
 import json
 import unittest
 from unittest.mock import MagicMock, patch
@@ -22,6 +21,14 @@ from lumen_argus.pipeline import ScannerPipeline
 from tests.helpers import StoreTestCase
 
 
+def _drain_queue(queue):
+    """Read all available payloads from a queue and return concatenated string."""
+    parts = []
+    while not queue.empty():
+        parts.append(queue.get_nowait())
+    return "".join(parts)
+
+
 class TestBroadcastSSEHelper(unittest.TestCase):
     """Test the _broadcast_sse helper function."""
 
@@ -37,34 +44,32 @@ class TestBroadcastSSEHelper(unittest.TestCase):
     def test_broadcasts_event(self):
         """Should call broadcaster.broadcast with correct args."""
         broadcaster = SSEBroadcaster(heartbeat_interval=9999)
-        buf = io.BytesIO()
-        broadcaster.register(buf)
+        queue = broadcaster.subscribe()
 
         extensions = ExtensionRegistry()
         extensions.set_sse_broadcaster(broadcaster)
 
         _broadcast_sse(extensions, "rules", {"action": "created"})
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertIn("event: rules", output)
         self.assertIn('"action": "created"', output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     def test_empty_data_default(self):
         """Should broadcast empty dict when data is None."""
         broadcaster = SSEBroadcaster(heartbeat_interval=9999)
-        buf = io.BytesIO()
-        broadcaster.register(buf)
+        queue = broadcaster.subscribe()
 
         extensions = ExtensionRegistry()
         extensions.set_sse_broadcaster(broadcaster)
 
         _broadcast_sse(extensions, "config")
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertIn("event: config", output)
         self.assertIn("data: {}", output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     def test_exception_suppressed(self):
         """Should not raise when broadcaster.broadcast fails."""
@@ -90,14 +95,13 @@ class TestPipelineSSEBroadcast(StoreTestCase):
     def test_scan_event_on_clean_request(self):
         """A clean request should broadcast a scan event with action=pass."""
         broadcaster = SSEBroadcaster(heartbeat_interval=9999)
-        buf = io.BytesIO()
-        broadcaster.register(buf)
+        queue = broadcaster.subscribe()
 
         pipeline = self._make_pipeline(broadcaster)
         body = json.dumps({"messages": [{"role": "user", "content": "hello world"}]}).encode()
         pipeline.scan(body, "anthropic")
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         events = _parse_sse_events(output)
 
         scan_events = [e for e in events if e["event"] == "scan"]
@@ -109,20 +113,19 @@ class TestPipelineSSEBroadcast(StoreTestCase):
         finding_events = [e for e in events if e["event"] == "finding"]
         self.assertEqual(len(finding_events), 0)
 
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     def test_finding_event_on_secret(self):
         """A request with a secret should broadcast both scan and finding events."""
         broadcaster = SSEBroadcaster(heartbeat_interval=9999)
-        buf = io.BytesIO()
-        broadcaster.register(buf)
+        queue = broadcaster.subscribe()
 
         pipeline = self._make_pipeline(broadcaster)
         body = json.dumps({"messages": [{"role": "user", "content": "key: AKIAIOSFODNN7EXAMPLE"}]}).encode()
         session = SessionContext(client_name="aider")
         pipeline.scan(body, "anthropic", session=session)
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         events = _parse_sse_events(output)
 
         # Should have scan event
@@ -143,7 +146,7 @@ class TestPipelineSSEBroadcast(StoreTestCase):
         # matched_value must never be in the broadcast
         self.assertNotIn("matched_value", f)
 
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     def test_no_broadcast_without_broadcaster(self):
         """Pipeline should not fail when no broadcaster is set."""
@@ -161,130 +164,126 @@ class TestAPISSEBroadcast(StoreTestCase):
 
     def _make_extensions(self):
         broadcaster = SSEBroadcaster(heartbeat_interval=9999)
-        buf = io.BytesIO()
-        broadcaster.register(buf)
+        queue = broadcaster.subscribe()
         extensions = ExtensionRegistry()
         extensions.set_sse_broadcaster(broadcaster)
-        return extensions, broadcaster, buf
+        return extensions, broadcaster, queue
 
     def test_rule_create_broadcasts(self):
-        extensions, broadcaster, buf = self._make_extensions()
+        extensions, broadcaster, queue = self._make_extensions()
         body = json.dumps({"name": "test_rule", "pattern": "secret_\\w+", "detector": "secrets"}).encode()
         status, _ = _handle_rule_create(body, self.store, extensions)
         self.assertEqual(status, 201)
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertIn("event: rules", output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     def test_rule_update_broadcasts(self):
-        extensions, broadcaster, buf = self._make_extensions()
+        extensions, broadcaster, queue = self._make_extensions()
         # Create a rule first
         self.store.create_rule({"name": "my_rule", "pattern": "test", "source": "dashboard", "tier": "custom"})
-        buf.truncate(0)
-        buf.seek(0)
+        # Drain the create event
+        _drain_queue(queue)
 
         body = json.dumps({"severity": "warning"}).encode()
         status, _ = _handle_rule_update("my_rule", body, self.store, extensions)
         self.assertEqual(status, 200)
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertIn("event: rules", output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     def test_rule_delete_broadcasts(self):
-        extensions, broadcaster, buf = self._make_extensions()
+        extensions, broadcaster, queue = self._make_extensions()
         self.store.create_rule({"name": "del_rule", "pattern": "test", "source": "dashboard", "tier": "custom"})
-        buf.truncate(0)
-        buf.seek(0)
+        _drain_queue(queue)
 
         status, _ = _handle_rule_delete("del_rule", self.store, extensions)
         self.assertEqual(status, 200)
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertIn("event: rules", output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     def test_rule_delete_no_broadcast_on_404(self):
-        extensions, broadcaster, buf = self._make_extensions()
+        extensions, broadcaster, queue = self._make_extensions()
         status, _ = _handle_rule_delete("nonexistent", self.store, extensions)
         self.assertEqual(status, 404)
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertNotIn("event: rules", output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     def test_rule_clone_broadcasts(self):
-        extensions, broadcaster, buf = self._make_extensions()
+        extensions, broadcaster, queue = self._make_extensions()
         self.store.create_rule({"name": "orig", "pattern": "test", "source": "dashboard", "tier": "custom"})
-        buf.truncate(0)
-        buf.seek(0)
+        _drain_queue(queue)
 
         body = json.dumps({"new_name": "orig_clone"}).encode()
         status, _ = _handle_rule_clone("orig", body, self.store, extensions)
         self.assertEqual(status, 201)
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertIn("event: rules", output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     def test_rules_bulk_update_broadcasts(self):
-        extensions, broadcaster, buf = self._make_extensions()
+        extensions, broadcaster, queue = self._make_extensions()
         self.store.create_rule({"name": "r1", "pattern": "a", "source": "dashboard", "tier": "custom"})
         self.store.create_rule({"name": "r2", "pattern": "b", "source": "dashboard", "tier": "custom"})
-        buf.truncate(0)
-        buf.seek(0)
+        _drain_queue(queue)
 
         body = json.dumps({"names": ["r1", "r2"], "update": {"severity": "low"}}).encode()
         status, _ = _handle_rules_bulk_update(body, self.store, extensions)
         self.assertEqual(status, 200)
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertIn("event: rules", output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     def test_bulk_update_no_broadcast_when_none_updated(self):
-        extensions, broadcaster, buf = self._make_extensions()
+        extensions, broadcaster, queue = self._make_extensions()
         body = json.dumps({"names": ["nonexistent"], "update": {"severity": "low"}}).encode()
         status, _ = _handle_rules_bulk_update(body, self.store, extensions)
         self.assertEqual(status, 200)
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertNotIn("event: rules", output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     @patch("lumen_argus.dashboard.api._send_sighup")
     def test_config_update_broadcasts(self, mock_sighup):
-        extensions, broadcaster, buf = self._make_extensions()
+        extensions, broadcaster, queue = self._make_extensions()
         body = json.dumps({"default_action": "alert"}).encode()
         status, _ = _handle_config_update(body, None, self.store, extensions)
         self.assertIn(status, (200, 207))
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertIn("event: config", output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     @patch("lumen_argus.dashboard.api._send_sighup")
     def test_config_update_no_broadcast_on_failure(self, mock_sighup):
-        extensions, broadcaster, buf = self._make_extensions()
+        extensions, broadcaster, queue = self._make_extensions()
         body = json.dumps({"invalid.nested.deep.key": "value"}).encode()
         status, _ = _handle_config_update(body, None, self.store, extensions)
         self.assertEqual(status, 400)
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertNotIn("event: config", output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
     @patch("lumen_argus.dashboard.api._send_sighup")
     def test_pipeline_update_broadcasts(self, mock_sighup):
-        extensions, broadcaster, buf = self._make_extensions()
+        extensions, broadcaster, queue = self._make_extensions()
         body = json.dumps({"default_action": "block"}).encode()
         status, _ = _handle_pipeline_update(body, None, self.store, extensions)
         self.assertIn(status, (200, 207))
 
-        output = buf.getvalue().decode("utf-8")
+        output = _drain_queue(queue)
         self.assertIn("event: config", output)
-        broadcaster.unregister(buf)
+        broadcaster.unsubscribe(queue)
 
 
 def _parse_sse_events(text: str) -> list[dict]:

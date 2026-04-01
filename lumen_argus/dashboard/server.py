@@ -1,26 +1,29 @@
 """Community dashboard HTTP server on configurable port (default 8081).
 
-Serves the REST API and a single-page app dashboard. Runs in a daemon thread
-so it doesn't block the proxy. Supports optional password authentication
+Async aiohttp server sharing the proxy's event loop. Serves the REST API
+and a single-page app dashboard. Supports optional password authentication
 with sessions and CSRF protection.
 """
 
 from __future__ import annotations
 
-import http.server
+import asyncio
 import json
 import logging
 import os
 import secrets
-import threading
 import time
 from datetime import datetime, timezone
 from http.cookies import SimpleCookie
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qs, quote, unquote_plus, urlparse
+
+from aiohttp import web
 
 if TYPE_CHECKING:
     from lumen_argus.analytics.store import AnalyticsStore
     from lumen_argus.config import Config
+    from lumen_argus.dashboard.sse import SSEBroadcaster
     from lumen_argus.extensions import ExtensionRegistry
 
 from lumen_argus.dashboard.api import handle_community_api
@@ -29,6 +32,9 @@ log = logging.getLogger("argus.dashboard")
 
 # Session timeout (8 hours)
 _SESSION_TIMEOUT = 8 * 60 * 60
+
+# Max request body for API calls (2 MB)
+_MAX_API_BODY = 2 * 1024 * 1024
 
 _LOGIN_HTML = """\
 <!DOCTYPE html>
@@ -81,549 +87,116 @@ if(nextVal)document.getElementById('next-field').value=nextVal;
 </html>
 """
 
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'unsafe-inline'; "
+        "style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
+    ),
+}
+
+
+def _parse_cookies(request: web.Request) -> SimpleCookie:
+    """Parse cookies from request, silently handling malformed headers."""
+    cookie: SimpleCookie = SimpleCookie()
+    cookie_header = request.headers.get("Cookie", "")
+    try:
+        cookie.load(cookie_header)
+    except Exception:
+        log.debug("malformed cookie header")
+    return cookie
+
+
+def _validate_next_url(url: str) -> str:
+    """Validate and sanitize the next URL for login redirects."""
+    if (
+        not url.startswith("/")
+        or url.startswith("//")
+        or (len(url) > 1 and url[1] in "/\\")
+        or "\r" in url
+        or "\n" in url
+    ):
+        return "/"
+    return url
+
+
+def _nosniff_response(status: int, body: bytes, content_type: str = "application/json") -> web.Response:
+    """Create a response with X-Content-Type-Options: nosniff."""
+    return web.Response(
+        status=status,
+        body=body,
+        content_type=content_type,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+def _json_error(status: int, error: str) -> web.Response:
+    """Create a JSON error response with nosniff header."""
+    body = json.dumps({"error": error}).encode("utf-8")
+    return _nosniff_response(status, body)
+
+
+# ---------------------------------------------------------------------------
+# CSV helpers (static, no state)
+# ---------------------------------------------------------------------------
+
+
+def _findings_to_csv(findings: list[dict[str, Any]]) -> bytes:
+    cols = [
+        "id",
+        "timestamp",
+        "detector",
+        "finding_type",
+        "severity",
+        "location",
+        "action_taken",
+        "provider",
+        "model",
+    ]
+    lines: list[str] = [",".join(cols)]
+    for f in findings:
+        row: list[str] = []
+        for c in cols:
+            val = str(f.get(c, ""))
+            if "," in val or '"' in val or "\n" in val:
+                val = '"' + val.replace('"', '""') + '"'
+            row.append(val)
+        lines.append(",".join(row))
+    return "\n".join(lines).encode("utf-8")
+
+
+def _audit_to_csv(entries: list[dict[str, Any]]) -> bytes:
+    cols = [
+        "timestamp",
+        "request_id",
+        "provider",
+        "model",
+        "endpoint",
+        "action",
+        "finding_count",
+        "scan_duration_ms",
+        "request_size_bytes",
+    ]
+    lines = [",".join(cols)]
+    for e in entries:
+        row = []
+        for c in cols:
+            val = str(e.get(c, ""))
+            if "," in val or '"' in val or "\n" in val:
+                val = '"' + val.replace('"', '""') + '"'
+            row.append(val)
+        lines.append(",".join(row))
+    return "\n".join(lines).encode("utf-8")
 
-class DashboardHandler(http.server.BaseHTTPRequestHandler):
-    """Handles dashboard HTTP requests with optional authentication."""
 
-    server: "DashboardServer"
+# ---------------------------------------------------------------------------
+# AsyncDashboardServer
+# ---------------------------------------------------------------------------
 
-    def log_message(self, format: str, *args: Any) -> None:
-        pass  # Suppress default access logging
 
-    def do_GET(self) -> None:
-        if self.path.startswith("/api/v1/live"):
-            if not self._check_auth():
-                return
-            self._handle_live_stream()
-        elif self.path.startswith("/api/v1/findings/export"):
-            if not self._check_auth():
-                return
-            self._handle_export("findings")
-        elif self.path.startswith("/api/v1/audit/export"):
-            if not self._check_auth():
-                return
-            self._handle_export("audit")
-        elif self.path.startswith("/api/v1/logs/download"):
-            if not self._check_auth():
-                return
-            self._handle_logs_download()
-        elif self.path.startswith("/api/"):
-            if not self._check_auth():
-                return
-            self._handle_api("GET")
-        elif self.path.startswith("/login"):
-            self._serve_login()
-        elif self.path.startswith("/logout"):
-            self._handle_logout()
-        else:
-            if not self._check_auth():
-                return
-            self._serve_dashboard()
-
-    def do_POST(self) -> None:
-        if self.path.startswith("/login"):
-            self._handle_login()
-        elif self.path.startswith("/api/"):
-            if not self._check_auth():
-                return
-            if not self._check_csrf():
-                return
-            self._handle_api("POST")
-        else:
-            self._send_json(405, {"error": "method_not_allowed"})
-
-    def do_PUT(self) -> None:
-        if not self._check_auth():
-            return
-        if not self._check_csrf():
-            return
-        if self.path.startswith("/api/"):
-            self._handle_api("PUT")
-        else:
-            self._send_json(405, {"error": "method_not_allowed"})
-
-    def do_DELETE(self) -> None:
-        if not self._check_auth():
-            return
-        if not self._check_csrf():
-            return
-        if self.path.startswith("/api/"):
-            self._handle_api("DELETE")
-        else:
-            self._send_json(405, {"error": "method_not_allowed"})
-
-    # --- Auth ---
-
-    def _check_auth(self) -> bool:
-        """Check authentication. Returns True if authorized."""
-        password = self.server.password
-        if not password:
-            return True
-
-        cookie_header = self.headers.get("Cookie", "")
-        cookie = SimpleCookie()
-        try:
-            cookie.load(cookie_header)
-        except Exception:
-            log.debug("malformed cookie header in auth check")
-
-        session_id = cookie.get("argus_session")
-        if session_id and self.server.validate_session(session_id.value):
-            return True
-
-        # Try plugin auth providers
-        if not self.server.extensions:
-            return False
-        for provider in self.server.extensions.get_auth_providers():
-            try:
-                user_info = provider.authenticate(dict(self.headers))
-                if user_info:
-                    self._user = user_info
-                    return True
-            except Exception:
-                log.warning("auth provider %s failed", type(provider).__name__, exc_info=True)
-
-        # API requests get 401 JSON
-        if self.path.startswith("/api/") and "/export" not in self.path:
-            self._send_json(401, {"error": "authentication_required"})
-            return False
-
-        # Pages redirect to login
-        from urllib.parse import quote
-
-        next_url = self.path
-        self.send_response(302)
-        self.send_header("Location", "/login?next=%s" % quote(next_url))
-        self.end_headers()
-        return False
-
-    def _check_csrf(self) -> bool:
-        """Validate CSRF double-submit cookie."""
-        if not self.server.password:
-            return True  # No auth = no CSRF needed
-
-        cookie_header = self.headers.get("Cookie", "")
-        cookie = SimpleCookie()
-        try:
-            cookie.load(cookie_header)
-        except Exception:
-            log.debug("malformed cookie header in CSRF check")
-
-        cookie_token = cookie.get("csrf_token")
-        header_token = self.headers.get("X-CSRF-Token", "")
-
-        if not cookie_token or not header_token:
-            self._send_json(403, {"error": "csrf_validation_failed"})
-            return False
-
-        if not secrets.compare_digest(cookie_token.value, header_token):
-            self._send_json(403, {"error": "csrf_validation_failed"})
-            return False
-
-        return True
-
-    def _serve_login(self) -> None:
-        from urllib.parse import parse_qs, quote, urlparse
-
-        query = urlparse(self.path).query
-        params = parse_qs(query)
-        next_url = params.get("next", ["/"])[0]
-        if not next_url.startswith("/") or next_url.startswith("//") or (len(next_url) > 1 and next_url[1] in "/\\"):
-            next_url = "/"
-        html = _LOGIN_HTML.replace(
-            'value="/"',
-            'value="%s"' % quote(next_url, safe="/"),
-        )
-        body = html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _handle_login(self) -> None:
-        content_length = min(int(self.headers.get("Content-Length", 0)), 4096)
-        body = self.rfile.read(content_length).decode("utf-8", errors="replace")
-
-        from urllib.parse import unquote_plus
-
-        password = ""
-        next_url = "/"
-        for pair in body.split("&"):
-            if pair.startswith("password="):
-                password = unquote_plus(pair[9:])
-            elif pair.startswith("next="):
-                next_url = unquote_plus(pair[5:])
-
-        if (
-            not next_url.startswith("/")
-            or next_url.startswith("//")
-            or (len(next_url) > 1 and next_url[1] in "/\\")
-            or "\r" in next_url
-            or "\n" in next_url
-        ):
-            next_url = "/"
-
-        if secrets.compare_digest(password, self.server.password):
-            session_id = self.server.create_session()
-            csrf_token = secrets.token_hex(32)
-            from urllib.parse import quote
-
-            self.send_response(302)
-            self.send_header("Location", quote(next_url, safe="/"))
-            self.send_header(
-                "Set-Cookie",
-                "argus_session=%s; HttpOnly; SameSite=Strict; Path=/" % session_id,
-            )
-            self.send_header(
-                "Set-Cookie",
-                "csrf_token=%s; SameSite=Strict; Path=/" % csrf_token,
-            )
-            self.end_headers()
-        else:
-            from urllib.parse import quote
-
-            fail_url = "/login?error=1"
-            if next_url and next_url != "/":
-                fail_url += "&next=%s" % quote(next_url)
-            self.send_response(302)
-            self.send_header("Location", fail_url)
-            self.end_headers()
-
-    def _handle_logout(self) -> None:
-        cookie_header = self.headers.get("Cookie", "")
-        cookie = SimpleCookie()
-        try:
-            cookie.load(cookie_header)
-        except Exception:
-            log.debug("malformed cookie header in logout")
-        session_id = cookie.get("argus_session")
-        if session_id:
-            self.server.invalidate_session(session_id.value)
-
-        self.send_response(302)
-        self.send_header("Location", "/login")
-        self.send_header(
-            "Set-Cookie",
-            "argus_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
-        )
-        self.send_header(
-            "Set-Cookie",
-            "csrf_token=; SameSite=Strict; Path=/; Max-Age=0",
-        )
-        self.end_headers()
-
-    # --- API ---
-
-    def _handle_api(self, method: str) -> None:
-        content_length = min(int(self.headers.get("Content-Length", 0)), 2 * 1024 * 1024)
-        body = self.rfile.read(content_length) if content_length > 0 else b""
-
-        store = self.server.analytics_store
-        audit_reader = self.server.audit_reader
-
-        # Try plugin API handler first
-        pro_handler = self.server.extensions.get_dashboard_api_handler() if self.server.extensions else None
-        if pro_handler:
-            try:
-                result = pro_handler(self.path, method, body, store, audit_reader)
-                if result is not None:
-                    if len(result) == 3:
-                        status, content_type, response_body = result
-                    else:
-                        status, response_body = result
-                        content_type = "application/json"
-                    self._send_raw(status, content_type, response_body)
-                    return
-            except Exception:
-                log.warning("plugin API handler failed for %s %s", method, self.path, exc_info=True)
-
-        # Resolve request user for audit trail
-        request_user = "dashboard"
-        user_info = getattr(self, "_user", None)
-        if user_info and isinstance(user_info, dict):
-            # Auth provider (Enterprise): "dashboard:<user_id>"
-            request_user = "dashboard:%s" % user_info.get("user_id", "unknown")
-        elif self.server.password:
-            # Password auth active: shared admin user
-            request_user = "dashboard:admin"
-
-        # Fall through to community handler
-        status, response_body = handle_community_api(
-            self.path,
-            method,
-            body,
-            store,
-            audit_reader=audit_reader,
-            config=self.server.config,
-            extensions=self.server.extensions,
-            request_user=request_user,
-        )
-        self._send_raw(status, "application/json", response_body)
-
-    # --- SSE ---
-
-    def _handle_live_stream(self) -> None:
-        """GET /api/v1/live — SSE endpoint for real-time findings."""
-        broadcaster = self.server.sse_broadcaster
-        if broadcaster is None:
-            self._send_json(503, {"error": "live stream not available"})
-            return
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
-
-        try:
-            self.wfile.write(b"event: connected\ndata: {}\n\n")
-            self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            return
-
-        broadcaster.register(self.wfile)
-        try:
-            while True:
-                time.sleep(5)
-                try:
-                    self.wfile.write(b": keepalive\n\n")
-                    self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError, OSError):
-                    break
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            log.debug("SSE client disconnected")
-        finally:
-            broadcaster.unregister(self.wfile)
-
-    # --- Export ---
-
-    def _handle_export(self, export_type: str) -> None:
-        """Handle findings or audit export."""
-        path = self.path
-        query = ""
-        if "?" in path:
-            path, query = path.split("?", 1)
-
-        from urllib.parse import unquote_plus
-
-        params = {}
-        for part in query.split("&"):
-            if "=" in part:
-                k, v = part.split("=", 1)
-                params[unquote_plus(k)] = unquote_plus(v)
-
-        fmt = params.get("format", "csv")
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        if export_type == "findings":
-            store = self.server.analytics_store
-            if not store:
-                self._send_json(404, {"error": "store not available"})
-                return
-
-            severity = params.get("severity", "") or None
-            detector = params.get("detector", "") or None
-            provider = params.get("provider", "") or None
-            findings, _ = store.get_findings_page(
-                limit=10000,
-                offset=0,
-                severity=severity,
-                detector=detector,
-                provider=provider,
-            )
-
-            if fmt == "json":
-                body = json.dumps(findings, indent=2).encode("utf-8")
-                self._send_download(body, "application/json", "findings-%s.json" % now)
-            else:
-                body = self._findings_to_csv(findings)
-                self._send_download(body, "text/csv; charset=utf-8", "findings-%s.csv" % now)
-
-        elif export_type == "audit":
-            audit_reader = self.server.audit_reader
-            if not audit_reader:
-                self._send_json(404, {"error": "audit reader not available"})
-                return
-
-            action = params.get("action", "") or None
-            provider = params.get("provider", "") or None
-            search = params.get("search", "") or None
-            entries, _ = audit_reader.read_entries(
-                limit=10000,
-                offset=0,
-                action=action,
-                provider=provider,
-                search=search,
-            )
-
-            if fmt == "json":
-                body = json.dumps(entries, indent=2).encode("utf-8")
-                self._send_download(body, "application/json", "audit-%s.json" % now)
-            else:
-                body = self._audit_to_csv(entries)
-                self._send_download(body, "text/csv; charset=utf-8", "audit-%s.csv" % now)
-
-    @staticmethod
-    def _findings_to_csv(findings: list[dict[str, Any]]) -> bytes:
-        cols = [
-            "id",
-            "timestamp",
-            "detector",
-            "finding_type",
-            "severity",
-            "location",
-            "action_taken",
-            "provider",
-            "model",
-        ]
-        lines: list[str] = [",".join(cols)]
-        for f in findings:
-            row: list[str] = []
-            for c in cols:
-                val = str(f.get(c, ""))
-                if "," in val or '"' in val or "\n" in val:
-                    val = '"' + val.replace('"', '""') + '"'
-                row.append(val)
-            lines.append(",".join(row))
-        return "\n".join(lines).encode("utf-8")
-
-    @staticmethod
-    def _audit_to_csv(entries: list[dict[str, Any]]) -> bytes:
-        cols = [
-            "timestamp",
-            "request_id",
-            "provider",
-            "model",
-            "endpoint",
-            "action",
-            "finding_count",
-            "scan_duration_ms",
-            "request_size_bytes",
-        ]
-        lines = [",".join(cols)]
-        for e in entries:
-            row = []
-            for c in cols:
-                val = str(e.get(c, ""))
-                if "," in val or '"' in val or "\n" in val:
-                    val = '"' + val.replace('"', '""') + '"'
-                row.append(val)
-            lines.append(",".join(row))
-        return "\n".join(lines).encode("utf-8")
-
-    # --- Logs download ---
-
-    def _handle_logs_download(self) -> None:
-        from lumen_argus.log_utils import sanitize_log_line
-
-        config = self.server.config
-        if not config:
-            self._send_json(404, {"error": "config not available"})
-            return
-
-        log_dir = os.path.expanduser(config.logging_config.log_dir)
-        log_file = os.path.join(log_dir, "lumen-argus.log")
-        if not os.path.exists(log_file):
-            self._send_json(404, {"error": "log file not found"})
-            return
-
-        lines: list[str] = []
-        try:
-            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-                lines.extend(sanitize_log_line(line) for line in f)
-        except OSError:
-            self._send_json(500, {"error": "failed to read log file"})
-            return
-
-        content = "".join(lines)
-        body = content.encode("utf-8")
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        self._send_download(body, "text/plain; charset=utf-8", "lumen-argus-logs-%s.txt" % now)
-
-    # --- Dashboard HTML ---
-
-    def _serve_dashboard(self) -> None:
-        from lumen_argus.dashboard.html import COMMUNITY_DASHBOARD_HTML
-
-        html = COMMUNITY_DASHBOARD_HTML
-
-        # Inject plugin CSS before </style>
-        extra_css = self.server.extensions.get_dashboard_css() if self.server.extensions else []
-        if extra_css:
-            css_block = "\n".join(extra_css)
-            html = html.replace("</style>", css_block + "\n</style>")
-
-        # Inject plugin page JS before </body>
-        extra_pages = self.server.extensions.get_dashboard_pages() if self.server.extensions else []
-        if extra_pages:
-            js_blocks = []
-            for page in extra_pages:
-                parts = []
-                if page.get("html"):
-                    # Pass HTML template as a JS variable for registerPage() to use
-                    import json as _json
-
-                    var_name = "_pageHtml_%s" % page["name"]
-                    parts.append("<script>var %s=%s;</script>" % (var_name, _json.dumps(page["html"])))
-                parts.append("<script>\n%s\n</script>" % page["js"])
-                js_blocks.append("\n".join(parts))
-            html = html.replace("</body>", "\n".join(js_blocks) + "\n</body>")
-
-        body = html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
-        self.send_header(
-            "Content-Security-Policy",
-            "default-src 'self'; script-src 'unsafe-inline'; "
-            "style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
-        )
-        self.end_headers()
-        self.wfile.write(body)
-
-    # --- Helpers ---
-
-    def _send_json(self, status: int, data: dict[str, Any]) -> None:
-        body = json.dumps(data).encode("utf-8")
-        self._send_raw(status, "application/json", body)
-
-    def _send_raw(self, status: int, content_type: str, body: bytes) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _send_download(self, body: bytes, content_type: str, filename: str) -> None:
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Disposition", 'attachment; filename="%s"' % filename)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        self.wfile.write(body)
-
-
-class DashboardServer(http.server.ThreadingHTTPServer):
-    """Threaded HTTP server for the dashboard with optional auth."""
-
-    daemon_threads = True
-    allow_reuse_address = True
-
-    def handle_error(self, request: Any, client_address: Any) -> None:
-        """Suppress ConnectionResetError from SSE client disconnections."""
-        import sys
-
-        exc_type = sys.exc_info()[0]
-        if exc_type in (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
-            return
-        super().handle_error(request, client_address)
+class AsyncDashboardServer:
+    """Async dashboard server running in the same event loop as the proxy."""
 
     def __init__(
         self,
@@ -633,11 +206,13 @@ class DashboardServer(http.server.ThreadingHTTPServer):
         extensions: ExtensionRegistry | None,
         password: str = "",
         audit_reader: Any = None,
-        sse_broadcaster: Any = None,
+        sse_broadcaster: SSEBroadcaster | None = None,
         config: Config | None = None,
     ) -> None:
         if bind not in ("127.0.0.1", "localhost"):
             log.warning("binding to %s — dashboard is accessible on the network", bind)
+        self.bind = bind
+        self.port = port
         self.analytics_store = analytics_store
         self.extensions = extensions
         self.password = password or os.environ.get("LUMEN_ARGUS_DASHBOARD_PASSWORD", "")
@@ -645,81 +220,439 @@ class DashboardServer(http.server.ThreadingHTTPServer):
         self.sse_broadcaster = sse_broadcaster
         self.config = config
         self._sessions: dict[str, float] = {}
-        self._session_lock = threading.Lock()
-        super().__init__((bind, port), DashboardHandler)
+        self._runner: web.AppRunner | None = None
+        self._site: web.TCPSite | None = None
+
+    # --- Session management (single event loop, no lock needed) ---
 
     def create_session(self) -> str:
         session_id = secrets.token_hex(32)
         now = time.monotonic()
-        with self._session_lock:
-            expired = [k for k, t in self._sessions.items() if now - t > _SESSION_TIMEOUT]
-            for k in expired:
-                del self._sessions[k]
-            self._sessions[session_id] = now
+        expired = [k for k, t in self._sessions.items() if now - t > _SESSION_TIMEOUT]
+        for k in expired:
+            del self._sessions[k]
+        self._sessions[session_id] = now
         return session_id
 
     def validate_session(self, session_id: str) -> bool:
-        with self._session_lock:
-            created = self._sessions.get(session_id)
-            if created is None:
-                return False
-            if time.monotonic() - created > _SESSION_TIMEOUT:
-                del self._sessions[session_id]
-                return False
-            return True
+        created = self._sessions.get(session_id)
+        if created is None:
+            return False
+        if time.monotonic() - created > _SESSION_TIMEOUT:
+            del self._sessions[session_id]
+            return False
+        return True
 
     def invalidate_session(self, session_id: str) -> None:
-        with self._session_lock:
-            self._sessions.pop(session_id, None)
+        self._sessions.pop(session_id, None)
 
+    # --- Lifecycle ---
 
-def start_dashboard(
-    bind: str = "127.0.0.1",
-    port: int = 8081,
-    analytics_store: AnalyticsStore | None = None,
-    extensions: ExtensionRegistry | None = None,
-    password: str = "",
-    audit_reader: Any = None,
-    sse_broadcaster: Any = None,
-    config: Config | None = None,
-) -> DashboardServer | None:
-    """Start the dashboard server in a daemon thread.
+    async def start(self) -> None:
+        """Create and start the aiohttp application."""
+        app = self._create_app()
+        self._runner = web.AppRunner(app)
+        await self._runner.setup()
 
-    Returns the server instance, or None if startup fails.
-    """
-    for attempt in range(2):
+        for attempt in range(2):
+            try:
+                self._site = web.TCPSite(self._runner, self.bind, self.port)
+                await self._site.start()
+                if self.password:
+                    log.info("dashboard started on http://%s:%d (password protected)", self.bind, self.port)
+                else:
+                    log.info("dashboard started on http://%s:%d", self.bind, self.port)
+                return
+            except OSError:
+                if attempt == 0:
+                    log.info("dashboard port %d in use, retrying in 2s", self.port)
+                    await asyncio.sleep(2)
+                else:
+                    log.warning(
+                        "dashboard unavailable — failed to bind to %s:%d",
+                        self.bind,
+                        self.port,
+                    )
+                    raise
+
+    async def stop(self) -> None:
+        """Shut down the server and clean up."""
+        if self._runner:
+            await self._runner.cleanup()
+            self._runner = None
+            self._site = None
+
+    # --- App factory ---
+
+    def _create_app(self) -> web.Application:
+        app = web.Application(
+            middlewares=[self._nosniff_middleware, self._auth_middleware, self._csrf_middleware],
+            client_max_size=_MAX_API_BODY,
+        )
+
+        # Routes — order matters: specific paths before catch-all
+        app.router.add_get("/api/v1/live", self._handle_live_stream)
+        app.router.add_get("/api/v1/findings/export", self._handle_findings_export)
+        app.router.add_get("/api/v1/audit/export", self._handle_audit_export)
+        app.router.add_get("/api/v1/logs/download", self._handle_logs_download)
+        app.router.add_get("/login", self._serve_login)
+        app.router.add_post("/login", self._handle_login)
+        app.router.add_get("/logout", self._handle_logout)
+        app.router.add_route("*", "/api/{tail:.*}", self._handle_api)
+        app.router.add_get("/{tail:.*}", self._serve_dashboard)
+
+        return app
+
+    # --- Middleware ---
+
+    @web.middleware
+    async def _nosniff_middleware(
+        self,
+        request: web.Request,
+        handler: Any,
+    ) -> web.StreamResponse:
+        resp: web.StreamResponse = await handler(request)
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        return resp
+
+    @web.middleware
+    async def _auth_middleware(
+        self,
+        request: web.Request,
+        handler: Any,
+    ) -> web.StreamResponse:
+        path = request.path
+
+        # Public paths
+        if path in ("/login", "/logout"):
+            resp: web.StreamResponse = await handler(request)
+            return resp
+
+        # No password = open access
+        if not self.password:
+            request["user"] = "dashboard"
+            resp = await handler(request)
+            return resp
+
+        # Check session cookie
+        cookie = _parse_cookies(request)
+        session_morsel = cookie.get("argus_session")
+        if session_morsel and self.validate_session(session_morsel.value):
+            request["user"] = "dashboard:admin"
+            resp = await handler(request)
+            return resp
+
+        # Try extension auth providers
+        if self.extensions:
+            for provider in self.extensions.get_auth_providers():
+                try:
+                    user_info = await provider.authenticate(dict(request.headers))
+                    if user_info:
+                        user_id = user_info.get("user_id", "unknown") if isinstance(user_info, dict) else "unknown"
+                        request["user"] = "dashboard:%s" % user_id
+                        resp = await handler(request)
+                        return resp
+                except Exception:
+                    log.warning("auth provider %s failed", type(provider).__name__, exc_info=True)
+
+        # API requests → 401 JSON
+        if path.startswith("/api/") and "/export" not in path:
+            return _json_error(401, "authentication_required")
+
+        # Page requests → redirect to login
+        raise web.HTTPFound("/login?next=%s" % quote(path))
+
+    @web.middleware
+    async def _csrf_middleware(
+        self,
+        request: web.Request,
+        handler: Any,
+    ) -> web.StreamResponse:
+        # Only enforce on mutation methods when password auth is active
+        if request.method in ("GET", "HEAD") or not self.password:
+            resp: web.StreamResponse = await handler(request)
+            return resp
+
+        # Login form POST is exempted (no session yet)
+        if request.path == "/login":
+            resp = await handler(request)
+            return resp
+
+        cookie = _parse_cookies(request)
+        cookie_token = cookie.get("csrf_token")
+        header_token = request.headers.get("X-CSRF-Token", "")
+
+        if not cookie_token or not header_token:
+            return _json_error(403, "csrf_validation_failed")
+
+        if not secrets.compare_digest(cookie_token.value, header_token):
+            return _json_error(403, "csrf_validation_failed")
+
+        resp = await handler(request)
+        return resp
+
+    # --- Handlers ---
+
+    async def _serve_login(self, request: web.Request) -> web.Response:
+        query = urlparse(request.path_qs).query
+        params = parse_qs(query)
+        next_url = _validate_next_url(params.get("next", ["/"])[0])
+        html = _LOGIN_HTML.replace(
+            'value="/"',
+            'value="%s"' % quote(next_url, safe="/"),
+        )
+        return web.Response(
+            text=html,
+            content_type="text/html",
+            charset="utf-8",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
+
+    async def _handle_login(self, request: web.Request) -> web.Response:
+        body = await request.text()
+        body = body[:4096]
+
+        password = ""
+        next_url = "/"
+        for pair in body.split("&"):
+            if pair.startswith("password="):
+                password = unquote_plus(pair[9:])
+            elif pair.startswith("next="):
+                next_url = unquote_plus(pair[5:])
+
+        next_url = _validate_next_url(next_url)
+
+        if secrets.compare_digest(password, self.password):
+            session_id = self.create_session()
+            csrf_token = secrets.token_hex(32)
+            response = web.HTTPFound(quote(next_url, safe="/"))
+            response.set_cookie(
+                "argus_session",
+                session_id,
+                httponly=True,
+                samesite="Strict",
+                path="/",
+            )
+            response.set_cookie(
+                "csrf_token",
+                csrf_token,
+                samesite="Strict",
+                path="/",
+            )
+            raise response
+
+        fail_url = "/login?error=1"
+        if next_url and next_url != "/":
+            fail_url += "&next=%s" % quote(next_url)
+        raise web.HTTPFound(fail_url)
+
+    async def _handle_logout(self, request: web.Request) -> web.Response:
+        cookie = _parse_cookies(request)
+        session_morsel = cookie.get("argus_session")
+        if session_morsel:
+            self.invalidate_session(session_morsel.value)
+
+        response = web.HTTPFound("/login")
+        response.del_cookie("argus_session", path="/")
+        response.del_cookie("csrf_token", path="/")
+        raise response
+
+    async def _handle_api(self, request: web.Request) -> web.Response:
+        method = request.method
+        body = await request.read()
+        path = request.path_qs
+        store = self.analytics_store
+        audit_reader = self.audit_reader
+
+        # Try plugin API handler first
+        pro_handler = self.extensions.get_dashboard_api_handler() if self.extensions else None
+        if pro_handler:
+            try:
+                result = await pro_handler(path, method, body, store, audit_reader)
+                if result is not None:
+                    if len(result) == 3:
+                        status, content_type, response_body = result
+                    else:
+                        status, response_body = result
+                        content_type = "application/json"
+                    return _nosniff_response(status, response_body, content_type)
+            except Exception:
+                log.warning("plugin API handler failed for %s %s", method, path, exc_info=True)
+
+        # Resolve request user for audit trail
+        request_user = request.get("user", "dashboard")
+
+        # Fall through to community handler (sync, runs in thread pool)
+        status, response_body = await asyncio.to_thread(
+            handle_community_api,
+            path,
+            method,
+            body,
+            store,
+            audit_reader=audit_reader,
+            config=self.config,
+            extensions=self.extensions,
+            request_user=request_user,
+        )
+        return _nosniff_response(status, response_body)
+
+    async def _handle_live_stream(self, request: web.Request) -> web.StreamResponse:
+        """GET /api/v1/live — SSE endpoint for real-time findings."""
+        broadcaster = self.sse_broadcaster
+        if broadcaster is None:
+            return _json_error(503, "live stream not available")
+
+        response = web.StreamResponse(
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+        await response.prepare(request)
+        await response.write(b"event: connected\ndata: {}\n\n")
+
+        queue = broadcaster.subscribe()
         try:
-            server = DashboardServer(
-                bind,
-                port,
-                analytics_store,
-                extensions,
-                password=password,
-                audit_reader=audit_reader,
-                sse_broadcaster=sse_broadcaster,
-                config=config,
+            while True:
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=5)
+                    await response.write(payload.encode("utf-8"))
+                except asyncio.TimeoutError:
+                    await response.write(b": keepalive\n\n")
+        except (ConnectionResetError, ConnectionAbortedError, asyncio.CancelledError):
+            log.debug("SSE client disconnected")
+        finally:
+            broadcaster.unsubscribe(queue)
+
+        return response
+
+    async def _handle_findings_export(self, request: web.Request) -> web.Response:
+        return await self._handle_export(request, "findings")
+
+    async def _handle_audit_export(self, request: web.Request) -> web.Response:
+        return await self._handle_export(request, "audit")
+
+    async def _handle_export(self, request: web.Request, export_type: str) -> web.Response:
+        """Handle findings or audit CSV/JSON export."""
+        params = dict(request.query.items())
+        fmt = params.get("format", "csv")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        if export_type == "findings":
+            store = self.analytics_store
+            if not store:
+                return _json_error(404, "store not available")
+
+            severity = params.get("severity", "") or None
+            detector = params.get("detector", "") or None
+            provider = params.get("provider", "") or None
+            findings, _ = await asyncio.to_thread(
+                store.get_findings_page,
+                limit=10000,
+                offset=0,
+                severity=severity,
+                detector=detector,
+                provider=provider,
             )
-            thread = threading.Thread(
-                target=server.serve_forever,
-                daemon=True,
-                name="dashboard",
-            )
-            thread.start()
-            if server.password:
-                log.info("dashboard started on http://%s:%d (password protected)", bind, port)
-            else:
-                log.info("dashboard started on http://%s:%d", bind, port)
-            return server
-        except OSError as e:
-            if attempt == 0:
-                log.info("dashboard port %d in use, retrying in 2s", port)
-                time.sleep(2)
-            else:
-                log.warning(
-                    "dashboard unavailable — failed to bind to %s:%d: %s",
-                    bind,
-                    port,
-                    e,
-                )
+
+            if fmt == "json":
+                body = json.dumps(findings, indent=2).encode("utf-8")
+                return self._download_response(body, "application/json", "findings-%s.json" % now)
+            body = _findings_to_csv(findings)
+            return self._download_response(body, "text/csv; charset=utf-8", "findings-%s.csv" % now)
+
+        # audit export
+        audit_reader = self.audit_reader
+        if not audit_reader:
+            return _json_error(404, "audit reader not available")
+
+        action = params.get("action", "") or None
+        provider = params.get("provider", "") or None
+        search = params.get("search", "") or None
+        entries, _ = await asyncio.to_thread(
+            audit_reader.read_entries,
+            limit=10000,
+            offset=0,
+            action=action,
+            provider=provider,
+            search=search,
+        )
+
+        if fmt == "json":
+            body = json.dumps(entries, indent=2).encode("utf-8")
+            return self._download_response(body, "application/json", "audit-%s.json" % now)
+        body = _audit_to_csv(entries)
+        return self._download_response(body, "text/csv; charset=utf-8", "audit-%s.csv" % now)
+
+    async def _handle_logs_download(self, request: web.Request) -> web.Response:
+        """Download the application log file."""
+        config = self.config
+        if not config:
+            return _json_error(404, "config not available")
+
+        log_dir = os.path.expanduser(config.logging_config.log_dir)
+        log_file = os.path.join(log_dir, "lumen-argus.log")
+
+        def _read_log() -> str | None:
+            if not os.path.exists(log_file):
                 return None
-    return None
+            from lumen_argus.log_utils import sanitize_log_line
+
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                return "".join(sanitize_log_line(line) for line in f)
+
+        content = await asyncio.to_thread(_read_log)
+        if content is None:
+            return _json_error(404, "log file not found")
+
+        body = content.encode("utf-8")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return self._download_response(body, "text/plain; charset=utf-8", "lumen-argus-logs-%s.txt" % now)
+
+    async def _serve_dashboard(self, request: web.Request) -> web.Response:
+        """Serve the SPA dashboard HTML with plugin injections."""
+        from lumen_argus.dashboard.html import COMMUNITY_DASHBOARD_HTML
+
+        html = COMMUNITY_DASHBOARD_HTML
+
+        # Inject plugin CSS before </style>
+        extra_css = self.extensions.get_dashboard_css() if self.extensions else []
+        if extra_css:
+            css_block = "\n".join(extra_css)
+            html = html.replace("</style>", css_block + "\n</style>")
+
+        # Inject plugin page JS before </body>
+        extra_pages = self.extensions.get_dashboard_pages() if self.extensions else []
+        if extra_pages:
+            js_blocks = []
+            for page in extra_pages:
+                parts: list[str] = []
+                if page.get("html"):
+                    var_name = "_pageHtml_%s" % page["name"]
+                    parts.append("<script>var %s=%s;</script>" % (var_name, json.dumps(page["html"])))
+                parts.append("<script>\n%s\n</script>" % page["js"])
+                js_blocks.append("\n".join(parts))
+            html = html.replace("</body>", "\n".join(js_blocks) + "\n</body>")
+
+        return web.Response(
+            text=html,
+            content_type="text/html",
+            charset="utf-8",
+            headers=_SECURITY_HEADERS,
+        )
+
+    # --- Helpers ---
+
+    @staticmethod
+    def _download_response(body: bytes, content_type: str, filename: str) -> web.Response:
+        return web.Response(
+            body=body,
+            content_type=content_type,
+            headers={
+                "Content-Disposition": 'attachment; filename="%s"' % filename,
+                "X-Content-Type-Options": "nosniff",
+            },
+        )

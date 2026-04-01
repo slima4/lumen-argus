@@ -221,9 +221,10 @@ class ExtensionRegistry:
         return list(self._dashboard_css)
 
     def register_dashboard_api(self, handler: Callable[..., Any]) -> None:
-        """Register a plugin API handler.
+        """Register a plugin API handler (async).
 
-        Signature: handler(path, method, body, store, audit_reader) -> (status, body) or None
+        Signature: async handler(path, method, body, store, audit_reader)
+                   -> (status, body) | (status, content_type, body) | None
         Return None to fall through to community handler.
         """
         self._dashboard_api_handler = handler
@@ -253,10 +254,10 @@ class ExtensionRegistry:
         return self._sse_broadcaster
 
     def register_auth_provider(self, provider: object) -> None:
-        """Register an authentication provider (Django auth backend pattern).
+        """Register an authentication provider (async).
 
         Providers are tried in order after the built-in session check.
-        Provider interface: provider.authenticate(headers) -> dict or None
+        Provider interface: async provider.authenticate(headers) -> dict or None
         Return dict: {"user_id": "...", "roles": [...], "provider": "..."}
         """
         self._auth_providers.append(provider)

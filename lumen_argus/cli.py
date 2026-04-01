@@ -659,7 +659,6 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     # --- Analytics store and rules (must happen before pipeline creation) ---
-    dashboard_server = None
     analytics_store = _initialize_analytics(config, args, extensions, action_overrides)
 
     # --- Allowlist (YAML config + DB entries) ---
@@ -733,9 +732,11 @@ def main(argv: list[str] | None = None) -> None:
     start_time = time.monotonic()
 
     # --- Dashboard ---
+    dashboard_server = None
+    sse_broadcaster = None
     if config.dashboard.enabled:
         from lumen_argus.dashboard.audit_reader import AuditReader
-        from lumen_argus.dashboard.server import start_dashboard
+        from lumen_argus.dashboard.server import AsyncDashboardServer
         from lumen_argus.dashboard.sse import SSEBroadcaster
 
         # Create SSE broadcaster and register with extensions so Pro can use it
@@ -750,7 +751,7 @@ def main(argv: list[str] | None = None) -> None:
 
         dash_bind = args.host or config.dashboard.bind
 
-        dashboard_server = start_dashboard(
+        dashboard_server = AsyncDashboardServer(
             bind=dash_bind,
             port=config.dashboard.port,
             analytics_store=analytics_store,
@@ -760,8 +761,6 @@ def main(argv: list[str] | None = None) -> None:
             sse_broadcaster=sse_broadcaster,
             config=config,
         )
-        if dashboard_server:
-            log.info("dashboard: http://%s:%d", dash_bind, config.dashboard.port)
 
         # Reconcile YAML notification channels to DB
         if analytics_store and config.notifications:
@@ -825,6 +824,13 @@ def main(argv: list[str] | None = None) -> None:
         await server.start()
         if relay_instance:
             await relay_instance.start()
+        if sse_broadcaster:
+            await sse_broadcaster.start()
+        if dashboard_server:
+            try:
+                await dashboard_server.start()
+            except OSError:
+                log.warning("dashboard unavailable — continuing without it")
 
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
@@ -864,6 +870,10 @@ def main(argv: list[str] | None = None) -> None:
         if remaining and drain_timeout > 0:
             log.warning("shutdown: %d requests force-closed after %ds drain timeout", remaining, drain_timeout)
 
+        if dashboard_server:
+            await dashboard_server.stop()
+        if sse_broadcaster:
+            await sse_broadcaster.stop()
         if relay_instance:
             await relay_instance.drain(timeout=5)
             await relay_instance.stop()
