@@ -35,6 +35,7 @@ lumen-argus serve [OPTIONS]
 | `--log-level` | | `str` | `warning` | Console logging verbosity. Choices: `debug`, `info`, `warning`, `error`. |
 | `--no-color` | | `bool` | `false` | Disable ANSI color codes in terminal output. |
 | `--no-default-rules` | | `bool` | `false` | Skip auto-import of community rules on first run. |
+| `--dashboard-port` | | `int` | `8081` | Dashboard listening port. Overrides `dashboard.port` in config. |
 | `--no-standalone` | | `bool` | `false` | Mark as managed by tray app. Exposed in `/api/v1/status` as `standalone: false`. |
 | `--engine-port` | | `int` | | Enable relay+engine combined mode. Engine binds to this port, relay on `--port`. |
 | `--fail-mode` | | `str` | `open` | Relay fail mode when engine is down. Choices: `open`, `closed`. |
@@ -102,10 +103,11 @@ lumen-argus engine [OPTIONS]
 | `--log-dir` | | `str` | | Audit log directory. |
 | `--log-level` | | `str` | `warning` | Logging verbosity. |
 | `--no-default-rules` | | `bool` | `false` | Skip auto-import of community rules. |
+| `--dashboard-port` | | `int` | `8081` | Dashboard listening port. |
 | `--no-standalone` | | `bool` | `false` | Mark as managed by tray app. |
 
 ```bash
-lumen-argus engine --port 8090
+lumen-argus engine --port 8090 --dashboard-port 8082
 ```
 
 ---

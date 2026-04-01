@@ -309,6 +309,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Skip auto-import of community rules on first run",
     )
     serve_parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=None,
+        help="Dashboard port (default: 8081)",
+    )
+    serve_parser.add_argument(
         "--no-standalone",
         action="store_true",
         help="Mark as managed by tray app (default: standalone)",
@@ -354,6 +360,12 @@ def main(argv: list[str] | None = None) -> None:
         "--log-level", type=str, default="warning", choices=["debug", "info", "warning", "error"], help="Log level"
     )
     engine_parser.add_argument("--no-default-rules", action="store_true", help="Skip auto-import of community rules")
+    engine_parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=None,
+        help="Dashboard port (default: 8081)",
+    )
     engine_parser.add_argument(
         "--no-standalone",
         action="store_true",
@@ -762,10 +774,11 @@ def main(argv: list[str] | None = None) -> None:
         dash_password = config.dashboard.password
 
         dash_bind = args.host or config.dashboard.bind
+        dash_port = getattr(args, "dashboard_port", None) or config.dashboard.port
 
         dashboard_server = AsyncDashboardServer(
             bind=dash_bind,
-            port=config.dashboard.port,
+            port=dash_port,
             analytics_store=analytics_store,
             extensions=extensions,
             password=dash_password,
