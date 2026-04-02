@@ -204,6 +204,20 @@ function loadSettings(){
       el.appendChild(logGrp2);
     }
 
+    /* === Plugin settings sections === */
+    for(var si=0;si<_settingsSections.length;si++){
+      try{
+        var section=_settingsSections[si].render(cfg,status);
+        if(section)el.appendChild(section);
+      }catch(e){
+        var errGrp=_mkSG(_settingsSections[si].name);
+        var errMsg=document.createElement('div');errMsg.className='setting-row';
+        errMsg.style.color='var(--critical)';
+        errMsg.textContent='Failed to load section: '+e.message;
+        errGrp.appendChild(errMsg);el.appendChild(errGrp);
+      }
+    }
+
   }).catch(function(e){showPageError('settings-content','Failed to load settings: '+e.message,loadSettings);});}
 
 /* --- Helper: create setting group --- */
@@ -276,6 +290,15 @@ function _addDlButton(parent){
   var dlNote=document.createElement('span');dlNote.style.cssText='font-size:.72rem;color:var(--text-muted);margin-left:8px';
   dlNote.textContent='IPs and file paths are sanitized for safe sharing';
   parent.appendChild(dlNote);}
+
+/* --- Plugin settings sections registry --- */
+var _settingsSections=[];
+
+/* Called by Pro enhancers to register additional settings groups.
+   renderFn(cfg, statusData) receives GET /config and GET /status responses.
+   Return a DOM element (e.g. from _mkSG) or null to skip. */
+function registerSettingsSection(name,renderFn){
+  _settingsSections.push({name:name,render:renderFn});}
 
 /* --- Save settings --- */
 function _saveSettings(statusEl){
