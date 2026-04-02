@@ -83,12 +83,12 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Run proxy tests
-        run: uv run --python ${{ matrix.python-version }} --package lumen-argus python -m unittest discover -v tests/
+        run: uv run --python ${{ matrix.python-version }} --package lumen-argus-proxy python -m unittest discover -v tests/
 
       - name: Verify CLI
         run: |
-          uv run --package lumen-argus lumen-argus --version
-          uv run --package lumen-argus lumen-argus --help
+          uv run --package lumen-argus-proxy lumen-argus --version
+          uv run --package lumen-argus-proxy lumen-argus --help
 
   benchmark:
     if: github.event_name == 'push'
@@ -100,7 +100,7 @@ jobs:
         uses: astral-sh/setup-uv@6b9c6063abd6010835c3c7f4a7d2c2bef6ef3eb6 # v5
 
       - name: Run benchmark (smoke test)
-        run: uv run --package lumen-argus python benchmark.py -n 10 -p medium
+        run: uv run --package lumen-argus-proxy python benchmark.py -n 10 -p medium
 
   docker:
     if: github.event_name == 'push'

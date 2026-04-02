@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lumen-argus"
+name = "lumen-argus-proxy"
 version = "0.1.0"
 description = "AI coding tool DLP proxy — scan outbound requests for secrets, PII, and proprietary data"
 license = "MIT"

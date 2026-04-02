@@ -17,7 +17,7 @@ jobs:
         package:
           - name: lumen-argus-core
             path: packages/core
-          - name: lumen-argus
+          - name: lumen-argus-proxy
             path: packages/proxy
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -42,7 +42,7 @@ jobs:
     environment: testpypi
     strategy:
       matrix:
-        package: [lumen-argus-core, lumen-argus]
+        package: [lumen-argus-core, lumen-argus-proxy]
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -54,7 +54,7 @@ jobs:
         uses: astral-sh/setup-uv@6b9c6063abd6010835c3c7f4a7d2c2bef6ef3eb6 # v5
 
       - name: Publish to TestPyPI
-        run: uv publish --index-url https://test.pypi.org/simple/ dist/*
+        run: uv publish --publish-url https://test.pypi.org/legacy/ dist/*
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
 
@@ -64,7 +64,7 @@ jobs:
     environment: pypi
     strategy:
       matrix:
-        package: [lumen-argus-core, lumen-argus]
+        package: [lumen-argus-core, lumen-argus-proxy]
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4

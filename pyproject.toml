@@ -9,12 +9,12 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 lumen-argus-core = { workspace = true }
-lumen-argus = { workspace = true }
+lumen-argus-proxy = { workspace = true }
 
 [dependency-groups]
 dev = [
     "lumen-argus-core",
-    "lumen-argus",
+    "lumen-argus-proxy",
     "mypy>=1.10",
     "types-PyYAML>=6.0",
     "pre-commit>=3.7",

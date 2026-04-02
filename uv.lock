@@ -4,8 +4,8 @@ requires-python = ">=3.11"
 
 [manifest]
 members = [
-    "lumen-argus",
     "lumen-argus-core",
+    "lumen-argus-proxy",
     "lumen-argus-workspace",
 ]
 
@@ -598,7 +598,12 @@ wheels = [
 ]
 
 [[package]]
-name = "lumen-argus"
+name = "lumen-argus-core"
+version = "0.1.0"
+source = { editable = "packages/core" }
+
+[[package]]
+name = "lumen-argus-proxy"
 version = "0.1.0"
 source = { editable = "packages/proxy" }
 dependencies = [
@@ -624,19 +629,14 @@ requires-dist = [
 provides-extras = ["rules-analysis"]
 
 [[package]]
-name = "lumen-argus-core"
-version = "0.1.0"
-source = { editable = "packages/core" }
-
-[[package]]
 name = "lumen-argus-workspace"
 version = "0.0.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
-    { name = "lumen-argus" },
     { name = "lumen-argus-core" },
+    { name = "lumen-argus-proxy" },
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mypy" },
@@ -648,8 +648,8 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "lumen-argus", editable = "packages/proxy" },
     { name = "lumen-argus-core", editable = "packages/core" },
+    { name = "lumen-argus-proxy", editable = "packages/proxy" },
     { name = "mkdocs", specifier = ">=1.5" },
     { name = "mkdocs-material", specifier = ">=9.0" },
     { name = "mypy", specifier = ">=1.10" },
