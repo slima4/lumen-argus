@@ -9,11 +9,13 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 lumen-argus-core = { workspace = true }
+lumen-argus-agent = { workspace = true }
 lumen-argus-proxy = { workspace = true }
 
 [dependency-groups]
 dev = [
     "lumen-argus-core",
+    "lumen-argus-agent",
     "lumen-argus-proxy",
     "mypy>=1.10",
     "types-PyYAML>=6.0",
@@ -55,4 +57,4 @@ module = [
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages/core/tests"]
+testpaths = ["tests", "packages/core/tests", "packages/agent/tests"]

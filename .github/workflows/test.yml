@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       core: ${{ steps.filter.outputs.core }}
+      agent: ${{ steps.filter.outputs.agent }}
       proxy: ${{ steps.filter.outputs.proxy }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -28,6 +29,9 @@ jobs:
         with:
           filters: |
             core:
+              - 'packages/core/**'
+            agent:
+              - 'packages/agent/**'
               - 'packages/core/**'
             proxy:
               - 'packages/proxy/**'
@@ -63,6 +67,32 @@ jobs:
 
       - name: Run core tests
         run: uv run --python ${{ matrix.python-version }} --package lumen-argus-core python -m unittest discover -v packages/core/tests/
+
+  test-agent:
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@6b9c6063abd6010835c3c7f4a7d2c2bef6ef3eb6 # v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Run agent tests
+        run: uv run --python ${{ matrix.python-version }} --package lumen-argus-agent python -m unittest discover -v packages/agent/tests/
+
+      - name: Verify agent CLI
+        run: |
+          uv run --package lumen-argus-agent lumen-argus-agent --version
+          uv run --package lumen-argus-agent lumen-argus-agent detect --json | python -c "import sys,json; d=json.load(sys.stdin); assert 'clients' in d"
 
   test-proxy:
     needs: changes
