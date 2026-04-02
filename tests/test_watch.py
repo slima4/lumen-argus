@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from lumen_argus.watch import (
+from lumen_argus_core.watch import (
     WatchState,
     generate_launchd_plist,
     generate_systemd_unit,
@@ -39,10 +39,10 @@ class TestWatchState(unittest.TestCase):
             last_scan="2026-03-28T10:00:00Z",
         )
         with (
-            patch("lumen_argus.watch._STATE_DIR", self.tmpdir),
-            patch("lumen_argus.watch._STATE_FILE", self.state_file),
+            patch("lumen_argus_core.watch._STATE_DIR", self.tmpdir),
+            patch("lumen_argus_core.watch._STATE_FILE", self.state_file),
         ):
-            from lumen_argus.watch import _load_state, _save_state
+            from lumen_argus_core.watch import _load_state, _save_state
 
             _save_state(state)
             loaded = _load_state()
@@ -50,8 +50,8 @@ class TestWatchState(unittest.TestCase):
         self.assertEqual(loaded.last_scan, "2026-03-28T10:00:00Z")
 
     def test_load_missing_file(self):
-        with patch("lumen_argus.watch._STATE_FILE", "/nonexistent/state.json"):
-            from lumen_argus.watch import _load_state
+        with patch("lumen_argus_core.watch._STATE_FILE", "/nonexistent/state.json"):
+            from lumen_argus_core.watch import _load_state
 
             state = _load_state()
         self.assertEqual(state.known_clients, {})
@@ -59,8 +59,8 @@ class TestWatchState(unittest.TestCase):
     def test_load_corrupt_file(self):
         with open(self.state_file, "w") as f:
             f.write("not json")
-        with patch("lumen_argus.watch._STATE_FILE", self.state_file):
-            from lumen_argus.watch import _load_state
+        with patch("lumen_argus_core.watch._STATE_FILE", self.state_file):
+            from lumen_argus_core.watch import _load_state
 
             state = _load_state()
         self.assertEqual(state.known_clients, {})
@@ -88,9 +88,9 @@ class TestScanOnce(unittest.TestCase):
         mock_report.clients = [mock_client]
 
         with (
-            patch("lumen_argus.watch._STATE_DIR", self.tmpdir),
-            patch("lumen_argus.watch._STATE_FILE", self.state_file),
-            patch("lumen_argus.detect.detect_installed_clients", return_value=mock_report),
+            patch("lumen_argus_core.watch._STATE_DIR", self.tmpdir),
+            patch("lumen_argus_core.watch._STATE_FILE", self.state_file),
+            patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report),
         ):
             new_ids = scan_once(proxy_url="http://localhost:8080")
         self.assertEqual(new_ids, ["aider"])
@@ -106,9 +106,9 @@ class TestScanOnce(unittest.TestCase):
         mock_report.clients = [mock_client]
 
         with (
-            patch("lumen_argus.watch._STATE_DIR", self.tmpdir),
-            patch("lumen_argus.watch._STATE_FILE", self.state_file),
-            patch("lumen_argus.detect.detect_installed_clients", return_value=mock_report),
+            patch("lumen_argus_core.watch._STATE_DIR", self.tmpdir),
+            patch("lumen_argus_core.watch._STATE_FILE", self.state_file),
+            patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report),
         ):
             scan_once(proxy_url="http://localhost:8080")
             new_ids = scan_once(proxy_url="http://localhost:8080")
@@ -125,10 +125,10 @@ class TestScanOnce(unittest.TestCase):
         mock_report.clients = [mock_client]
 
         with (
-            patch("lumen_argus.watch._STATE_DIR", self.tmpdir),
-            patch("lumen_argus.watch._STATE_FILE", self.state_file),
-            patch("lumen_argus.detect.detect_installed_clients", return_value=mock_report),
-            patch("lumen_argus.setup_wizard.run_setup") as mock_setup,
+            patch("lumen_argus_core.watch._STATE_DIR", self.tmpdir),
+            patch("lumen_argus_core.watch._STATE_FILE", self.state_file),
+            patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report),
+            patch("lumen_argus_core.setup_wizard.run_setup") as mock_setup,
         ):
             scan_once(proxy_url="http://localhost:8080", auto_configure=True)
         mock_setup.assert_called_once_with(
@@ -179,8 +179,8 @@ class TestServiceInstall(unittest.TestCase):
     def test_install_macos(self, _):
         plist_path = os.path.join(self.tmpdir, "io.lumen-argus.watch.plist")
         with (
-            patch("lumen_argus.watch._LAUNCHD_PLIST_DIR", self.tmpdir),
-            patch("lumen_argus.watch._LAUNCHD_PLIST_PATH", plist_path),
+            patch("lumen_argus_core.watch._LAUNCHD_PLIST_DIR", self.tmpdir),
+            patch("lumen_argus_core.watch._LAUNCHD_PLIST_PATH", plist_path),
         ):
             path = install_service()
         self.assertEqual(path, plist_path)
@@ -190,8 +190,8 @@ class TestServiceInstall(unittest.TestCase):
     def test_install_linux(self, _):
         unit_path = os.path.join(self.tmpdir, "lumen-argus-watch.service")
         with (
-            patch("lumen_argus.watch._SYSTEMD_UNIT_DIR", self.tmpdir),
-            patch("lumen_argus.watch._SYSTEMD_SERVICE_PATH", unit_path),
+            patch("lumen_argus_core.watch._SYSTEMD_UNIT_DIR", self.tmpdir),
+            patch("lumen_argus_core.watch._SYSTEMD_SERVICE_PATH", unit_path),
         ):
             path = install_service()
         self.assertEqual(path, unit_path)
@@ -202,22 +202,22 @@ class TestServiceInstall(unittest.TestCase):
         plist_path = os.path.join(self.tmpdir, "io.lumen-argus.watch.plist")
         with open(plist_path, "w") as f:
             f.write("<plist/>")
-        with patch("lumen_argus.watch._LAUNCHD_PLIST_PATH", plist_path):
+        with patch("lumen_argus_core.watch._LAUNCHD_PLIST_PATH", plist_path):
             result = uninstall_service()
         self.assertTrue(result)
         self.assertFalse(os.path.exists(plist_path))
 
     @patch("platform.system", return_value="Darwin")
     def test_uninstall_not_installed(self, _):
-        with patch("lumen_argus.watch._LAUNCHD_PLIST_PATH", os.path.join(self.tmpdir, "nope.plist")):
+        with patch("lumen_argus_core.watch._LAUNCHD_PLIST_PATH", os.path.join(self.tmpdir, "nope.plist")):
             result = uninstall_service()
         self.assertFalse(result)
 
     def test_status_not_installed(self):
         with (
-            patch("lumen_argus.watch._LAUNCHD_PLIST_PATH", "/nonexistent"),
-            patch("lumen_argus.watch._SYSTEMD_SERVICE_PATH", "/nonexistent"),
-            patch("lumen_argus.watch._STATE_FILE", "/nonexistent"),
+            patch("lumen_argus_core.watch._LAUNCHD_PLIST_PATH", "/nonexistent"),
+            patch("lumen_argus_core.watch._SYSTEMD_SERVICE_PATH", "/nonexistent"),
+            patch("lumen_argus_core.watch._STATE_FILE", "/nonexistent"),
         ):
             status = get_service_status()
         self.assertEqual(status["installed"], "false")

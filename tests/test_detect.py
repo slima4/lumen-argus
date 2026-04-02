@@ -8,8 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from lumen_argus.clients import CLIENT_REGISTRY, ClientDef, ProxyConfig, ProxyConfigType
-from lumen_argus.detect import (
+from lumen_argus_core.clients import CLIENT_REGISTRY, ClientDef, ProxyConfig, ProxyConfigType
+from lumen_argus_core.detect import (
     DetectedClient,
     DetectionReport,
     IDEVariant,
@@ -154,7 +154,7 @@ class TestScanVSCodeExtension(unittest.TestCase):
             detect_vscode_ext="github.copilot",
         )
         with patch(
-            "lumen_argus.detect._VSCODE_VARIANTS", (IDEVariant(name="Test", extensions=(ext_dir,), settings=()),)
+            "lumen_argus_core.detect._VSCODE_VARIANTS", (IDEVariant(name="Test", extensions=(ext_dir,), settings=()),)
         ):
             result = _scan_vscode_extension(client)
         self.assertIsNotNone(result)
@@ -181,7 +181,7 @@ class TestScanVSCodeExtension(unittest.TestCase):
             detect_vscode_ext="github.copilot",
         )
         with patch(
-            "lumen_argus.detect._VSCODE_VARIANTS", (IDEVariant(name="Test", extensions=(ext_dir,), settings=()),)
+            "lumen_argus_core.detect._VSCODE_VARIANTS", (IDEVariant(name="Test", extensions=(ext_dir,), settings=()),)
         ):
             result = _scan_vscode_extension(client)
         self.assertIsNone(result)
@@ -207,7 +207,7 @@ class TestScanVSCodeExtension(unittest.TestCase):
             detect_vscode_ext="github.copilot",
         )
         with patch(
-            "lumen_argus.detect._VSCODE_VARIANTS", (IDEVariant(name="Test", extensions=(ext_dir,), settings=()),)
+            "lumen_argus_core.detect._VSCODE_VARIANTS", (IDEVariant(name="Test", extensions=(ext_dir,), settings=()),)
         ):
             result = _scan_vscode_extension(client)
         self.assertEqual(result.version, "1.200.0")
@@ -227,8 +227,8 @@ class TestScanShellProfiles(unittest.TestCase):
         """Run _scan_shell_profiles with mock profiles and no env file leakage."""
         mock_profiles = {"zsh": (self.zshrc,)}
         with (
-            patch("lumen_argus.detect._SHELL_PROFILES", mock_profiles),
-            patch("lumen_argus.detect._ENV_FILE_PATH", "/nonexistent/env"),
+            patch("lumen_argus_core.detect._SHELL_PROFILES", mock_profiles),
+            patch("lumen_argus_core.detect._ENV_FILE_PATH", "/nonexistent/env"),
             patch.dict(os.environ, {"SHELL": "/bin/zsh"}),
         ):
             return _scan_shell_profiles(proxy_url)
@@ -282,7 +282,7 @@ class TestMatchShellEntry(unittest.TestCase):
     """Test _match_shell_entry client tag filtering."""
 
     def test_exact_tag_match(self):
-        from lumen_argus.detect import _match_shell_entry
+        from lumen_argus_core.detect import _match_shell_entry
 
         entries = [
             ("http://localhost:8080", "~/.zshrc", 1, "opencode"),
@@ -293,14 +293,14 @@ class TestMatchShellEntry(unittest.TestCase):
         self.assertEqual(result[3], "opencode")
 
     def test_untagged_matches_any_client(self):
-        from lumen_argus.detect import _match_shell_entry
+        from lumen_argus_core.detect import _match_shell_entry
 
         entries = [("http://localhost:8080", "~/.zshrc", 1, "")]
         result = _match_shell_entry(entries, "copilot")
         self.assertIsNotNone(result)
 
     def test_other_client_tag_rejected(self):
-        from lumen_argus.detect import _match_shell_entry
+        from lumen_argus_core.detect import _match_shell_entry
 
         entries = [("http://localhost:8080", "~/.zshrc", 1, "opencode")]
         result = _match_shell_entry(entries, "copilot")
@@ -308,7 +308,7 @@ class TestMatchShellEntry(unittest.TestCase):
 
     def test_last_applicable_wins(self):
         """Shell semantics: last assignment wins at runtime."""
-        from lumen_argus.detect import _match_shell_entry
+        from lumen_argus_core.detect import _match_shell_entry
 
         # Tagged line first, then untagged override — untagged wins (last)
         entries = [
@@ -320,7 +320,7 @@ class TestMatchShellEntry(unittest.TestCase):
 
     def test_tagged_after_untagged_wins(self):
         """Tagged line after untagged — tagged wins (it's last)."""
-        from lumen_argus.detect import _match_shell_entry
+        from lumen_argus_core.detect import _match_shell_entry
 
         entries = [
             ("http://corp-proxy:9090", "~/.zshrc", 1, ""),
@@ -435,7 +435,7 @@ class TestScanBrewPackage(unittest.TestCase):
             website="https://test.com",
             detect_brew="aider",
         )
-        with patch("lumen_argus.detect._BREW_CELLAR_PATHS", [cellar]):
+        with patch("lumen_argus_core.detect._BREW_CELLAR_PATHS", [cellar]):
             result = _scan_brew_package(client)
         self.assertIsNotNone(result)
         self.assertEqual(result.version, "0.50.1")
@@ -508,7 +508,7 @@ class TestScanNeovimPlugin(unittest.TestCase):
             website="https://test.com",
             detect_neovim_plugin="copilot.vim",
         )
-        with patch("lumen_argus.detect._NEOVIM_PLUGIN_DIRS", [lazy_dir]):
+        with patch("lumen_argus_core.detect._NEOVIM_PLUGIN_DIRS", [lazy_dir]):
             result = _scan_neovim_plugin(client)
         self.assertIsNotNone(result)
         self.assertEqual(result.install_method, InstallMethod.NEOVIM_PLUGIN)
@@ -533,7 +533,7 @@ class TestScanNeovimPlugin(unittest.TestCase):
             website="https://test.com",
             detect_neovim_plugin="copilot.vim",
         )
-        with patch("lumen_argus.detect._NEOVIM_PLUGIN_DIRS", [lazy_dir]):
+        with patch("lumen_argus_core.detect._NEOVIM_PLUGIN_DIRS", [lazy_dir]):
             result = _scan_neovim_plugin(client)
         self.assertIsNone(result)
 
@@ -561,15 +561,15 @@ class TestDetectInstalledClients(unittest.TestCase):
 
     def test_returns_report(self):
         with (
-            patch("lumen_argus.detect._scan_binary", return_value=None),
-            patch("lumen_argus.detect._scan_pip_package", return_value=None),
-            patch("lumen_argus.detect._scan_npm_package", return_value=None),
-            patch("lumen_argus.detect._scan_brew_package", return_value=None),
-            patch("lumen_argus.detect._scan_vscode_extension", return_value=None),
-            patch("lumen_argus.detect._scan_app_bundle", return_value=None),
-            patch("lumen_argus.detect._scan_jetbrains_plugin", return_value=None),
-            patch("lumen_argus.detect._scan_neovim_plugin", return_value=None),
-            patch("lumen_argus.detect._scan_shell_profiles", return_value={}),
+            patch("lumen_argus_core.detect._scan_binary", return_value=None),
+            patch("lumen_argus_core.detect._scan_pip_package", return_value=None),
+            patch("lumen_argus_core.detect._scan_npm_package", return_value=None),
+            patch("lumen_argus_core.detect._scan_brew_package", return_value=None),
+            patch("lumen_argus_core.detect._scan_vscode_extension", return_value=None),
+            patch("lumen_argus_core.detect._scan_app_bundle", return_value=None),
+            patch("lumen_argus_core.detect._scan_jetbrains_plugin", return_value=None),
+            patch("lumen_argus_core.detect._scan_neovim_plugin", return_value=None),
+            patch("lumen_argus_core.detect._scan_shell_profiles", return_value={}),
         ):
             report = detect_installed_clients()
         self.assertIsInstance(report, DetectionReport)
@@ -594,12 +594,12 @@ class TestDetectInstalledClients(unittest.TestCase):
             raise RuntimeError("scanner crash")
 
         with (
-            patch("lumen_argus.detect._scan_binary", side_effect=bad_scanner),
-            patch("lumen_argus.detect._scan_pip_package", return_value=None),
-            patch("lumen_argus.detect._scan_vscode_extension", return_value=None),
-            patch("lumen_argus.detect._scan_app_bundle", return_value=None),
-            patch("lumen_argus.detect._scan_jetbrains_plugin", return_value=None),
-            patch("lumen_argus.detect._scan_shell_profiles", return_value={}),
+            patch("lumen_argus_core.detect._scan_binary", side_effect=bad_scanner),
+            patch("lumen_argus_core.detect._scan_pip_package", return_value=None),
+            patch("lumen_argus_core.detect._scan_vscode_extension", return_value=None),
+            patch("lumen_argus_core.detect._scan_app_bundle", return_value=None),
+            patch("lumen_argus_core.detect._scan_jetbrains_plugin", return_value=None),
+            patch("lumen_argus_core.detect._scan_shell_profiles", return_value={}),
         ):
             report = detect_installed_clients()
         self.assertEqual(report.total_detected, 0)
@@ -633,30 +633,30 @@ class TestReadEnvFileVars(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_reads_var_names(self):
-        from lumen_argus.detect import _read_env_file_vars
+        from lumen_argus_core.detect import _read_env_file_vars
 
         with open(self.env_file, "w") as f:
             f.write("export OPENAI_BASE_URL=http://localhost:8080  # lumen-argus:managed client=aider\n")
             f.write("export ANTHROPIC_BASE_URL=http://localhost:8080  # lumen-argus:managed client=claude_code\n")
-        with patch("lumen_argus.detect.os.path.expanduser", return_value=self.env_file):
+        with patch("lumen_argus_core.detect.os.path.expanduser", return_value=self.env_file):
             result = _read_env_file_vars()
         self.assertIn("OPENAI_BASE_URL", result)
         self.assertIn("ANTHROPIC_BASE_URL", result)
         self.assertEqual(len(result), 2)
 
     def test_empty_file_returns_empty_set(self):
-        from lumen_argus.detect import _read_env_file_vars
+        from lumen_argus_core.detect import _read_env_file_vars
 
         with open(self.env_file, "w") as f:
             f.write("")
-        with patch("lumen_argus.detect.os.path.expanduser", return_value=self.env_file):
+        with patch("lumen_argus_core.detect.os.path.expanduser", return_value=self.env_file):
             result = _read_env_file_vars()
         self.assertEqual(result, set())
 
     def test_missing_file_returns_empty_set(self):
-        from lumen_argus.detect import _read_env_file_vars
+        from lumen_argus_core.detect import _read_env_file_vars
 
-        with patch("lumen_argus.detect.os.path.expanduser", return_value="/nonexistent/env"):
+        with patch("lumen_argus_core.detect.os.path.expanduser", return_value="/nonexistent/env"):
             result = _read_env_file_vars()
         self.assertEqual(result, set())
 
@@ -720,15 +720,15 @@ class TestCIEnvironmentDetection(unittest.TestCase):
     def test_ci_environment_in_report(self):
         """CI environment should be included in detection report."""
         with (
-            patch("lumen_argus.detect._scan_binary", return_value=None),
-            patch("lumen_argus.detect._scan_pip_package", return_value=None),
-            patch("lumen_argus.detect._scan_npm_package", return_value=None),
-            patch("lumen_argus.detect._scan_brew_package", return_value=None),
-            patch("lumen_argus.detect._scan_vscode_extension", return_value=None),
-            patch("lumen_argus.detect._scan_app_bundle", return_value=None),
-            patch("lumen_argus.detect._scan_jetbrains_plugin", return_value=None),
-            patch("lumen_argus.detect._scan_neovim_plugin", return_value=None),
-            patch("lumen_argus.detect._scan_shell_profiles", return_value={}),
+            patch("lumen_argus_core.detect._scan_binary", return_value=None),
+            patch("lumen_argus_core.detect._scan_pip_package", return_value=None),
+            patch("lumen_argus_core.detect._scan_npm_package", return_value=None),
+            patch("lumen_argus_core.detect._scan_brew_package", return_value=None),
+            patch("lumen_argus_core.detect._scan_vscode_extension", return_value=None),
+            patch("lumen_argus_core.detect._scan_app_bundle", return_value=None),
+            patch("lumen_argus_core.detect._scan_jetbrains_plugin", return_value=None),
+            patch("lumen_argus_core.detect._scan_neovim_plugin", return_value=None),
+            patch("lumen_argus_core.detect._scan_shell_profiles", return_value={}),
             patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=False),
         ):
             report = detect_installed_clients()

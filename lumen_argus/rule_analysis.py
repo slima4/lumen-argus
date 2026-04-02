@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from lumen_argus.config import Config
     from lumen_argus.extensions import ExtensionRegistry
 
-from lumen_argus.time_utils import now_iso
+from lumen_argus_core.time_utils import now_iso
 
 log = logging.getLogger("argus.rule_analysis")
 

@@ -699,7 +699,7 @@ class ScannerPipeline:
         if not broadcaster:
             return
 
-        from lumen_argus.time_utils import now_iso
+        from lumen_argus_core.time_utils import now_iso
 
         timestamp = now_iso()
         client = session.client_name if session else ""

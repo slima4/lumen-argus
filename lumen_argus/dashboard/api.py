@@ -448,7 +448,7 @@ def _handle_status(store: AnalyticsStore | None, extensions: ExtensionRegistry |
 
 def _handle_clients_list(extensions: ExtensionRegistry | None) -> tuple[int, bytes]:
     """Return catalog of supported AI CLI agents with setup instructions."""
-    from lumen_argus.clients import get_all_clients
+    from lumen_argus_core.clients import get_all_clients
 
     extra = extensions.get_extra_clients() if extensions else []
     return _json_response(200, {"clients": get_all_clients(extra_clients=extra)})

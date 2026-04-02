@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 import aiohttp
 from aiohttp import web
+from lumen_argus_core.time_utils import now_iso_ms
 
 from lumen_argus.actions import build_block_response, should_forward, try_strip_blocked_history
 from lumen_argus.audit import AuditLogger
@@ -37,7 +38,6 @@ from lumen_argus.pipeline import ScannerPipeline
 from lumen_argus.provider import ProviderRouter
 from lumen_argus.session import extract_session as _extract_session
 from lumen_argus.stats import SessionStats
-from lumen_argus.time_utils import now_iso_ms
 
 log = logging.getLogger("argus.proxy")
 

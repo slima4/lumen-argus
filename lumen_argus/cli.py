@@ -1320,7 +1320,7 @@ def _run_logs(args: argparse.Namespace) -> None:
 
 def _run_clients(args: argparse.Namespace) -> None:
     """Execute the 'clients' subcommand — list supported AI CLI agents."""
-    from lumen_argus.clients import get_all_clients
+    from lumen_argus_core.clients import get_all_clients
 
     clients = get_all_clients()
 
@@ -1352,7 +1352,7 @@ def _run_clients(args: argparse.Namespace) -> None:
 
 def _run_detect(args: argparse.Namespace) -> None:
     """Execute the 'detect' subcommand — scan for installed AI CLI agents."""
-    from lumen_argus.detect import detect_installed_clients
+    from lumen_argus_core.detect import detect_installed_clients
 
     report = detect_installed_clients(
         proxy_url=args.proxy_url,
@@ -1425,7 +1425,7 @@ def _run_detect(args: argparse.Namespace) -> None:
 
 def _run_setup(args: argparse.Namespace) -> None:
     """Execute the 'setup' subcommand — configure tools to use proxy."""
-    from lumen_argus.setup_wizard import run_setup, undo_setup
+    from lumen_argus_core.setup_wizard import run_setup, undo_setup
 
     if args.undo:
         reverted = undo_setup()
@@ -1445,7 +1445,7 @@ def _run_setup(args: argparse.Namespace) -> None:
 
 def _run_protection(args: argparse.Namespace) -> None:
     """Execute the 'protection' subcommand — toggle proxy routing."""
-    from lumen_argus.setup_wizard import disable_protection, enable_protection, protection_status
+    from lumen_argus_core.setup_wizard import disable_protection, enable_protection, protection_status
 
     if args.action == "enable":
         result = enable_protection(proxy_url=args.proxy_url)
@@ -1528,7 +1528,7 @@ def _run_relay(args: argparse.Namespace) -> None:
 
 def _run_watch(args: argparse.Namespace) -> None:
     """Execute the 'watch' subcommand — background daemon for new tool detection."""
-    from lumen_argus.watch import (
+    from lumen_argus_core.watch import (
         get_service_status,
         install_service,
         run_watch_loop,

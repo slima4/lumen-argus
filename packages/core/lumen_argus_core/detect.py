@@ -19,7 +19,7 @@ import subprocess
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from lumen_argus.clients import CLIENT_REGISTRY, PROXY_ENV_VARS, ClientDef, ProxyConfigType
+from lumen_argus_core.clients import CLIENT_REGISTRY, PROXY_ENV_VARS, ClientDef, ProxyConfigType
 
 log = logging.getLogger("argus.detect")
 

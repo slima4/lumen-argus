@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from lumen_argus.analytics.store import AnalyticsStore
 
-from lumen_argus.time_utils import now_iso
+from lumen_argus_core.time_utils import now_iso
 
 log = logging.getLogger("argus.notifiers.dispatcher")
 

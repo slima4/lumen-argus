@@ -22,8 +22,8 @@ import re
 import shutil
 from dataclasses import asdict, dataclass
 
-from lumen_argus.detect import _SHELL_PROFILES, detect_installed_clients, load_jsonc
-from lumen_argus.time_utils import now_iso
+from lumen_argus_core.detect import _SHELL_PROFILES, detect_installed_clients, load_jsonc
+from lumen_argus_core.time_utils import now_iso
 
 log = logging.getLogger("argus.setup")
 
@@ -71,7 +71,7 @@ def _detect_shell_profile() -> str:
     """Detect the current user's primary shell profile file."""
     # On Windows, use PowerShell profile
     if platform.system() == "Windows":
-        from lumen_argus.detect import _get_powershell_profiles
+        from lumen_argus_core.detect import _get_powershell_profiles
 
         ps_profiles = _get_powershell_profiles()
         if ps_profiles:
@@ -397,7 +397,7 @@ def enable_protection(proxy_url: str = "http://localhost:8080") -> dict[str, obj
 
     Returns status dict with enabled flag and tool count.
     """
-    from lumen_argus.clients import CLIENT_REGISTRY, ProxyConfigType
+    from lumen_argus_core.clients import CLIENT_REGISTRY, ProxyConfigType
 
     entries = []
     for client in CLIENT_REGISTRY:
@@ -590,7 +590,7 @@ def undo_setup() -> int:
     shell_profiles = [p for profiles in _SHELL_PROFILES.values() for p in profiles]
     # Include PowerShell profiles on Windows
     if platform.system() == "Windows":
-        from lumen_argus.detect import _get_powershell_profiles
+        from lumen_argus_core.detect import _get_powershell_profiles
 
         shell_profiles.extend(_get_powershell_profiles())
     for profile in shell_profiles:
@@ -723,7 +723,7 @@ def run_setup(
     for target in targets:
         print("\n-- %s %s" % (target.display_name, "-" * (40 - len(target.display_name))))
 
-        from lumen_argus.clients import ProxyConfigType, get_client_by_id
+        from lumen_argus_core.clients import ProxyConfigType, get_client_by_id
 
         client_def = get_client_by_id(target.client_id)
         if not client_def:
@@ -796,7 +796,7 @@ def _prompt_yes(message: str) -> bool:
 
 def _find_ide_settings(extension_path: str) -> str | None:
     """Find the IDE settings.json file that corresponds to an extension path."""
-    from lumen_argus.detect import _get_vscode_variants
+    from lumen_argus_core.detect import _get_vscode_variants
 
     # Determine which variant owns this extension path
     for variant in _get_vscode_variants():

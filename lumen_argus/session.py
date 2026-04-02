@@ -12,7 +12,8 @@ import logging
 import re
 from typing import Any
 
-from lumen_argus.clients import identify_client
+from lumen_argus_core.clients import identify_client
+
 from lumen_argus.models import SessionContext
 
 log = logging.getLogger("argus.session")

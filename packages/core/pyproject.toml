@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lumen-argus-core"
+version = "0.1.0"
+description = "Client registry, detection engine, and setup tools for lumen-argus"
+readme = {text = "Client registry, detection engine, and setup tools for lumen-argus", content-type = "text/plain"}
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    {name = "lumen-argus contributors"},
+]
+keywords = ["dlp", "ai", "security", "detection"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = []

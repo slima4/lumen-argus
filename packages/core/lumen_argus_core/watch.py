@@ -98,8 +98,8 @@ def scan_once(
     Returns:
         List of client_id strings for newly detected (previously unknown) tools.
     """
-    from lumen_argus import detect as _detect_mod
-    from lumen_argus.time_utils import now_iso
+    from lumen_argus_core import detect as _detect_mod
+    from lumen_argus_core.time_utils import now_iso
 
     state = _load_state()
     state.proxy_url = proxy_url
@@ -114,7 +114,7 @@ def scan_once(
         log.info("new tools detected: %s", ", ".join(new_ids))
 
         if auto_configure:
-            from lumen_argus import setup_wizard as _setup_mod
+            from lumen_argus_core import setup_wizard as _setup_mod
 
             for cid in new_ids:
                 log.info("auto-configuring %s", cid)

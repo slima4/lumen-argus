@@ -2,7 +2,7 @@
 
 import unittest
 
-from lumen_argus.clients import (
+from lumen_argus_core.clients import (
     CLIENT_REGISTRY,
     PROXY_ENV_VARS,
     ClientDef,

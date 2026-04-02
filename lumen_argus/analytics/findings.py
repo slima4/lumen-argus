@@ -7,9 +7,10 @@ import hmac as hmac_mod
 import logging
 from typing import TYPE_CHECKING, Any
 
+from lumen_argus_core.time_utils import now_iso_ms
+
 from lumen_argus.analytics._db import scalar
 from lumen_argus.models import Finding, SessionContext
-from lumen_argus.time_utils import now_iso_ms
 
 if TYPE_CHECKING:
     from lumen_argus.analytics.store import AnalyticsStore
