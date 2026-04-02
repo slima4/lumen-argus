@@ -67,6 +67,16 @@ def _build_parser() -> argparse.ArgumentParser:
     watch_parser.add_argument("--uninstall", action="store_true", help="Remove system service")
     watch_parser.add_argument("--status", action="store_true", help="Show watch daemon status")
 
+    # enroll
+    enroll_parser = subparsers.add_parser("enroll", help="Enroll with a central lumen-argus proxy")
+    enroll_parser.add_argument("--server", type=str, default="", help="Central proxy server URL")
+    enroll_parser.add_argument("--token", type=str, default="", help="Enrollment token")
+    enroll_parser.add_argument("--non-interactive", action="store_true", help="No prompts")
+    enroll_parser.add_argument("--undo", action="store_true", help="Unenroll and remove configuration")
+
+    # heartbeat
+    subparsers.add_parser("heartbeat", help="Send a single heartbeat to the central proxy")
+
     return parser
 
 
@@ -268,6 +278,77 @@ def _run_watch(args: argparse.Namespace) -> None:
     )
 
 
+def _run_enroll(args: argparse.Namespace) -> None:
+    from lumen_argus_core.enrollment import EnrollmentError, enroll, load_enrollment, unenroll
+
+    if args.undo:
+        if unenroll():
+            # Also undo tool configuration and protection
+            from lumen_argus_core.setup_wizard import disable_protection, undo_setup
+            from lumen_argus_core.watch import uninstall_service
+
+            undo_setup()
+            disable_protection()
+            uninstall_service()
+            print("Unenrolled. All proxy configuration removed.")
+        else:
+            print("Not currently enrolled.")
+        return
+
+    existing = load_enrollment()
+    if existing:
+        print("Already enrolled with %s (%s)" % (existing["server"], existing.get("organization", "")))
+        print("Run 'lumen-argus-agent enroll --undo' to unenroll first.")
+        return
+
+    server = args.server
+    if not server and not args.non_interactive:
+        server = input("Enter server URL: ").strip()
+    if not server:
+        print("Error: --server URL is required", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        state = enroll(server, token=args.token)
+    except EnrollmentError as e:
+        print("Enrollment failed: %s" % e, file=sys.stderr)
+        sys.exit(1)
+
+    print("Enrolled with %s" % state["server"])
+    if state.get("organization"):
+        print("Organization: %s" % state["organization"])
+
+    # Auto-configure tools and enable protection
+    from lumen_argus_core.setup_wizard import enable_protection, run_setup
+
+    proxy_url = state["proxy_url"]
+    print("\nConfiguring AI tools for %s..." % proxy_url)
+    run_setup(proxy_url=proxy_url, non_interactive=True)
+    enable_protection(proxy_url=proxy_url)
+    print("Protection enabled.")
+
+    # Send first heartbeat
+    from lumen_argus_core.telemetry import send_heartbeat
+
+    if send_heartbeat():
+        print("Heartbeat sent.")
+
+
+def _run_heartbeat(_args: argparse.Namespace) -> None:
+    from lumen_argus_core.enrollment import is_enrolled
+    from lumen_argus_core.telemetry import send_heartbeat
+
+    if not is_enrolled():
+        print("Not enrolled. Run 'lumen-argus-agent enroll' first.", file=sys.stderr)
+        sys.exit(1)
+
+    if send_heartbeat():
+        print("Heartbeat sent.")
+    else:
+        print("Heartbeat failed.", file=sys.stderr)
+        sys.exit(1)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -287,6 +368,8 @@ def main() -> None:
         "setup": _run_setup,
         "protection": _run_protection,
         "watch": _run_watch,
+        "enroll": _run_enroll,
+        "heartbeat": _run_heartbeat,
     }
 
     handler = handlers.get(args.command)

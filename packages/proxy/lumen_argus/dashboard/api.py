@@ -354,6 +354,16 @@ def _dispatch_api(
 
     # --- Tier gating: known Pro paths return 402 ---
 
+    if path.startswith("/api/v1/enrollment/"):
+        return _json_response(
+            402,
+            {
+                "error": "pro_required",
+                "message": "Enrollment requires a Pro license",
+                "upgrade_url": "https://lumen-argus.com/pro",
+            },
+        )
+
     if method in ("POST", "PUT", "DELETE"):
         for prefix in _PRO_ENDPOINTS:
             if path.startswith(prefix):

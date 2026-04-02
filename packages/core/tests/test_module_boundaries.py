@@ -13,7 +13,15 @@ from pathlib import Path
 
 CORE_DIR = Path("packages/core/lumen_argus_core")
 
-CORE_MODULES = ["clients.py", "detect.py", "setup_wizard.py", "watch.py", "time_utils.py"]
+CORE_MODULES = [
+    "clients.py",
+    "detect.py",
+    "setup_wizard.py",
+    "watch.py",
+    "time_utils.py",
+    "enrollment.py",
+    "telemetry.py",
+]
 
 # Proxy-only modules that core must never import
 PROXY_ONLY_PACKAGES = [
