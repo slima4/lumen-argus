@@ -20,13 +20,16 @@ class WebSocketConnectionsRepository(BaseRepository):
     def __init__(self, adapter: DatabaseAdapter) -> None:
         super().__init__(adapter)
 
-    def record_open(self, connection_id: str, target_url: str, origin: str, timestamp: float) -> None:
+    def record_open(
+        self, connection_id: str, target_url: str, origin: str, timestamp: float, namespace_id: int = 1
+    ) -> None:
         """Record a new WebSocket connection."""
         with self._adapter.write_lock():
             with self._connect() as conn:
                 conn.execute(
-                    "INSERT OR IGNORE INTO ws_connections (id, target_url, origin, connected_at) VALUES (?, ?, ?, ?)",
-                    (connection_id, target_url, origin or "", timestamp),
+                    "INSERT OR IGNORE INTO ws_connections (id, namespace_id, target_url, origin, connected_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (connection_id, namespace_id, target_url, origin or "", timestamp),
                 )
         log.debug("ws connection open: %s -> %s", connection_id[:8], target_url)
 
@@ -64,18 +67,18 @@ class WebSocketConnectionsRepository(BaseRepository):
                     (count, connection_id),
                 )
 
-    def get_connections(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    def get_connections(self, limit: int = 50, offset: int = 0, namespace_id: int = 1) -> list[dict[str, Any]]:
         """Return recent WebSocket connections, newest first."""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, target_url, origin, connected_at, disconnected_at, "
                 "duration_seconds, frames_sent, frames_received, findings_count, close_code "
-                "FROM ws_connections ORDER BY connected_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
+                "FROM ws_connections WHERE namespace_id = ? ORDER BY connected_at DESC LIMIT ? OFFSET ?",
+                (namespace_id, limit, offset),
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_stats(self, days: int = 7) -> dict[str, Any]:
+    def get_stats(self, days: int = 7, namespace_id: int = 1) -> dict[str, Any]:
         """Return aggregate WebSocket stats for the given period."""
         cutoff = time.time() - (days * 86400)
         with self._connect() as conn:
@@ -85,8 +88,8 @@ class WebSocketConnectionsRepository(BaseRepository):
                 "COALESCE(SUM(frames_received), 0) as total_frames_received, "
                 "COALESCE(AVG(duration_seconds), 0) as avg_duration, "
                 "COALESCE(SUM(findings_count), 0) as total_findings "
-                "FROM ws_connections WHERE connected_at >= ?",
-                (cutoff,),
+                "FROM ws_connections WHERE namespace_id = ? AND connected_at >= ?",
+                (namespace_id, cutoff),
             ).fetchone()
         return (
             dict(row)
@@ -100,14 +103,14 @@ class WebSocketConnectionsRepository(BaseRepository):
             }
         )
 
-    def cleanup(self, retention_days: int = 365) -> int:
+    def cleanup(self, retention_days: int = 365, namespace_id: int = 1) -> int:
         """Delete WebSocket connection records older than retention_days."""
         cutoff = time.time() - (retention_days * 86400)
         with self._adapter.write_lock():
             with self._connect() as conn:
                 cursor = conn.execute(
-                    "DELETE FROM ws_connections WHERE connected_at < ?",
-                    (cutoff,),
+                    "DELETE FROM ws_connections WHERE namespace_id = ? AND connected_at < ?",
+                    (namespace_id, cutoff),
                 )
                 deleted = cursor.rowcount
         if deleted:

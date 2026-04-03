@@ -765,7 +765,7 @@ class TestExtensionHooks(unittest.TestCase):
             store = _make_store(tmpdir)
             ext = ExtensionRegistry()
 
-            async def pro_handler(path, method, body, store, audit_reader):
+            async def pro_handler(path, method, body, store, audit_reader, agent_identity=None):
                 if path == "/api/v1/status" and method == "GET":
                     return 200, json.dumps({"pro": True}).encode()
                 return None  # Fall through

@@ -38,38 +38,43 @@ class ChannelsRepository(BaseRepository):
         d["enabled"] = bool(d.get("enabled", 1))
         return d
 
-    def list_all(self, source: str | None = None) -> list[dict[str, Any]]:
+    def list_all(self, source: str | None = None, namespace_id: int = 1) -> list[dict[str, Any]]:
         """Return all channels, optionally filtered by source."""
+        conditions = ["namespace_id = ?"]
+        params: list[Any] = [namespace_id]
+        if source:
+            conditions.append("source = ?")
+            params.append(source)
         query = (
             "SELECT "
             + _CHANNEL_COLUMNS
-            + " FROM notification_channels"
-            + (" WHERE source = ?" if source else "")
+            + " FROM notification_channels WHERE "
+            + " AND ".join(conditions)
             + " ORDER BY id"
         )
-        params: list[str | None] = [source] if source else []
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._parse_row(r) for r in rows]
 
-    def get(self, channel_id: int) -> dict[str, Any] | None:
+    def get(self, channel_id: int, namespace_id: int = 1) -> dict[str, Any] | None:
         """Return a single channel by ID (with full config)."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT " + _CHANNEL_COLUMNS + " FROM notification_channels WHERE id = ?",
-                (channel_id,),
+                "SELECT " + _CHANNEL_COLUMNS + " FROM notification_channels WHERE id = ? AND namespace_id = ?",
+                (channel_id, namespace_id),
             ).fetchone()
         return self._parse_row(row) if row else None
 
-    def count(self) -> int:
+    def count(self, namespace_id: int = 1) -> int:
         """Return total channel count (for limit enforcement)."""
         with self._connect() as conn:
-            return scalar(conn, "SELECT COUNT(*) FROM notification_channels")
+            return scalar(conn, "SELECT COUNT(*) FROM notification_channels WHERE namespace_id = ?", (namespace_id,))
 
     def create(
         self,
         data: dict[str, Any],
         channel_limit: int | None = None,
+        namespace_id: int = 1,
     ) -> dict[str, Any] | None:
         """Create a channel. Raises ValueError on validation failure.
 
@@ -95,17 +100,22 @@ class ChannelsRepository(BaseRepository):
             with self._connect() as conn:
                 # Atomic limit check under the same lock as insert
                 if channel_limit is not None:
-                    current = scalar(conn, "SELECT COUNT(*) FROM notification_channels")
+                    current = scalar(
+                        conn,
+                        "SELECT COUNT(*) FROM notification_channels WHERE namespace_id = ?",
+                        (namespace_id,),
+                    )
                     if current >= channel_limit:
                         raise ValueError("channel_limit_reached")
                 created_by = data.get("created_by", "")
                 try:
                     conn.execute(
                         "INSERT INTO notification_channels "
-                        "(name, type, config, enabled, source, events, "
+                        "(namespace_id, name, type, config, enabled, source, events, "
                         "min_severity, created_at, updated_at, created_by, updated_by) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
+                            namespace_id,
                             name,
                             ch_type,
                             json.dumps(config),
@@ -123,9 +133,9 @@ class ChannelsRepository(BaseRepository):
                 except sqlite3.IntegrityError:
                     raise ValueError("channel name '%s' already exists" % name)
 
-        return self.get(channel_id)
+        return self.get(channel_id, namespace_id=namespace_id)
 
-    def update(self, channel_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
+    def update(self, channel_id: int, data: dict[str, Any], namespace_id: int = 1) -> dict[str, Any] | None:
         """Update channel fields. Only updates provided keys."""
         updates: list[str] = []
         params: list[Any] = []
@@ -150,20 +160,20 @@ class ChannelsRepository(BaseRepository):
             params.append(json.dumps(events))
 
         if not updates:
-            return self.get(channel_id)
+            return self.get(channel_id, namespace_id=namespace_id)
 
         updates.append("updated_at = ?")
         params.append(self._now())
         if "updated_by" in data:
             updates.append("updated_by = ?")
             params.append(data["updated_by"])
-        params.append(channel_id)
+        params.extend([channel_id, namespace_id])
 
         with self._adapter.write_lock():
             with self._connect() as conn:
                 try:
                     cursor = conn.execute(
-                        "UPDATE notification_channels SET %s WHERE id = ?" % ", ".join(updates),
+                        "UPDATE notification_channels SET %s WHERE id = ? AND namespace_id = ?" % ", ".join(updates),
                         params,
                     )
                 except sqlite3.IntegrityError:
@@ -171,19 +181,19 @@ class ChannelsRepository(BaseRepository):
                 if cursor.rowcount == 0:
                     return None
 
-        return self.get(channel_id)
+        return self.get(channel_id, namespace_id=namespace_id)
 
-    def delete(self, channel_id: int) -> bool:
+    def delete(self, channel_id: int, namespace_id: int = 1) -> bool:
         """Delete a channel by ID. Returns True if deleted."""
         with self._adapter.write_lock():
             with self._connect() as conn:
                 cursor = conn.execute(
-                    "DELETE FROM notification_channels WHERE id = ?",
-                    (channel_id,),
+                    "DELETE FROM notification_channels WHERE id = ? AND namespace_id = ?",
+                    (channel_id, namespace_id),
                 )
                 return cursor.rowcount > 0
 
-    def bulk_update(self, ids: list[int], action: str) -> int:
+    def bulk_update(self, ids: list[int], action: str, namespace_id: int = 1) -> int:
         """Bulk enable/disable/delete. Returns count affected."""
         if not ids:
             return 0
@@ -191,16 +201,17 @@ class ChannelsRepository(BaseRepository):
         with self._adapter.write_lock():
             with self._connect() as conn:
                 if action == "delete":
-                    # Only delete dashboard-managed channels
                     cursor = conn.execute(
-                        "DELETE FROM notification_channels WHERE id IN (%s) AND source = 'dashboard'" % placeholders,
-                        ids,
+                        "DELETE FROM notification_channels "
+                        "WHERE id IN (%s) AND namespace_id = ? AND source = 'dashboard'" % placeholders,
+                        [*ids, namespace_id],
                     )
                 elif action in ("enable", "disable"):
                     enabled = 1 if action == "enable" else 0
                     cursor = conn.execute(
-                        "UPDATE notification_channels SET enabled = ?, updated_at = ? WHERE id IN (%s)" % placeholders,
-                        [enabled, self._now(), *ids],
+                        "UPDATE notification_channels SET enabled = ?, updated_at = ? "
+                        "WHERE id IN (%s) AND namespace_id = ?" % placeholders,
+                        [enabled, self._now(), *ids, namespace_id],
                     )
                 else:
                     return 0
@@ -210,6 +221,7 @@ class ChannelsRepository(BaseRepository):
         self,
         yaml_channels: list[Any],
         channel_limit: int | None = None,
+        namespace_id: int = 1,
     ) -> dict[str, list[str]]:
         """Kubernetes-style declarative reconciliation of YAML channels.
 
@@ -231,14 +243,14 @@ class ChannelsRepository(BaseRepository):
                 yaml_by_name[name] = ch
 
         # Get current DB state
-        db_yaml = {ch["name"]: ch for ch in self.list_all(source="yaml")}
-        db_dashboard_names = {ch["name"] for ch in self.list_all(source="dashboard")}
-        current_total = self.count()
+        db_yaml = {ch["name"]: ch for ch in self.list_all(source="yaml", namespace_id=namespace_id)}
+        db_dashboard_names = {ch["name"] for ch in self.list_all(source="dashboard", namespace_id=namespace_id)}
+        current_total = self.count(namespace_id=namespace_id)
 
         # Delete YAML channels no longer in config
         for name, db_ch in db_yaml.items():
             if name not in yaml_by_name:
-                self.delete(db_ch["id"])
+                self.delete(db_ch["id"], namespace_id=namespace_id)
                 current_total -= 1
                 result["deleted"].append(name)
 
@@ -274,7 +286,7 @@ class ChannelsRepository(BaseRepository):
 
             if name in db_yaml:
                 # Update existing — always allowed (already counts toward limit)
-                self.update(db_yaml[name]["id"], channel_data)
+                self.update(db_yaml[name]["id"], channel_data, namespace_id=namespace_id)
                 result["updated"].append(name)
             else:
                 # New create — check limit
@@ -285,7 +297,7 @@ class ChannelsRepository(BaseRepository):
                         channel_limit,
                     )
                     continue
-                self.create(channel_data)
+                self.create(channel_data, namespace_id=namespace_id)
                 current_total += 1
                 result["created"].append(name)
 

@@ -38,15 +38,17 @@ class RulesRepository(BaseRepository):
             except Exception:
                 log.warning("rules change callback failed for %s (rule=%s)", change_type, rule_name, exc_info=True)
 
-    def get_count(self) -> int:
+    def get_count(self, namespace_id: int = 1) -> int:
         """Return total number of rules in the DB."""
         with self._connect() as conn:
-            return scalar(conn, "SELECT COUNT(*) FROM rules")
+            return scalar(conn, "SELECT COUNT(*) FROM rules WHERE namespace_id = ?", (namespace_id,))
 
-    def get_active(self, detector: str | None = None, tier: str | None = None) -> list[dict[str, Any]]:
+    def get_active(
+        self, detector: str | None = None, tier: str | None = None, namespace_id: int = 1
+    ) -> list[dict[str, Any]]:
         """Return enabled rules, optionally filtered by detector/tier."""
-        query = "SELECT " + _RULES_COLUMNS + " FROM rules WHERE enabled = 1"
-        params: list[Any] = []
+        query = "SELECT " + _RULES_COLUMNS + " FROM rules WHERE enabled = 1 AND namespace_id = ?"
+        params: list[Any] = [namespace_id]
         if detector:
             query += " AND detector = ?"
             params.append(detector)
@@ -78,10 +80,11 @@ class RulesRepository(BaseRepository):
         enabled: bool | None = None,
         severity: str | None = None,
         tag: str | None = None,
+        namespace_id: int = 1,
     ) -> tuple[list[dict[str, Any]], Any]:
         """Paginated rules for dashboard. Returns (rules_list, total_count)."""
-        conditions: list[str] = []
-        params: list[Any] = []
+        conditions: list[str] = ["namespace_id = ?"]
+        params: list[Any] = [namespace_id]
         if search:
             terms = [t.strip() for t in search.split(",") if t.strip()]
             if len(terms) == 1:
@@ -110,7 +113,7 @@ class RulesRepository(BaseRepository):
             # Using %"tag"% to avoid substring false positives
             conditions.append("tags LIKE ?")
             params.append('%"' + tag.replace('"', "") + '"%')
-        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        where = " WHERE " + " AND ".join(conditions)
 
         with self._connect() as conn:
             total = scalar(conn, "SELECT COUNT(*) FROM rules" + where, tuple(params))
@@ -130,10 +133,13 @@ class RulesRepository(BaseRepository):
             result.append(d)
         return result, total
 
-    def get_by_name(self, name: str) -> dict[str, Any] | None:
+    def get_by_name(self, name: str, namespace_id: int = 1) -> dict[str, Any] | None:
         """Return a single rule by name."""
         with self._connect() as conn:
-            row = conn.execute("SELECT " + _RULES_COLUMNS + " FROM rules WHERE name = ?", (name,)).fetchone()
+            row = conn.execute(
+                "SELECT " + _RULES_COLUMNS + " FROM rules WHERE name = ? AND namespace_id = ?",
+                (name, namespace_id),
+            ).fetchone()
         if not row:
             return None
         d = dict(row)
@@ -145,7 +151,7 @@ class RulesRepository(BaseRepository):
                 d["tags"] = []
         return d
 
-    def create(self, data: dict[str, Any]) -> dict[str, Any] | None:
+    def create(self, data: dict[str, Any], namespace_id: int = 1) -> dict[str, Any] | None:
         """Create a custom rule. Validates pattern regex. Returns created rule."""
 
         name = data.get("name", "").strip()
@@ -165,11 +171,12 @@ class RulesRepository(BaseRepository):
                 try:
                     conn.execute(
                         "INSERT INTO rules "
-                        "(name, pattern, detector, severity, action, enabled, "
+                        "(namespace_id, name, pattern, detector, severity, action, enabled, "
                         "tier, source, description, tags, validator, entropy_context, "
                         "created_at, updated_at, created_by, updated_by) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
+                            namespace_id,
                             name,
                             pattern,
                             data.get("detector", "custom"),
@@ -191,7 +198,7 @@ class RulesRepository(BaseRepository):
                 except sqlite3.IntegrityError:
                     raise ValueError("rule '%s' already exists" % name)
         self._notify_rules_changed("create", rule_name=name)
-        return self.get_by_name(name)
+        return self.get_by_name(name, namespace_id=namespace_id)
 
     def _build_set_clause(self, data: dict[str, Any]) -> tuple[list[str], list[Any]]:
         """Build SET clause fragments and params from update data.
@@ -221,25 +228,25 @@ class RulesRepository(BaseRepository):
                 params.append(data["updated_by"])
         return fragments, params
 
-    def update(self, name: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    def update(self, name: str, data: dict[str, Any], namespace_id: int = 1) -> dict[str, Any] | None:
         """Update rule fields. Returns updated rule or None if not found."""
         fragments, params = self._build_set_clause(data)
         if not fragments:
-            return self.get_by_name(name)
-        params.append(name)
+            return self.get_by_name(name, namespace_id=namespace_id)
+        params.extend([name, namespace_id])
 
         with self._adapter.write_lock():
             with self._connect() as conn:
                 cursor = conn.execute(
-                    "UPDATE rules SET %s WHERE name = ?" % ", ".join(fragments),
+                    "UPDATE rules SET %s WHERE name = ? AND namespace_id = ?" % ", ".join(fragments),
                     params,
                 )
                 if cursor.rowcount == 0:
                     return None
         self._notify_rules_changed("update", rule_name=name)
-        return self.get_by_name(name)
+        return self.get_by_name(name, namespace_id=namespace_id)
 
-    def bulk_update(self, names: list[str], data: dict[str, Any]) -> dict[str, Any]:
+    def bulk_update(self, names: list[str], data: dict[str, Any], namespace_id: int = 1) -> dict[str, Any]:
         """Update multiple rules in a single transaction.
 
         Returns {"updated": N, "failed": [{"name": ..., "reason": ...}]}.
@@ -257,9 +264,9 @@ class RulesRepository(BaseRepository):
         with self._adapter.write_lock():
             with self._connect() as conn:
                 for name in names:
-                    params = [*list(base_params), name]
+                    params = [*list(base_params), name, namespace_id]
                     cursor = conn.execute(
-                        "UPDATE rules SET %s WHERE name = ?" % set_clause,
+                        "UPDATE rules SET %s WHERE name = ? AND namespace_id = ?" % set_clause,
                         params,
                     )
                     if cursor.rowcount == 0:
@@ -274,22 +281,22 @@ class RulesRepository(BaseRepository):
             log.info("bulk_update: %d rules updated", updated)
         return {"updated": updated, "failed": failed}
 
-    def delete(self, name: str) -> bool:
+    def delete(self, name: str, namespace_id: int = 1) -> bool:
         """Delete a dashboard-created rule. Returns True if deleted."""
         with self._adapter.write_lock():
             with self._connect() as conn:
                 cursor = conn.execute(
-                    "DELETE FROM rules WHERE name = ? AND source = 'dashboard'",
-                    (name,),
+                    "DELETE FROM rules WHERE name = ? AND namespace_id = ? AND source = 'dashboard'",
+                    (name, namespace_id),
                 )
                 deleted = cursor.rowcount > 0
         if deleted:
             self._notify_rules_changed("delete", rule_name=name)
         return deleted
 
-    def clone(self, name: str, new_name: str) -> dict[str, Any] | None:
+    def clone(self, name: str, new_name: str, namespace_id: int = 1) -> dict[str, Any] | None:
         """Clone a rule as source='dashboard', tier='custom'."""
-        original = self.get_by_name(name)
+        original = self.get_by_name(name, namespace_id=namespace_id)
         if not original:
             raise ValueError("rule '%s' not found" % name)
         return self.create(
@@ -306,10 +313,13 @@ class RulesRepository(BaseRepository):
                 "tier": "custom",
                 "source": "dashboard",
                 "created_by": "dashboard",
-            }
+            },
+            namespace_id=namespace_id,
         )
 
-    def import_bulk(self, rules: list[dict[str, Any]], tier: str = "community", force: bool = False) -> dict[str, int]:
+    def import_bulk(
+        self, rules: list[dict[str, Any]], tier: str = "community", force: bool = False, namespace_id: int = 1
+    ) -> dict[str, int]:
         """Bulk import rules from a JSON bundle.
 
         Returns {"created": N, "updated": N, "skipped": N}.
@@ -336,7 +346,10 @@ class RulesRepository(BaseRepository):
                             log.warning("rule '%s': invalid regex, skipping import", name)
                             result["skipped"] += 1
                             continue
-                    existing = conn.execute("SELECT source, id FROM rules WHERE name = ?", (name,)).fetchone()
+                    existing = conn.execute(
+                        "SELECT source, id FROM rules WHERE name = ? AND namespace_id = ?",
+                        (name, namespace_id),
+                    ).fetchone()
 
                     if existing:
                         source = existing[0]
@@ -349,7 +362,7 @@ class RulesRepository(BaseRepository):
                                 "UPDATE rules SET pattern=?, detector=?, severity=?, "
                                 "action=?, enabled=1, description=?, tags=?, "
                                 "validator=?, entropy_context=?, "
-                                "updated_at=?, updated_by=? WHERE name=?",
+                                "updated_at=?, updated_by=? WHERE name=? AND namespace_id=?",
                                 (
                                     r.get("pattern", ""),
                                     r.get("detector", "secrets"),
@@ -362,6 +375,7 @@ class RulesRepository(BaseRepository):
                                     now,
                                     "cli",
                                     name,
+                                    namespace_id,
                                 ),
                             )
                         else:
@@ -369,7 +383,7 @@ class RulesRepository(BaseRepository):
                             conn.execute(
                                 "UPDATE rules SET pattern=?, detector=?, severity=?, "
                                 "description=?, tags=?, validator=?, entropy_context=?, "
-                                "updated_at=?, updated_by=? WHERE name=?",
+                                "updated_at=?, updated_by=? WHERE name=? AND namespace_id=?",
                                 (
                                     r.get("pattern", ""),
                                     r.get("detector", "secrets"),
@@ -381,17 +395,19 @@ class RulesRepository(BaseRepository):
                                     now,
                                     "cli",
                                     name,
+                                    namespace_id,
                                 ),
                             )
                         result["updated"] += 1
                     else:
                         conn.execute(
                             "INSERT INTO rules "
-                            "(name, pattern, detector, severity, action, enabled, "
+                            "(namespace_id, name, pattern, detector, severity, action, enabled, "
                             "tier, source, description, tags, validator, entropy_context, "
                             "created_at, updated_at, created_by, updated_by) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             (
+                                namespace_id,
                                 name,
                                 r.get("pattern", ""),
                                 r.get("detector", "secrets"),
@@ -416,19 +432,20 @@ class RulesRepository(BaseRepository):
             self._notify_rules_changed("bulk")
         return result
 
-    def export(self, tier: str | None = None, detector: str | None = None) -> list[dict[str, Any]]:
+    def export(
+        self, tier: str | None = None, detector: str | None = None, namespace_id: int = 1
+    ) -> list[dict[str, Any]]:
         """Export rules as dicts for JSON serialization."""
         query = "SELECT " + _RULES_COLUMNS + " FROM rules"
-        conditions: list[str] = []
-        params: list[Any] = []
+        conditions: list[str] = ["namespace_id = ?"]
+        params: list[Any] = [namespace_id]
         if tier:
             conditions.append("tier = ?")
             params.append(tier)
         if detector:
             conditions.append("detector = ?")
             params.append(detector)
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
+        query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY id"
 
         with self._connect() as conn:
@@ -445,17 +462,21 @@ class RulesRepository(BaseRepository):
             result.append(d)
         return result
 
-    def get_stats(self) -> dict[str, Any]:
+    def get_stats(self, namespace_id: int = 1) -> dict[str, Any]:
         """Rule counts by tier, detector, enabled."""
+        ns = "WHERE namespace_id = ?"
+        ns_and = "AND namespace_id = ?"
         with self._connect() as conn:
-            total = scalar(conn, "SELECT COUNT(*) FROM rules")
+            total = scalar(conn, f"SELECT COUNT(*) FROM rules {ns}", (namespace_id,))
             by_tier: dict[str, Any] = {}
-            for row in conn.execute("SELECT tier, COUNT(*) as cnt FROM rules GROUP BY tier"):
+            for row in conn.execute(f"SELECT tier, COUNT(*) as cnt FROM rules {ns} GROUP BY tier", (namespace_id,)):
                 by_tier[row["tier"]] = row["cnt"]
             by_detector: dict[str, Any] = {}
-            for row in conn.execute("SELECT detector, COUNT(*) as cnt FROM rules GROUP BY detector"):
+            for row in conn.execute(
+                f"SELECT detector, COUNT(*) as cnt FROM rules {ns} GROUP BY detector", (namespace_id,)
+            ):
                 by_detector[row["detector"]] = row["cnt"]
-            enabled = scalar(conn, "SELECT COUNT(*) FROM rules WHERE enabled = 1")
+            enabled = scalar(conn, f"SELECT COUNT(*) FROM rules WHERE enabled = 1 {ns_and}", (namespace_id,))
         return {
             "total": total,
             "enabled": enabled,
@@ -464,26 +485,30 @@ class RulesRepository(BaseRepository):
             "by_detector": by_detector,
         }
 
-    def get_coverage(self) -> dict[str, int]:
+    def get_coverage(self, namespace_id: int = 1) -> dict[str, int]:
         """Detection coverage stats for dashboard gauge."""
+        ns = "AND namespace_id = ?"
         with self._connect() as conn:
-            total = scalar(conn, "SELECT COUNT(*) FROM rules")
-            active = scalar(conn, "SELECT COUNT(*) FROM rules WHERE enabled = 1")
-            pro_imported = scalar(conn, "SELECT COUNT(*) FROM rules WHERE tier = 'pro'")
+            total = scalar(conn, "SELECT COUNT(*) FROM rules WHERE namespace_id = ?", (namespace_id,))
+            active = scalar(conn, f"SELECT COUNT(*) FROM rules WHERE enabled = 1 {ns}", (namespace_id,))
+            pro_imported = scalar(conn, f"SELECT COUNT(*) FROM rules WHERE tier = 'pro' {ns}", (namespace_id,))
         return {
             "active_rules": active,
             "total_rules": total,
             "pro_imported": pro_imported,
         }
 
-    def get_tag_stats(self) -> list[dict[str, Any]]:
+    def get_tag_stats(self, namespace_id: int = 1) -> list[dict[str, Any]]:
         """Return tag counts for category chip display.
 
         Returns list of {"tag": "cloud", "total": N, "enabled": M}.
         Parses the JSON tags column and aggregates.
         """
         with self._connect() as conn:
-            rows = conn.execute("SELECT tags, enabled FROM rules WHERE tags != '[]' AND tags != ''").fetchall()
+            rows = conn.execute(
+                "SELECT tags, enabled FROM rules WHERE tags != '[]' AND tags != '' AND namespace_id = ?",
+                (namespace_id,),
+            ).fetchall()
 
         tag_counts: dict[str, dict[str, int]] = {}
         for row in rows:
@@ -503,7 +528,7 @@ class RulesRepository(BaseRepository):
             key=lambda x: x["tag"],
         )
 
-    def reconcile_yaml(self, custom_rules: list[Any]) -> dict[str, list[str]]:
+    def reconcile_yaml(self, custom_rules: list[Any], namespace_id: int = 1) -> dict[str, list[str]]:
         """Kubernetes-style reconciliation of YAML custom_rules to DB.
 
         YAML is authoritative for source='yaml' rules: all fields overwrite.
@@ -529,13 +554,19 @@ class RulesRepository(BaseRepository):
             with self._connect() as conn:
                 # Snapshot YAML-sourced rules inside the lock to avoid TOCTOU
                 db_yaml: dict[str, bool] = {}
-                for row in conn.execute("SELECT name FROM rules WHERE source = 'yaml'").fetchall():
+                for row in conn.execute(
+                    "SELECT name FROM rules WHERE source = 'yaml' AND namespace_id = ?",
+                    (namespace_id,),
+                ).fetchall():
                     db_yaml[row[0]] = True
 
                 # Delete YAML rules no longer in config
                 for name in db_yaml:
                     if name not in yaml_by_name:
-                        conn.execute("DELETE FROM rules WHERE name = ? AND source = 'yaml'", (name,))
+                        conn.execute(
+                            "DELETE FROM rules WHERE name = ? AND namespace_id = ? AND source = 'yaml'",
+                            (name, namespace_id),
+                        )
                         result["deleted"].append(name)
 
                 # Create or update YAML rules
@@ -553,7 +584,7 @@ class RulesRepository(BaseRepository):
                         conn.execute(
                             "UPDATE rules SET pattern=?, detector=?, severity=?, "
                             "action=?, description=?, updated_at=?, updated_by=? "
-                            "WHERE name=? AND source='yaml'",
+                            "WHERE name=? AND namespace_id=? AND source='yaml'",
                             (
                                 pattern,
                                 str(rule.get("detector", "custom")),
@@ -563,12 +594,16 @@ class RulesRepository(BaseRepository):
                                 now,
                                 "config",
                                 name,
+                                namespace_id,
                             ),
                         )
                         result["updated"].append(name)
                     else:
                         # Check if name conflicts with non-yaml rule
-                        existing = conn.execute("SELECT source FROM rules WHERE name = ?", (name,)).fetchone()
+                        existing = conn.execute(
+                            "SELECT source FROM rules WHERE name = ? AND namespace_id = ?",
+                            (name, namespace_id),
+                        ).fetchone()
                         if existing:
                             log.warning(
                                 "custom_rules '%s' conflicts with %s rule — skipping",
@@ -578,11 +613,12 @@ class RulesRepository(BaseRepository):
                             continue
                         conn.execute(
                             "INSERT INTO rules "
-                            "(name, pattern, detector, severity, action, enabled, "
+                            "(namespace_id, name, pattern, detector, severity, action, enabled, "
                             "tier, source, description, tags, validator, entropy_context, "
                             "created_at, updated_at, created_by, updated_by) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             (
+                                namespace_id,
                                 name,
                                 pattern,
                                 str(rule.get("detector", "custom")),

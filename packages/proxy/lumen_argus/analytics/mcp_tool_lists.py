@@ -19,12 +19,14 @@ class MCPToolListsRepository(BaseRepository):
     def __init__(self, adapter: DatabaseAdapter) -> None:
         super().__init__(adapter)
 
-    def get_lists(self) -> dict[str, list[dict[str, Any]]]:
+    def get_lists(self, namespace_id: int = 1) -> dict[str, list[dict[str, Any]]]:
         """Return MCP tool lists: {"allowed": [...], "blocked": [...]}."""
         log.debug("loading MCP tool lists from DB")
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, list_type, tool_name, source, created_at FROM mcp_tool_lists ORDER BY id"
+                "SELECT id, list_type, tool_name, source, created_at FROM mcp_tool_lists "
+                "WHERE namespace_id = ? ORDER BY id",
+                (namespace_id,),
             ).fetchall()
         result: dict[str, list[dict[str, Any]]] = {"allowed": [], "blocked": []}
         for row in rows:
@@ -39,7 +41,7 @@ class MCPToolListsRepository(BaseRepository):
                 result[lt].append(entry)
         return result
 
-    def add_entry(self, list_type: str, tool_name: str) -> int | None:
+    def add_entry(self, list_type: str, tool_name: str, namespace_id: int = 1) -> int | None:
         """Add a tool to the allowed or blocked list. Returns the new entry ID."""
         if list_type not in ("allowed", "blocked"):
             raise ValueError("list_type must be 'allowed' or 'blocked'")
@@ -50,9 +52,9 @@ class MCPToolListsRepository(BaseRepository):
         with self._adapter.write_lock():
             with self._connect() as conn:
                 cursor = conn.execute(
-                    "INSERT OR IGNORE INTO mcp_tool_lists (list_type, tool_name, source, created_at) "
-                    "VALUES (?, ?, 'api', ?)",
-                    (list_type, tool_name, now),
+                    "INSERT OR IGNORE INTO mcp_tool_lists (namespace_id, list_type, tool_name, source, created_at) "
+                    "VALUES (?, ?, ?, 'api', ?)",
+                    (namespace_id, list_type, tool_name, now),
                 )
                 entry_id = cursor.lastrowid if cursor.rowcount > 0 else None
         if entry_id:
@@ -61,20 +63,22 @@ class MCPToolListsRepository(BaseRepository):
             log.debug("mcp tool list: '%s' already in %s list (ignored)", tool_name, list_type)
         return entry_id
 
-    def delete_entry(self, entry_id: int) -> bool:
+    def delete_entry(self, entry_id: int, namespace_id: int = 1) -> bool:
         """Remove an MCP tool list entry by ID. Returns True if deleted."""
         with self._adapter.write_lock():
             with self._connect() as conn:
                 cursor = conn.execute(
-                    "DELETE FROM mcp_tool_lists WHERE id = ? AND source = 'api'",
-                    (entry_id,),
+                    "DELETE FROM mcp_tool_lists WHERE id = ? AND namespace_id = ? AND source = 'api'",
+                    (entry_id, namespace_id),
                 )
                 deleted = cursor.rowcount > 0
         if deleted:
             log.info("mcp tool list: deleted entry %d", entry_id)
         return deleted
 
-    def reconcile(self, yaml_allowed: list[Any] | None, yaml_blocked: list[Any] | None) -> dict[str, int]:
+    def reconcile(
+        self, yaml_allowed: list[Any] | None, yaml_blocked: list[Any] | None, namespace_id: int = 1
+    ) -> dict[str, int]:
         """Reconcile YAML tool lists with DB entries.
 
         YAML entries are authoritative for source='config'. API entries untouched.
@@ -85,9 +89,9 @@ class MCPToolListsRepository(BaseRepository):
         deleted = 0
         with self._adapter.write_lock():
             with self._connect() as conn:
-                # Get current config-sourced entries
                 existing = conn.execute(
-                    "SELECT id, list_type, tool_name FROM mcp_tool_lists WHERE source = 'config'"
+                    "SELECT id, list_type, tool_name FROM mcp_tool_lists WHERE source = 'config' AND namespace_id = ?",
+                    (namespace_id,),
                 ).fetchall()
                 existing_set = {(r["list_type"], r["tool_name"]): r["id"] for r in existing}
 
@@ -109,8 +113,8 @@ class MCPToolListsRepository(BaseRepository):
                     if (lt, tn) not in existing_set:
                         conn.execute(
                             "INSERT OR IGNORE INTO mcp_tool_lists "
-                            "(list_type, tool_name, source, created_at) VALUES (?, ?, 'config', ?)",
-                            (lt, tn, now),
+                            "(namespace_id, list_type, tool_name, source, created_at) VALUES (?, ?, ?, 'config', ?)",
+                            (namespace_id, lt, tn, now),
                         )
                         created += 1
 

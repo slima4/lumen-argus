@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from lumen_argus.dashboard.sse import SSEBroadcaster
     from lumen_argus.extensions import ExtensionRegistry
 
+from lumen_argus.auth import AuthenticationError
 from lumen_argus.dashboard.api import handle_community_api
 
 log = logging.getLogger("argus.dashboard")
@@ -342,7 +343,7 @@ class AsyncDashboardServer:
             resp = await handler(request)
             return resp
 
-        # Try extension auth providers
+        # Try extension auth providers (dashboard auth — OIDC, SSO, etc.)
         if self.extensions:
             for provider in self.extensions.get_auth_providers():
                 try:
@@ -354,6 +355,22 @@ class AsyncDashboardServer:
                         return resp
                 except Exception:
                     log.warning("auth provider %s failed", type(provider).__name__, exc_info=True)
+
+        # Try agent auth provider (Bearer token from enrolled agents)
+        if self.extensions and path.startswith("/api/"):
+            agent_auth = self.extensions.get_agent_auth_provider()
+            if agent_auth:
+                try:
+                    identity = await agent_auth.authenticate(dict(request.headers))
+                    if identity:
+                        request["agent_identity"] = identity
+                        request["user"] = "agent:%s" % identity.agent_id
+                        resp = await handler(request)
+                        return resp
+                except AuthenticationError as exc:
+                    return _json_error(401, str(exc))
+                except Exception:
+                    log.warning("agent auth provider failed", exc_info=True)
 
         # API requests → 401 JSON
         if path.startswith("/api/") and "/export" not in path:
@@ -465,10 +482,11 @@ class AsyncDashboardServer:
         audit_reader = self.audit_reader
 
         # Try plugin API handler first
+        agent_identity = request.get("agent_identity")
         pro_handler = self.extensions.get_dashboard_api_handler() if self.extensions else None
         if pro_handler:
             try:
-                result = await pro_handler(path, method, body, store, audit_reader)
+                result = await pro_handler(path, method, body, store, audit_reader, agent_identity)
                 if result is not None:
                     if len(result) == 3:
                         status, content_type, response_body = result

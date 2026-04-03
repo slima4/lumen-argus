@@ -53,15 +53,18 @@ class ConfigOverridesRepository(BaseRepository):
     def __init__(self, adapter: DatabaseAdapter) -> None:
         super().__init__(adapter)
 
-    def get_all(self) -> dict[str, Any]:
+    def get_all(self, namespace_id: int = 1) -> dict[str, Any]:
         """Return all config overrides as a dict."""
         with self._connect() as conn:
-            rows = conn.execute("SELECT key, value FROM config_overrides").fetchall()
+            rows = conn.execute(
+                "SELECT key, value FROM config_overrides WHERE namespace_id = ?",
+                (namespace_id,),
+            ).fetchall()
         overrides = {row["key"]: row["value"] for row in rows}
         log.debug("loaded %d config override(s) from DB", len(overrides))
         return overrides
 
-    def set(self, key: str, value: Any) -> None:
+    def set(self, key: str, value: Any, namespace_id: int = 1) -> None:
         """Set a config override. Validates key and value."""
         if key not in _VALID_CONFIG_KEYS:
             raise ValueError("Invalid config key: %s" % key)
@@ -143,18 +146,19 @@ class ConfigOverridesRepository(BaseRepository):
         with self._adapter.write_lock():
             with self._connect() as conn:
                 conn.execute(
-                    "INSERT OR REPLACE INTO config_overrides (key, value, updated_at) VALUES (?, ?, ?)",
-                    (key, value, now),
+                    "INSERT OR REPLACE INTO config_overrides "
+                    "(namespace_id, key, value, updated_at) VALUES (?, ?, ?, ?)",
+                    (namespace_id, key, value, now),
                 )
         log.debug("config override stored: %s = %s", key, value)
 
-    def delete(self, key: str) -> bool:
+    def delete(self, key: str, namespace_id: int = 1) -> bool:
         """Delete a config override (revert to YAML default)."""
         with self._adapter.write_lock():
             with self._connect() as conn:
                 cursor = conn.execute(
-                    "DELETE FROM config_overrides WHERE key = ?",
-                    (key,),
+                    "DELETE FROM config_overrides WHERE key = ? AND namespace_id = ?",
+                    (key, namespace_id),
                 )
                 deleted = cursor.rowcount > 0
         if deleted:

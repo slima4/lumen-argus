@@ -28,7 +28,9 @@ class AllowlistRepository(BaseRepository):
         d["enabled"] = bool(d.get("enabled", 1))
         return d
 
-    def add(self, list_type: str, pattern: str, description: str = "", created_by: str = "") -> dict[str, Any]:
+    def add(
+        self, list_type: str, pattern: str, description: str = "", created_by: str = "", namespace_id: int = 1
+    ) -> dict[str, Any]:
         """Add an allowlist entry. list_type: 'secrets', 'pii', or 'paths'."""
         if list_type not in ("secrets", "pii", "paths"):
             raise ValueError("invalid list_type: %s" % list_type)
@@ -40,10 +42,10 @@ class AllowlistRepository(BaseRepository):
             with self._connect() as conn:
                 cursor = conn.execute(
                     "INSERT INTO allowlist_entries "
-                    "(list_type, pattern, description, source, enabled, "
+                    "(namespace_id, list_type, pattern, description, source, enabled, "
                     "created_at, updated_at, created_by, updated_by) "
-                    "VALUES (?, ?, ?, 'api', 1, ?, ?, ?, ?)",
-                    (list_type, pattern, description, now, now, created_by, created_by),
+                    "VALUES (?, ?, ?, ?, 'api', 1, ?, ?, ?, ?)",
+                    (namespace_id, list_type, pattern, description, now, now, created_by, created_by),
                 )
                 entry_id = cursor.lastrowid
         return {
@@ -59,7 +61,7 @@ class AllowlistRepository(BaseRepository):
             "updated_by": created_by,
         }
 
-    def update(self, entry_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
+    def update(self, entry_id: int, data: dict[str, Any], namespace_id: int = 1) -> dict[str, Any] | None:
         """Update an API-managed allowlist entry. Returns updated entry or None."""
         updates: list[str] = []
         params: list[Any] = []
@@ -71,60 +73,61 @@ class AllowlistRepository(BaseRepository):
             updates.append("enabled = ?")
             params.append(1 if data["enabled"] else 0)
         if not updates:
-            return self.get(entry_id)
+            return self.get(entry_id, namespace_id=namespace_id)
         updates.append("updated_at = ?")
         params.append(self._now())
         if "updated_by" in data:
             updates.append("updated_by = ?")
             params.append(data["updated_by"])
-        params.append(int(entry_id))
+        params.extend([int(entry_id), namespace_id])
         with self._adapter.write_lock():
             with self._connect() as conn:
                 cursor = conn.execute(
-                    "UPDATE allowlist_entries SET %s WHERE id = ? AND source = 'api'" % ", ".join(updates),
+                    "UPDATE allowlist_entries SET %s WHERE id = ? AND namespace_id = ? AND source = 'api'"
+                    % ", ".join(updates),
                     params,
                 )
                 if cursor.rowcount == 0:
                     return None
-        return self.get(entry_id)
+        return self.get(entry_id, namespace_id=namespace_id)
 
-    def get(self, entry_id: int) -> dict[str, Any] | None:
+    def get(self, entry_id: int, namespace_id: int = 1) -> dict[str, Any] | None:
         """Get a single entry by ID."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT " + _ALLOWLIST_COLUMNS + " FROM allowlist_entries WHERE id = ?",
-                (int(entry_id),),
+                "SELECT " + _ALLOWLIST_COLUMNS + " FROM allowlist_entries WHERE id = ? AND namespace_id = ?",
+                (int(entry_id), namespace_id),
             ).fetchone()
         if not row:
             return None
         return self._row_to_dict(row)
 
-    def delete(self, entry_id: int) -> bool:
+    def delete(self, entry_id: int, namespace_id: int = 1) -> bool:
         """Delete an API-managed allowlist entry by ID. Returns True if deleted."""
         with self._adapter.write_lock():
             with self._connect() as conn:
                 cursor = conn.execute(
-                    "DELETE FROM allowlist_entries WHERE id = ? AND source = 'api'",
-                    (int(entry_id),),
+                    "DELETE FROM allowlist_entries WHERE id = ? AND namespace_id = ? AND source = 'api'",
+                    (int(entry_id), namespace_id),
                 )
                 return cursor.rowcount > 0
 
-    def list_all(self, list_type: str | None = None) -> list[dict[str, Any]]:
+    def list_all(self, list_type: str | None = None, namespace_id: int = 1) -> list[dict[str, Any]]:
         """List allowlist entries, optionally filtered by type."""
-        query = "SELECT " + _ALLOWLIST_COLUMNS + " FROM allowlist_entries"
-        params: list[str] = []
+        query = "SELECT " + _ALLOWLIST_COLUMNS + " FROM allowlist_entries WHERE namespace_id = ?"
+        params: list[Any] = [namespace_id]
         if list_type:
-            query += " WHERE list_type = ?"
+            query += " AND list_type = ?"
             params.append(list_type)
         query += " ORDER BY created_at DESC"
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
-    def list_enabled(self, list_type: str | None = None) -> list[dict[str, Any]]:
+    def list_enabled(self, list_type: str | None = None, namespace_id: int = 1) -> list[dict[str, Any]]:
         """List only enabled entries (for scan-time integration)."""
-        query = "SELECT " + _ALLOWLIST_COLUMNS + " FROM allowlist_entries WHERE enabled = 1"
-        params: list[str] = []
+        query = "SELECT " + _ALLOWLIST_COLUMNS + " FROM allowlist_entries WHERE enabled = 1 AND namespace_id = ?"
+        params: list[Any] = [namespace_id]
         if list_type:
             query += " AND list_type = ?"
             params.append(list_type)
