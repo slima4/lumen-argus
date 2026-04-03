@@ -30,6 +30,59 @@ class TestEnrollmentToolsSchema(StoreTestCase):
             self.assertIn("idx_agent_tools_unconfigured", indexes)
 
 
+class TestNamespacesSchema(StoreTestCase):
+    """Verify namespaces table and default namespace."""
+
+    def test_namespaces_table_exists(self):
+        with self.store._connect() as conn:
+            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+            self.assertIn("namespaces", tables)
+
+    def test_default_namespace_created(self):
+        with self.store._connect() as conn:
+            row = conn.execute("SELECT id, slug, tier FROM namespaces WHERE id = 1").fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(dict(row)["slug"], "default")
+            self.assertEqual(dict(row)["tier"], "free")
+
+    def test_enrollment_tokens_table_exists(self):
+        with self.store._connect() as conn:
+            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+            self.assertIn("enrollment_tokens", tables)
+
+
+class TestEnrollmentAuthColumns(StoreTestCase):
+    """Verify enrollment_agents has auth and namespace columns."""
+
+    def test_token_hash_column(self):
+        with self.store._connect() as conn:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(enrollment_agents)").fetchall()]
+            self.assertIn("token_hash", cols)
+            self.assertIn("previous_token_hash", cols)
+            self.assertIn("token_issued_at", cols)
+            self.assertIn("token_expires_at", cols)
+            self.assertIn("last_token_used_at", cols)
+
+    def test_namespace_id_column(self):
+        with self.store._connect() as conn:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(enrollment_agents)").fetchall()]
+            self.assertIn("namespace_id", cols)
+
+    def test_audit_columns(self):
+        with self.store._connect() as conn:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(enrollment_agents)").fetchall()]
+            self.assertIn("created_at", cols)
+            self.assertIn("updated_at", cols)
+            self.assertIn("created_by", cols)
+            self.assertIn("updated_by", cols)
+
+    def test_token_hash_index_exists(self):
+        with self.store._connect() as conn:
+            indexes = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()]
+            self.assertIn("idx_enrollment_token_hash", indexes)
+            self.assertIn("idx_enrollment_namespace", indexes)
+
+
 class TestUpsertTools(StoreTestCase):
     """Test EnrollmentRepository.upsert_tools."""
 

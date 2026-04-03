@@ -12,7 +12,7 @@ import platform
 import urllib.error
 import urllib.request
 
-from lumen_argus_core.enrollment import load_enrollment
+from lumen_argus_core.enrollment import load_enrollment, update_agent_token
 from lumen_argus_core.time_utils import now_iso
 
 log = logging.getLogger("argus.telemetry")
@@ -70,16 +70,32 @@ def send_heartbeat() -> bool:
     dashboard_url = enrollment.get("dashboard_url") or enrollment["server"]
     url = dashboard_url.rstrip("/") + "/api/v1/enrollment/heartbeat"
 
+    headers = {"Content-Type": "application/json"}
+    agent_token = enrollment.get("agent_token", "")
+    if agent_token:
+        if not url.startswith("https://"):
+            log.warning("bearer token not sent — dashboard_url is not HTTPS")
+        else:
+            headers["Authorization"] = f"Bearer {agent_token}"
+
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
 
     try:
-        urllib.request.urlopen(req, timeout=10)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            try:
+                response_data = json.loads(resp.read())
+            except (json.JSONDecodeError, ValueError):
+                response_data = {}
         log.debug("heartbeat sent to %s", dashboard_url)
+        # Handle token rotation — proxy may issue a new token
+        new_token = response_data.get("new_token", "")
+        if new_token:
+            update_agent_token(new_token)
         return True
     except urllib.error.HTTPError as e:
         log.warning("heartbeat failed: HTTP %d", e.code)

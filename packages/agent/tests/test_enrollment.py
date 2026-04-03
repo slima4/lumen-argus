@@ -138,6 +138,15 @@ class TestAgentCLIEnrollment(unittest.TestCase):
 class TestHeartbeat(unittest.TestCase):
     """Test heartbeat telemetry logic."""
 
+    @staticmethod
+    def _mock_urlopen_response(body: bytes = b"{}"):
+        """Create a mock urlopen return value that works as context manager."""
+        resp = unittest.mock.MagicMock()
+        resp.__enter__ = lambda s: resp
+        resp.__exit__ = lambda s, *a: None
+        resp.read.return_value = body
+        return resp
+
     def test_heartbeat_not_enrolled_returns_false(self):
         from lumen_argus_core.telemetry import send_heartbeat
 
@@ -158,18 +167,18 @@ class TestHeartbeat(unittest.TestCase):
         mock_report = unittest.mock.MagicMock()
         mock_report.clients = []
 
+        mock_resp = self._mock_urlopen_response()
+
         with (
             patch("lumen_argus_core.telemetry.load_enrollment", return_value=enrollment),
             patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report),
             patch("lumen_argus_core.setup_wizard.protection_status", return_value={"enabled": True}),
-            patch("lumen_argus_core.telemetry.urllib.request.urlopen") as mock_urlopen,
+            patch("lumen_argus_core.telemetry.urllib.request.urlopen", return_value=mock_resp) as mock_urlopen,
         ):
             result = send_heartbeat()
             self.assertTrue(result)
-            # Verify the request was made to the correct URL
             req = mock_urlopen.call_args[0][0]
             self.assertIn("/api/v1/enrollment/heartbeat", req.full_url)
-            # Verify payload contains required fields
             import json
 
             payload = json.loads(req.data)
@@ -203,12 +212,13 @@ class TestHeartbeat(unittest.TestCase):
 
         mock_report = unittest.mock.MagicMock()
         mock_report.clients = [client]
+        mock_resp = self._mock_urlopen_response()
 
         with (
             patch("lumen_argus_core.telemetry.load_enrollment", return_value=enrollment),
             patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report),
             patch("lumen_argus_core.setup_wizard.protection_status", return_value={"enabled": True}),
-            patch("lumen_argus_core.telemetry.urllib.request.urlopen") as mock_urlopen,
+            patch("lumen_argus_core.telemetry.urllib.request.urlopen", return_value=mock_resp) as mock_urlopen,
         ):
             send_heartbeat()
             import json
@@ -235,18 +245,17 @@ class TestHeartbeat(unittest.TestCase):
 
         mock_report = unittest.mock.MagicMock()
         mock_report.clients = []
+        mock_resp = self._mock_urlopen_response()
 
         with (
             patch("lumen_argus_core.telemetry.load_enrollment", return_value=enrollment),
             patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report) as mock_detect,
             patch("lumen_argus_core.setup_wizard.protection_status", return_value={"enabled": True}),
-            patch("lumen_argus_core.telemetry.urllib.request.urlopen") as mock_urlopen,
+            patch("lumen_argus_core.telemetry.urllib.request.urlopen", return_value=mock_resp) as mock_urlopen,
         ):
             result = send_heartbeat()
             self.assertTrue(result)
-            # proxy_url="" should fall back to server for detect
             mock_detect.assert_called_once_with(proxy_url="https://argus.corp.io")
-            # dashboard_url="" should fall back to server for heartbeat URL
             req = mock_urlopen.call_args[0][0]
             self.assertEqual(
                 req.full_url,
@@ -280,6 +289,86 @@ class TestHeartbeat(unittest.TestCase):
         ):
             self.assertFalse(send_heartbeat())
 
+    def test_heartbeat_sends_auth_header_when_token_present(self):
+        """Heartbeat includes Authorization header when agent_token is in enrollment."""
+        from lumen_argus_core.telemetry import send_heartbeat
+
+        enrollment = {
+            "server": "https://argus.corp.io",
+            "proxy_url": "https://argus.corp.io:8080",
+            "dashboard_url": "https://argus.corp.io:8081",
+            "agent_id": "agent_test123",
+            "enrolled_at": "2026-04-02T10:30:00Z",
+            "agent_token": "la_agent_testtoken123456",
+        }
+
+        mock_report = unittest.mock.MagicMock()
+        mock_report.clients = []
+        mock_resp = self._mock_urlopen_response()
+
+        with (
+            patch("lumen_argus_core.telemetry.load_enrollment", return_value=enrollment),
+            patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report),
+            patch("lumen_argus_core.setup_wizard.protection_status", return_value={"enabled": True}),
+            patch("lumen_argus_core.telemetry.urllib.request.urlopen", return_value=mock_resp) as mock_urlopen,
+        ):
+            send_heartbeat()
+            req = mock_urlopen.call_args[0][0]
+            self.assertEqual(req.get_header("Authorization"), "Bearer la_agent_testtoken123456")
+
+    def test_heartbeat_no_auth_header_without_token(self):
+        """Heartbeat omits Authorization header when no agent_token."""
+        from lumen_argus_core.telemetry import send_heartbeat
+
+        enrollment = {
+            "server": "https://argus.corp.io",
+            "proxy_url": "https://argus.corp.io:8080",
+            "dashboard_url": "https://argus.corp.io:8081",
+            "agent_id": "agent_test123",
+            "enrolled_at": "2026-04-02T10:30:00Z",
+        }
+
+        mock_report = unittest.mock.MagicMock()
+        mock_report.clients = []
+        mock_resp = self._mock_urlopen_response()
+
+        with (
+            patch("lumen_argus_core.telemetry.load_enrollment", return_value=enrollment),
+            patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report),
+            patch("lumen_argus_core.setup_wizard.protection_status", return_value={"enabled": True}),
+            patch("lumen_argus_core.telemetry.urllib.request.urlopen", return_value=mock_resp) as mock_urlopen,
+        ):
+            send_heartbeat()
+            req = mock_urlopen.call_args[0][0]
+            self.assertIsNone(req.get_header("Authorization"))
+
+    def test_heartbeat_rotates_token_from_response(self):
+        """Heartbeat updates enrollment.json when proxy returns new_token."""
+        from lumen_argus_core.telemetry import send_heartbeat
+
+        enrollment = {
+            "server": "https://argus.corp.io",
+            "proxy_url": "https://argus.corp.io:8080",
+            "dashboard_url": "https://argus.corp.io:8081",
+            "agent_id": "agent_test123",
+            "enrolled_at": "2026-04-02T10:30:00Z",
+            "agent_token": "la_agent_oldtoken",
+        }
+
+        mock_report = unittest.mock.MagicMock()
+        mock_report.clients = []
+        mock_resp = self._mock_urlopen_response(b'{"new_token": "la_agent_newtoken"}')
+
+        with (
+            patch("lumen_argus_core.telemetry.load_enrollment", return_value=enrollment),
+            patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report),
+            patch("lumen_argus_core.setup_wizard.protection_status", return_value={"enabled": True}),
+            patch("lumen_argus_core.telemetry.urllib.request.urlopen", return_value=mock_resp),
+            patch("lumen_argus_core.telemetry.update_agent_token") as mock_rotate,
+        ):
+            send_heartbeat()
+            mock_rotate.assert_called_once_with("la_agent_newtoken")
+
 
 class TestEnrollCA(unittest.TestCase):
     """Test CA certificate handling during enrollment."""
@@ -305,7 +394,7 @@ class TestEnrollCA(unittest.TestCase):
 
         with (
             patch("lumen_argus_core.enrollment.fetch_enrollment_config", return_value=config_response),
-            patch("lumen_argus_core.enrollment.register_agent"),
+            patch("lumen_argus_core.enrollment.register_agent", return_value={}),
             patch("lumen_argus_core.enrollment._ENROLLMENT_FILE", os.path.join(self.tmpdir, "enrollment.json")),
             patch("lumen_argus_core.enrollment._ARGUS_DIR", self.tmpdir),
             patch("lumen_argus_core.enrollment._CA_CERT_FILE", ca_cert_path),
@@ -332,7 +421,7 @@ class TestEnrollCA(unittest.TestCase):
 
         with (
             patch("lumen_argus_core.enrollment.fetch_enrollment_config", return_value=config_response),
-            patch("lumen_argus_core.enrollment.register_agent"),
+            patch("lumen_argus_core.enrollment.register_agent", return_value={}),
             patch("lumen_argus_core.enrollment._ENROLLMENT_FILE", os.path.join(self.tmpdir, "enrollment.json")),
             patch("lumen_argus_core.enrollment._ARGUS_DIR", self.tmpdir),
             patch("lumen_argus_core.enrollment._CA_CERT_FILE", ca_cert_path),

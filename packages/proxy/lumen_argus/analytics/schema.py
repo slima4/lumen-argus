@@ -17,6 +17,28 @@ if TYPE_CHECKING:
     from lumen_argus.analytics.adapter import DatabaseAdapter
 
 
+def build_namespaces_schema(a: DatabaseAdapter) -> str:
+    auto_id = a.auto_id_type()
+    ts = a.timestamp_type()
+    return f"""\
+CREATE TABLE IF NOT EXISTS namespaces (
+    id {auto_id},
+    slug TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL DEFAULT '',
+    tier TEXT NOT NULL DEFAULT 'free',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at {ts} NOT NULL DEFAULT ({a.now_sql()}),
+    updated_at {ts} NOT NULL DEFAULT ({a.now_sql()}),
+    created_by TEXT NOT NULL DEFAULT '',
+    updated_by TEXT NOT NULL DEFAULT ''
+);
+
+INSERT INTO namespaces (id, slug, display_name, tier, created_at, updated_at)
+VALUES (1, 'default', 'Default', 'free', {a.now_sql()}, {a.now_sql()})
+ON CONFLICT (id) DO NOTHING;
+"""
+
+
 def build_findings_schema(a: DatabaseAdapter) -> str:
     auto_id = a.auto_id_type()
     ts = a.timestamp_type()
@@ -124,9 +146,25 @@ CREATE TABLE IF NOT EXISTS enrollment_agents (
     status TEXT NOT NULL DEFAULT 'active',
     tools_configured INTEGER NOT NULL DEFAULT 0,
     tools_detected INTEGER NOT NULL DEFAULT 0,
+    namespace_id INTEGER NOT NULL DEFAULT 1 REFERENCES namespaces(id),
+    token_hash TEXT NOT NULL DEFAULT '',
+    previous_token_hash TEXT NOT NULL DEFAULT '',
+    token_issued_at {ts},
+    token_expires_at {ts},
+    last_token_used_at {ts},
+    created_at {ts} NOT NULL DEFAULT ({a.now_sql()}),
+    updated_at {ts} NOT NULL DEFAULT ({a.now_sql()}),
+    created_by TEXT NOT NULL DEFAULT '',
+    updated_by TEXT NOT NULL DEFAULT '',
     UNIQUE(machine_id)
 );
 CREATE INDEX IF NOT EXISTS idx_enrollment_status ON enrollment_agents(status);
+CREATE INDEX IF NOT EXISTS idx_enrollment_token_hash
+    ON enrollment_agents(token_hash) WHERE token_hash != '';
+CREATE INDEX IF NOT EXISTS idx_enrollment_prev_token_hash
+    ON enrollment_agents(previous_token_hash) WHERE previous_token_hash != '';
+CREATE INDEX IF NOT EXISTS idx_enrollment_namespace
+    ON enrollment_agents(namespace_id);
 
 CREATE TABLE IF NOT EXISTS enrollment_agent_tools (
     agent_id TEXT NOT NULL,
@@ -143,6 +181,29 @@ CREATE TABLE IF NOT EXISTS enrollment_agent_tools (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_tools_unconfigured
     ON enrollment_agent_tools(proxy_configured) WHERE proxy_configured = 0;
+"""
+
+
+def build_enrollment_tokens_schema(a: DatabaseAdapter) -> str:
+    auto_id = a.auto_id_type()
+    ts = a.timestamp_type()
+    return f"""\
+CREATE TABLE IF NOT EXISTS enrollment_tokens (
+    id {auto_id},
+    token_hash TEXT NOT NULL UNIQUE,
+    namespace_id INTEGER NOT NULL DEFAULT 1 REFERENCES namespaces(id),
+    expires_at {ts} NOT NULL,
+    used_at {ts},
+    used_by_agent TEXT,
+    max_uses INTEGER NOT NULL DEFAULT 1,
+    use_count INTEGER NOT NULL DEFAULT 0,
+    created_at {ts} NOT NULL DEFAULT ({a.now_sql()}),
+    updated_at {ts} NOT NULL DEFAULT ({a.now_sql()}),
+    created_by TEXT NOT NULL DEFAULT '',
+    updated_by TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_enrollment_tokens_namespace
+    ON enrollment_tokens(namespace_id);
 """
 
 
@@ -290,9 +351,13 @@ CREATE TABLE IF NOT EXISTS mcp_tool_baselines (
 
 
 def build_all_schemas(adapter: DatabaseAdapter) -> str:
-    """Build the complete community schema DDL for the given adapter."""
+    """Build the complete community schema DDL for the given adapter.
+
+    Order matters: namespaces must come first (other tables reference it).
+    """
     return "\n".join(
         [
+            build_namespaces_schema(adapter),
             build_findings_schema(adapter),
             build_rules_schema(adapter),
             build_notification_channels_schema(adapter),
@@ -306,5 +371,6 @@ def build_all_schemas(adapter: DatabaseAdapter) -> str:
             build_allowlist_schema(adapter),
             build_rule_analysis_schema(adapter),
             build_enrollment_schema(adapter),
+            build_enrollment_tokens_schema(adapter),
         ]
     )

@@ -69,7 +69,7 @@ def fetch_enrollment_config(server_url: str, token: str = "") -> dict[str, Any]:
         raise EnrollmentError(f"Invalid enrollment config response: {e}") from e
 
 
-def register_agent(server_url: str, agent_id: str, machine_id: str, token: str = "") -> None:
+def register_agent(server_url: str, agent_id: str, machine_id: str, token: str = "") -> dict[str, Any]:
     """Register this agent with the central proxy.
 
     Args:
@@ -77,6 +77,9 @@ def register_agent(server_url: str, agent_id: str, machine_id: str, token: str =
         agent_id: Unique agent identifier.
         machine_id: Stable machine identifier.
         token: Enrollment token for authentication.
+
+    Returns:
+        Registration response dict. May contain 'agent_token' (show-once bearer token).
 
     Raises:
         EnrollmentError: If registration fails.
@@ -103,7 +106,11 @@ def register_agent(server_url: str, agent_id: str, machine_id: str, token: str =
 
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
     try:
-        urllib.request.urlopen(req, timeout=15)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            try:
+                response_data: dict[str, Any] = json.loads(resp.read())
+            except (json.JSONDecodeError, ValueError):
+                response_data = {}
     except urllib.error.HTTPError as e:
         if e.code == 402:
             raise EnrollmentError("Server does not support enrollment (Pro license required)") from e
@@ -114,6 +121,7 @@ def register_agent(server_url: str, agent_id: str, machine_id: str, token: str =
         raise EnrollmentError(f"Cannot reach server: {e.reason}") from e
 
     log.info("agent registered with %s", server_url)
+    return response_data
 
 
 def deregister_agent(server_url: str, agent_id: str) -> None:
@@ -143,7 +151,7 @@ def enroll(server_url: str, token: str = "") -> dict[str, Any]:
     agent_id = _generate_agent_id()
     machine_id = _generate_machine_id()
 
-    register_agent(server_url, agent_id, machine_id, token=token)
+    reg_response = register_agent(server_url, agent_id, machine_id, token=token)
 
     state: dict[str, Any] = {
         "server": server_url,
@@ -155,6 +163,12 @@ def enroll(server_url: str, token: str = "") -> dict[str, Any]:
         "agent_id": agent_id,
         "machine_id": machine_id,
     }
+
+    # Store agent bearer token if proxy issued one (Pro feature)
+    agent_token = reg_response.get("agent_token", "")
+    if agent_token:
+        state["agent_token"] = agent_token
+        log.info("agent bearer token received and stored")
 
     # Save CA cert if provided
     ca_cert = config.get("ca_cert", "")
@@ -206,6 +220,24 @@ def load_enrollment() -> dict[str, Any] | None:
 def is_enrolled() -> bool:
     """Check if this machine is enrolled."""
     return os.path.isfile(_ENROLLMENT_FILE)
+
+
+def update_agent_token(new_token: str) -> bool:
+    """Update the agent bearer token in enrollment.json.
+
+    Called by telemetry on token rotation. Loads current state,
+    updates the token, and writes atomically.
+
+    Returns True if updated, False if not enrolled.
+    """
+    state = load_enrollment()
+    if not state:
+        log.warning("cannot update agent token — not enrolled")
+        return False
+    state["agent_token"] = new_token
+    _save_enrollment(state)
+    log.info("agent token rotated")
+    return True
 
 
 def _save_enrollment(state: dict[str, Any]) -> None:
