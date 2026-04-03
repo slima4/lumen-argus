@@ -22,14 +22,7 @@ class TestAnalyticsStore(unittest.TestCase):
         self.store = AnalyticsStore(db_path=self.db_path)
 
     def tearDown(self):
-        # Close thread-local connections
-        conn = getattr(self.store._local, "conn", None)
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
-        # Remove the entire temp directory tree
+        self.store._adapter.close()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     # ── WAL mode ──────────────────────────────────────────────────
@@ -599,7 +592,7 @@ class TestAnalyticsStore(unittest.TestCase):
     def test_db_path_tilde_expansion(self):
         """Tilde in db_path should be expanded."""
         store = AnalyticsStore(db_path=self.db_path)
-        self.assertNotIn("~", store._db_path)
+        self.assertNotIn("~", store._adapter._db_path)
 
     def test_creates_parent_directories(self):
         """Store should create parent directories for the DB file."""
@@ -641,12 +634,7 @@ class TestAdvancedAnalytics(unittest.TestCase):
         self.store.record_findings(findings2, provider="openai", model="gpt-4", session=session2)
 
     def tearDown(self):
-        conn = getattr(self.store._local, "conn", None)
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        self.store._adapter.close()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_action_trend_returns_pivoted_data(self):

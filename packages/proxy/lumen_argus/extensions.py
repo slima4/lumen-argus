@@ -86,6 +86,8 @@ class ExtensionRegistry:
         # MCP Pro hooks
         self._mcp_policy_engine: Any | None = None
         self._mcp_session_escalation: Callable[..., Any] | None = None
+        # Database adapter hook
+        self._database_adapter: Any | None = None
 
     def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
         """Register an additional detector.
@@ -482,6 +484,18 @@ class ExtensionRegistry:
 
     def get_license_checker(self) -> Any | None:
         return self._license_checker
+
+    def set_database_adapter(self, adapter: object) -> None:
+        """Register a database adapter (e.g. PostgresAdapter).
+
+        Must implement the DatabaseAdapter interface from analytics.adapter.
+        Called by Pro at startup before AnalyticsStore is created.
+        """
+        self._database_adapter = adapter
+        log.info("database adapter registered: %s", getattr(adapter, "engine_name", "unknown"))
+
+    def get_database_adapter(self) -> Any | None:
+        return self._database_adapter
 
     def loaded_plugins(self) -> list[tuple[str, str]]:
         """Return list of (name, version) for loaded plugins."""

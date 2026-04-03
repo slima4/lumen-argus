@@ -1,20 +1,22 @@
-"""SQLite-backed analytics store for community dashboard.
+"""Analytics store for community dashboard.
 
 Stores summarized finding data (no raw secrets/PII values) with
 aggregation queries for dashboard charts. Includes scheduled cleanup
 for retention enforcement.
 
-sqlite3 is Python stdlib — zero external dependencies.
+Database-agnostic via DatabaseAdapter — defaults to SQLiteAdapter
+(stdlib sqlite3, zero dependencies). Pro can inject PostgresAdapter
+via extensions.set_database_adapter().
 """
 
 import logging
-import os
 import sqlite3
 import threading
 import time
-from pathlib import Path
+from contextlib import contextmanager
 from typing import Any, Callable
 
+from lumen_argus.analytics.adapter import DatabaseAdapter, SQLiteAdapter
 from lumen_argus.analytics.allowlists import _ALLOWLIST_SCHEMA, AllowlistRepository
 from lumen_argus.analytics.channels import _NOTIFICATION_SCHEMA, ChannelsRepository
 from lumen_argus.analytics.config_overrides import _CONFIG_OVERRIDES_SCHEMA, ConfigOverridesRepository
@@ -76,18 +78,27 @@ CREATE TABLE IF NOT EXISTS mcp_tool_baselines (
 
 
 class AnalyticsStore:
-    """Thread-safe SQLite store for finding history and trend queries.
+    """Database-agnostic analytics store for finding history and trend queries.
 
-    Uses thread-local connection pooling — one connection per thread,
-    reused across method calls. WAL mode allows concurrent readers.
-    Write serialization: single Lock wraps all writes; reads don't acquire it.
+    Delegates connection management and SQL dialect to a DatabaseAdapter.
+    Defaults to SQLiteAdapter (thread-local connections, WAL mode).
+    Pro can inject PostgresAdapter (connection pool, MVCC).
     """
 
-    def __init__(self, db_path: str = "~/.lumen-argus/analytics.db", hmac_key: bytes | None = None) -> None:
-        self._db_path = os.path.expanduser(db_path)
+    def __init__(
+        self,
+        db_path: str = "~/.lumen-argus/analytics.db",
+        hmac_key: bytes | None = None,
+        adapter: DatabaseAdapter | None = None,
+    ) -> None:
+        if adapter:
+            self._adapter = adapter
+        else:
+            self._adapter = SQLiteAdapter(db_path)
         self._hmac_key = hmac_key
-        self._lock = threading.Lock()
-        self._local = threading.local()
+        # Repositories use `with self._store._lock:` for write serialization.
+        # SQLite: real threading.Lock. PostgreSQL: no-op lock (MVCC).
+        self._lock = self._adapter.lock
         self._rules_change_callback: Callable[..., Any] | None = None
         self._ensure_db()
         self.findings = FindingsRepository(self)
@@ -102,53 +113,46 @@ class AnalyticsStore:
 
     def _ensure_db(self) -> None:
         """Create the database and schema if they don't exist."""
-        db_dir = Path(self._db_path).parent
-        db_dir.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.executescript(_SCHEMA)
-            conn.executescript(_RULES_SCHEMA)
-            conn.executescript(_NOTIFICATION_SCHEMA)
-            conn.executescript(_SCHEMA_VERSION)
-            conn.executescript(_CONFIG_OVERRIDES_SCHEMA)
-            conn.executescript(_MCP_TOOL_LISTS_SCHEMA)
-            conn.executescript(_MCP_DETECTED_TOOLS_SCHEMA)
-            conn.executescript(_MCP_TOOL_CALLS_SCHEMA)
-            conn.executescript(_MCP_TOOL_BASELINES_SCHEMA)
-            conn.executescript(_WS_CONNECTIONS_SCHEMA)
-            conn.executescript(_ALLOWLIST_SCHEMA)
-            conn.executescript(_RULE_ANALYSIS_SCHEMA)
-            conn.executescript(_ENROLLMENT_SCHEMA)
-        # Secure file permissions — same 0o600 as audit JSONL files
-        try:
-            os.chmod(self._db_path, 0o600)
-        except OSError as exc:
-            log.warning("could not set DB file permissions to 0o600: %s", exc)
+        all_schemas = "\n".join(
+            [
+                _SCHEMA,
+                _RULES_SCHEMA,
+                _NOTIFICATION_SCHEMA,
+                _SCHEMA_VERSION,
+                _CONFIG_OVERRIDES_SCHEMA,
+                _MCP_TOOL_LISTS_SCHEMA,
+                _MCP_DETECTED_TOOLS_SCHEMA,
+                _MCP_TOOL_CALLS_SCHEMA,
+                _MCP_TOOL_BASELINES_SCHEMA,
+                _WS_CONNECTIONS_SCHEMA,
+                _ALLOWLIST_SCHEMA,
+                _RULE_ANALYSIS_SCHEMA,
+                _ENROLLMENT_SCHEMA,
+            ]
+        )
+        self._adapter.ensure_schema(all_schemas)
 
     def _connect(self) -> sqlite3.Connection:
-        """Return a thread-local SQLite connection.
+        """Return a database connection via the adapter.
 
-        Each thread gets its own connection, reused across method calls.
-        Health check after 60s of inactivity.
+        Repositories call this — the adapter handles the lifecycle
+        (thread-local for SQLite, pooled for PostgreSQL).
+
+        Typed as sqlite3.Connection for community (all repos expect DB-API 2.0).
+        Pro widens this when PostgresAdapter is active.
         """
-        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
-        if conn is not None:
-            now = time.monotonic()
-            last_used: float = getattr(self._local, "conn_last_used", 0)
-            if now - last_used > 60:
-                try:
-                    conn.execute("SELECT 1")
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    self._local.conn = None
-                    conn = None
-            if conn is not None:
-                self._local.conn_last_used = now
-                return conn
-        conn = sqlite3.connect(self._db_path, timeout=5)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        self._local.conn = conn
-        self._local.conn_last_used = time.monotonic()
+        conn: sqlite3.Connection = self._adapter.connect()
         return conn
+
+    @contextmanager
+    def _write_lock(self) -> Any:
+        """Acquire write lock via the adapter.
+
+        SQLite: threading.Lock (single-writer serialization).
+        PostgreSQL: no-op (MVCC handles concurrency).
+        """
+        with self._adapter.write_lock():
+            yield
 
     def _now(self) -> str:
         return now_iso()
