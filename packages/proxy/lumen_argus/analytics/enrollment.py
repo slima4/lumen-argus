@@ -10,40 +10,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("argus.analytics")
 
-_ENROLLMENT_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS enrollment_agents (
-    agent_id TEXT PRIMARY KEY,
-    machine_id TEXT NOT NULL,
-    hostname TEXT NOT NULL DEFAULT '',
-    os TEXT NOT NULL DEFAULT '',
-    arch TEXT NOT NULL DEFAULT '',
-    agent_version TEXT NOT NULL DEFAULT '',
-    enrolled_at TEXT NOT NULL,
-    last_heartbeat TEXT,
-    status TEXT NOT NULL DEFAULT 'active',
-    tools_configured INTEGER NOT NULL DEFAULT 0,
-    tools_detected INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(machine_id)
-);
-CREATE INDEX IF NOT EXISTS idx_enrollment_status ON enrollment_agents(status);
-
-CREATE TABLE IF NOT EXISTS enrollment_agent_tools (
-    agent_id TEXT NOT NULL,
-    client_id TEXT NOT NULL,
-    display_name TEXT NOT NULL DEFAULT '',
-    version TEXT NOT NULL DEFAULT '',
-    install_method TEXT NOT NULL DEFAULT '',
-    proxy_configured INTEGER NOT NULL DEFAULT 0,
-    routing_active INTEGER NOT NULL DEFAULT 0,
-    proxy_config_type TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (agent_id, client_id),
-    FOREIGN KEY (agent_id) REFERENCES enrollment_agents(agent_id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_agent_tools_unconfigured
-    ON enrollment_agent_tools(proxy_configured) WHERE proxy_configured = 0;
-"""
-
 _GAPS_LIMIT = 500
 
 

@@ -10,18 +10,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("argus.analytics")
 
-_MCP_TOOL_LISTS_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS mcp_tool_lists (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    list_type TEXT NOT NULL,
-    tool_name TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT 'api',
-    created_at TEXT NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_tool_unique
-    ON mcp_tool_lists(list_type, tool_name);
-"""
-
 
 class MCPToolListsRepository:
     """Repository for MCP tool allow/block list operations."""

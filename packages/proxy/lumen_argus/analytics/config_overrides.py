@@ -10,14 +10,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("argus.analytics")
 
-_CONFIG_OVERRIDES_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS config_overrides (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-"""
-
 # Community-editable config keys with validation rules
 _VALID_CONFIG_KEYS = {
     "proxy.timeout",

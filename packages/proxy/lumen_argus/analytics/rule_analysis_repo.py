@@ -11,20 +11,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("argus.analytics")
 
-_RULE_ANALYSIS_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS rule_analysis (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    duration_s REAL NOT NULL DEFAULT 0,
-    total_rules INTEGER NOT NULL DEFAULT 0,
-    duplicates INTEGER NOT NULL DEFAULT 0,
-    subsets INTEGER NOT NULL DEFAULT 0,
-    overlaps INTEGER NOT NULL DEFAULT 0,
-    results_json TEXT NOT NULL DEFAULT '{}',
-    dismissed_json TEXT NOT NULL DEFAULT '[]'
-);
-"""
-
 
 class RuleAnalysisRepository:
     """Repository for rule overlap analysis results."""

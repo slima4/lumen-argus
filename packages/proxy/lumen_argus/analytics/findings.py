@@ -16,42 +16,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("argus.analytics")
 
-_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS findings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    detector TEXT NOT NULL,
-    finding_type TEXT NOT NULL,
-    severity TEXT NOT NULL,
-    location TEXT NOT NULL,
-    action_taken TEXT NOT NULL DEFAULT '',
-    provider TEXT NOT NULL DEFAULT '',
-    model TEXT NOT NULL DEFAULT '',
-    value_preview TEXT NOT NULL DEFAULT '',
-    account_id TEXT NOT NULL DEFAULT '',
-    session_id TEXT NOT NULL DEFAULT '',
-    device_id TEXT NOT NULL DEFAULT '',
-    source_ip TEXT NOT NULL DEFAULT '',
-    working_directory TEXT NOT NULL DEFAULT '',
-    git_branch TEXT NOT NULL DEFAULT '',
-    os_platform TEXT NOT NULL DEFAULT '',
-    client_name TEXT NOT NULL DEFAULT '',
-    client_version TEXT NOT NULL DEFAULT '',
-    api_key_hash TEXT NOT NULL DEFAULT '',
-    content_hash TEXT NOT NULL DEFAULT '',
-    seen_count INTEGER NOT NULL DEFAULT 1,
-    value_hash TEXT NOT NULL DEFAULT ''
-);
-
-CREATE INDEX IF NOT EXISTS idx_findings_timestamp ON findings(timestamp);
-CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
-CREATE INDEX IF NOT EXISTS idx_findings_session ON findings(session_id);
-CREATE INDEX IF NOT EXISTS idx_findings_account ON findings(account_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_dedup
-ON findings(content_hash, session_id)
-WHERE content_hash != '';
-"""
-
 _FINDINGS_COLUMNS = (
     "id, timestamp, detector, finding_type, severity, location, action_taken, "
     "provider, model, value_preview, account_id, session_id, device_id, "

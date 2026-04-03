@@ -11,22 +11,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("argus.analytics")
 
-_WS_CONNECTIONS_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS ws_connections (
-    id TEXT PRIMARY KEY,
-    target_url TEXT NOT NULL,
-    origin TEXT NOT NULL DEFAULT '',
-    connected_at REAL NOT NULL,
-    disconnected_at REAL,
-    duration_seconds REAL,
-    frames_sent INTEGER NOT NULL DEFAULT 0,
-    frames_received INTEGER NOT NULL DEFAULT 0,
-    findings_count INTEGER NOT NULL DEFAULT 0,
-    close_code INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_ws_conn_at ON ws_connections(connected_at);
-"""
-
 
 class WebSocketConnectionsRepository:
     """Repository for WebSocket connection lifecycle operations."""

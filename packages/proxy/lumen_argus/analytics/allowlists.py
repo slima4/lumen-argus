@@ -10,23 +10,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("argus.analytics")
 
-_ALLOWLIST_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS allowlist_entries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    list_type TEXT NOT NULL,
-    pattern TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    source TEXT NOT NULL DEFAULT 'api',
-    enabled INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    created_by TEXT NOT NULL DEFAULT '',
-    updated_by TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS idx_allowlist_type ON allowlist_entries(list_type);
-CREATE INDEX IF NOT EXISTS idx_allowlist_enabled ON allowlist_entries(enabled);
-"""
-
 _ALLOWLIST_COLUMNS = (
     "id, list_type, pattern, description, source, enabled, created_at, updated_at, created_by, updated_by"
 )

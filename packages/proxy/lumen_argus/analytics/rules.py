@@ -15,33 +15,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("argus.analytics")
 
-_RULES_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS rules (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    pattern TEXT NOT NULL,
-    detector TEXT NOT NULL DEFAULT 'secrets',
-    severity TEXT NOT NULL DEFAULT 'high',
-    action TEXT NOT NULL DEFAULT '',
-    enabled INTEGER NOT NULL DEFAULT 1,
-    tier TEXT NOT NULL DEFAULT 'community',
-    source TEXT NOT NULL DEFAULT 'import',
-    description TEXT NOT NULL DEFAULT '',
-    tags TEXT NOT NULL DEFAULT '[]',
-    validator TEXT NOT NULL DEFAULT '',
-    entropy_context INTEGER NOT NULL DEFAULT 0,
-    hit_count INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    created_by TEXT NOT NULL DEFAULT '',
-    updated_by TEXT NOT NULL DEFAULT ''
-);
-
-CREATE INDEX IF NOT EXISTS idx_rules_detector ON rules(detector);
-CREATE INDEX IF NOT EXISTS idx_rules_tier ON rules(tier);
-CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled);
-"""
-
 _RULES_COLUMNS = (
     "id, name, pattern, detector, severity, action, enabled, tier, source, "
     "description, tags, validator, entropy_context, created_at, updated_at, "

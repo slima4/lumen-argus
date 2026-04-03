@@ -15,64 +15,20 @@ import time
 from typing import Any, Callable
 
 from lumen_argus.analytics.adapter import DatabaseAdapter, DBConnection, SQLiteAdapter
-from lumen_argus.analytics.allowlists import _ALLOWLIST_SCHEMA, AllowlistRepository
-from lumen_argus.analytics.channels import _NOTIFICATION_SCHEMA, ChannelsRepository
-from lumen_argus.analytics.config_overrides import _CONFIG_OVERRIDES_SCHEMA, ConfigOverridesRepository
-from lumen_argus.analytics.enrollment import _ENROLLMENT_SCHEMA, EnrollmentRepository
-from lumen_argus.analytics.findings import _SCHEMA, FindingsRepository
-from lumen_argus.analytics.mcp_tool_lists import _MCP_TOOL_LISTS_SCHEMA, MCPToolListsRepository
-from lumen_argus.analytics.rule_analysis_repo import _RULE_ANALYSIS_SCHEMA, RuleAnalysisRepository
-from lumen_argus.analytics.rules import _RULES_SCHEMA, RulesRepository
-from lumen_argus.analytics.ws_connections import _WS_CONNECTIONS_SCHEMA, WebSocketConnectionsRepository
+from lumen_argus.analytics.allowlists import AllowlistRepository
+from lumen_argus.analytics.channels import ChannelsRepository
+from lumen_argus.analytics.config_overrides import ConfigOverridesRepository
+from lumen_argus.analytics.enrollment import EnrollmentRepository
+from lumen_argus.analytics.findings import FindingsRepository
+from lumen_argus.analytics.mcp_tool_lists import MCPToolListsRepository
+from lumen_argus.analytics.rule_analysis_repo import RuleAnalysisRepository
+from lumen_argus.analytics.rules import RulesRepository
+from lumen_argus.analytics.schema import build_all_schemas
+from lumen_argus.analytics.ws_connections import WebSocketConnectionsRepository
 from lumen_argus.models import Finding, SessionContext
 from lumen_argus_core.time_utils import now_iso
 
 log = logging.getLogger("argus.analytics")
-
-_SCHEMA_VERSION = """\
-CREATE TABLE IF NOT EXISTS schema_version (
-    version INTEGER PRIMARY KEY,
-    description TEXT NOT NULL,
-    applied_at TEXT NOT NULL
-);
-"""
-
-_MCP_DETECTED_TOOLS_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS mcp_detected_tools (
-    tool_name TEXT PRIMARY KEY,
-    description TEXT NOT NULL DEFAULT '',
-    input_schema TEXT NOT NULL DEFAULT '{}',
-    first_seen TEXT NOT NULL,
-    last_seen TEXT NOT NULL,
-    call_count INTEGER NOT NULL DEFAULT 1
-);
-"""
-
-_MCP_TOOL_CALLS_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS mcp_tool_calls (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tool_name TEXT NOT NULL,
-    session_id TEXT NOT NULL DEFAULT '',
-    timestamp TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'allowed',
-    finding_count INTEGER NOT NULL DEFAULT 0,
-    source TEXT NOT NULL DEFAULT 'proxy'
-);
-CREATE INDEX IF NOT EXISTS idx_mcp_calls_session ON mcp_tool_calls(session_id, timestamp);
-CREATE INDEX IF NOT EXISTS idx_mcp_calls_ts ON mcp_tool_calls(timestamp);
-"""
-
-_MCP_TOOL_BASELINES_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS mcp_tool_baselines (
-    tool_name TEXT PRIMARY KEY,
-    definition_hash TEXT NOT NULL,
-    description TEXT,
-    param_names TEXT,
-    first_seen TEXT NOT NULL,
-    last_seen TEXT NOT NULL,
-    drift_count INTEGER DEFAULT 0
-);
-"""
 
 
 class AnalyticsStore:
@@ -108,24 +64,7 @@ class AnalyticsStore:
 
     def _ensure_db(self) -> None:
         """Create the database and schema if they don't exist."""
-        all_schemas = "\n".join(
-            [
-                _SCHEMA,
-                _RULES_SCHEMA,
-                _NOTIFICATION_SCHEMA,
-                _SCHEMA_VERSION,
-                _CONFIG_OVERRIDES_SCHEMA,
-                _MCP_TOOL_LISTS_SCHEMA,
-                _MCP_DETECTED_TOOLS_SCHEMA,
-                _MCP_TOOL_CALLS_SCHEMA,
-                _MCP_TOOL_BASELINES_SCHEMA,
-                _WS_CONNECTIONS_SCHEMA,
-                _ALLOWLIST_SCHEMA,
-                _RULE_ANALYSIS_SCHEMA,
-                _ENROLLMENT_SCHEMA,
-            ]
-        )
-        self._adapter.ensure_schema(all_schemas)
+        self._adapter.ensure_schema(build_all_schemas(self._adapter))
 
     def _connect(self) -> DBConnection:
         """Return a database connection via the adapter.

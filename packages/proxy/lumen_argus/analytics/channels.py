@@ -14,23 +14,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("argus.analytics")
 
-_NOTIFICATION_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS notification_channels (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    type TEXT NOT NULL,
-    config TEXT NOT NULL DEFAULT '{}',
-    enabled INTEGER NOT NULL DEFAULT 1,
-    source TEXT NOT NULL DEFAULT 'dashboard',
-    events TEXT NOT NULL DEFAULT '["block","alert"]',
-    min_severity TEXT NOT NULL DEFAULT 'warning',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    created_by TEXT NOT NULL DEFAULT '',
-    updated_by TEXT NOT NULL DEFAULT ''
-);
-"""
-
 _CHANNEL_COLUMNS = (
     "id, name, type, config, enabled, source, events, min_severity, created_at, updated_at, created_by, updated_by"
 )
