@@ -177,6 +177,82 @@ class TestHeartbeat(unittest.TestCase):
             self.assertTrue(payload["protection_enabled"])
             self.assertIn("heartbeat_at", payload)
 
+    def test_heartbeat_payload_includes_tool_detail(self):
+        """Heartbeat tools array includes display_name, install_method, proxy_config_type."""
+        from lumen_argus_core.detect import DetectedClient
+        from lumen_argus_core.telemetry import send_heartbeat
+
+        client = DetectedClient(
+            client_id="claude",
+            display_name="Claude Code",
+            installed=True,
+            version="1.2.0",
+            install_method="binary",
+            proxy_configured=True,
+            routing_active=True,
+            proxy_config_type="env_var",
+        )
+
+        enrollment = {
+            "server": "https://argus.corp.io",
+            "proxy_url": "https://argus.corp.io:8080",
+            "dashboard_url": "https://argus.corp.io:8081",
+            "agent_id": "agent_test123",
+            "enrolled_at": "2026-04-02T10:30:00Z",
+        }
+
+        mock_report = unittest.mock.MagicMock()
+        mock_report.clients = [client]
+
+        with (
+            patch("lumen_argus_core.telemetry.load_enrollment", return_value=enrollment),
+            patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report),
+            patch("lumen_argus_core.setup_wizard.protection_status", return_value={"enabled": True}),
+            patch("lumen_argus_core.telemetry.urllib.request.urlopen") as mock_urlopen,
+        ):
+            send_heartbeat()
+            import json
+
+            payload = json.loads(mock_urlopen.call_args[0][0].data)
+            self.assertEqual(len(payload["tools"]), 1)
+            tool = payload["tools"][0]
+            self.assertEqual(tool["client_id"], "claude")
+            self.assertEqual(tool["display_name"], "Claude Code")
+            self.assertEqual(tool["install_method"], "binary")
+            self.assertEqual(tool["proxy_config_type"], "env_var")
+
+    def test_heartbeat_empty_string_urls_fall_back_to_server(self):
+        """Empty string proxy_url/dashboard_url should fall back to server."""
+        from lumen_argus_core.telemetry import send_heartbeat
+
+        enrollment = {
+            "server": "https://argus.corp.io",
+            "proxy_url": "",
+            "dashboard_url": "",
+            "agent_id": "agent_test123",
+            "enrolled_at": "2026-04-02T10:30:00Z",
+        }
+
+        mock_report = unittest.mock.MagicMock()
+        mock_report.clients = []
+
+        with (
+            patch("lumen_argus_core.telemetry.load_enrollment", return_value=enrollment),
+            patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report) as mock_detect,
+            patch("lumen_argus_core.setup_wizard.protection_status", return_value={"enabled": True}),
+            patch("lumen_argus_core.telemetry.urllib.request.urlopen") as mock_urlopen,
+        ):
+            result = send_heartbeat()
+            self.assertTrue(result)
+            # proxy_url="" should fall back to server for detect
+            mock_detect.assert_called_once_with(proxy_url="https://argus.corp.io")
+            # dashboard_url="" should fall back to server for heartbeat URL
+            req = mock_urlopen.call_args[0][0]
+            self.assertEqual(
+                req.full_url,
+                "https://argus.corp.io/api/v1/enrollment/heartbeat",
+            )
+
     def test_heartbeat_handles_http_error(self):
         from lumen_argus_core.telemetry import send_heartbeat
 

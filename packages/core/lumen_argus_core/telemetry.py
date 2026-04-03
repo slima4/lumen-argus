@@ -33,17 +33,20 @@ def send_heartbeat() -> bool:
     from lumen_argus_core.detect import detect_installed_clients
     from lumen_argus_core.setup_wizard import protection_status
 
-    proxy_url = enrollment.get("proxy_url", enrollment["server"])
+    proxy_url = enrollment.get("proxy_url") or enrollment["server"]
     report = detect_installed_clients(proxy_url=proxy_url)
     prot_status = protection_status()
 
     tools = [
         {
             "client_id": c.client_id,
+            "display_name": c.display_name,
             "installed": c.installed,
             "version": c.version,
+            "install_method": c.install_method,
             "proxy_configured": c.proxy_configured,
             "routing_active": c.routing_active,
+            "proxy_config_type": c.proxy_config_type,
         }
         for c in report.clients
         if c.installed
@@ -64,7 +67,7 @@ def send_heartbeat() -> bool:
         }
     ).encode()
 
-    dashboard_url = enrollment.get("dashboard_url", enrollment["server"])
+    dashboard_url = enrollment.get("dashboard_url") or enrollment["server"]
     url = dashboard_url.rstrip("/") + "/api/v1/enrollment/heartbeat"
 
     req = urllib.request.Request(

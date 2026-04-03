@@ -233,7 +233,7 @@ function _addReadRow(parent,label,value){
   v.style.color='var(--text-muted)';row.appendChild(k);row.appendChild(v);parent.appendChild(row);}
 
 /* --- Helper: editable row (input or select) --- */
-function _addEditRow(parent,label,key,type,value,opts){
+function _addEditRow(parent,label,key,type,value,opts){opts=opts||{};
   var row=document.createElement('div');row.className='setting-row';
   var k=document.createElement('div');k.className='setting-key';k.textContent=label;
   var v;

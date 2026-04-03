@@ -26,7 +26,25 @@ CREATE TABLE IF NOT EXISTS enrollment_agents (
     UNIQUE(machine_id)
 );
 CREATE INDEX IF NOT EXISTS idx_enrollment_status ON enrollment_agents(status);
+
+CREATE TABLE IF NOT EXISTS enrollment_agent_tools (
+    agent_id TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    version TEXT NOT NULL DEFAULT '',
+    install_method TEXT NOT NULL DEFAULT '',
+    proxy_configured INTEGER NOT NULL DEFAULT 0,
+    routing_active INTEGER NOT NULL DEFAULT 0,
+    proxy_config_type TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, client_id),
+    FOREIGN KEY (agent_id) REFERENCES enrollment_agents(agent_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_agent_tools_unconfigured
+    ON enrollment_agent_tools(proxy_configured) WHERE proxy_configured = 0;
 """
+
+_GAPS_LIMIT = 500
 
 
 class EnrollmentRepository:
@@ -106,13 +124,11 @@ class EnrollmentRepository:
         """Get a single agent by ID."""
         with self._store._lock:
             with self._store._connect() as conn:
-                conn.row_factory = _dict_factory
                 row = conn.execute(
                     "SELECT * FROM enrollment_agents WHERE agent_id = ?",
                     (agent_id,),
                 ).fetchone()
-                result: dict[str, Any] | None = row
-                return result
+                return dict(row) if row else None
 
     def list_agents(
         self,
@@ -123,7 +139,6 @@ class EnrollmentRepository:
         """List enrolled agents with optional status filter."""
         with self._store._lock:
             with self._store._connect() as conn:
-                conn.row_factory = _dict_factory
                 if status:
                     rows = conn.execute(
                         "SELECT * FROM enrollment_agents WHERE status = ? ORDER BY enrolled_at DESC LIMIT ? OFFSET ?",
@@ -135,7 +150,7 @@ class EnrollmentRepository:
                         "ORDER BY enrolled_at DESC LIMIT ? OFFSET ?",
                         (limit, offset),
                     ).fetchall()
-                return rows
+                return [dict(r) for r in rows]
 
     def count_agents(self, status: str = "") -> int:
         """Count agents by status."""
@@ -165,14 +180,13 @@ class EnrollmentRepository:
         """
         with self._store._lock:
             with self._store._connect() as conn:
-                conn.row_factory = _dict_factory
                 if status:
                     rows = conn.execute(
                         "SELECT * FROM enrollment_agents WHERE status = ? ORDER BY enrolled_at DESC LIMIT ? OFFSET ?",
                         (status, limit, offset),
                     ).fetchall()
                     count_row = conn.execute(
-                        "SELECT COUNT(*) AS total FROM enrollment_agents WHERE status = ?",
+                        "SELECT COUNT(*) FROM enrollment_agents WHERE status = ?",
                         (status,),
                     ).fetchone()
                 else:
@@ -182,10 +196,156 @@ class EnrollmentRepository:
                         (limit, offset),
                     ).fetchall()
                     count_row = conn.execute(
-                        "SELECT COUNT(*) AS total FROM enrollment_agents WHERE status != 'deregistered'",
+                        "SELECT COUNT(*) FROM enrollment_agents WHERE status != 'deregistered'",
                     ).fetchone()
-                total = count_row["total"] if count_row else 0
-                return rows, total
+                total = count_row[0] if count_row else 0
+                return [dict(r) for r in rows], total
+
+    def upsert_tools(self, agent_id: str, tools: list[dict[str, Any]], updated_at: str) -> None:
+        """Replace all tools for an agent from heartbeat data.
+
+        Deletes tools no longer present (agent uninstalled) and upserts current ones.
+        """
+        current_ids = [t.get("client_id", "") for t in tools]
+        current_ids = [cid for cid in current_ids if cid]
+        with self._store._lock:
+            with self._store._connect() as conn:
+                if current_ids:
+                    placeholders = ",".join("?" for _ in current_ids)
+                    cur = conn.execute(
+                        f"DELETE FROM enrollment_agent_tools WHERE agent_id = ? AND client_id NOT IN ({placeholders})",
+                        [agent_id, *current_ids],
+                    )
+                else:
+                    cur = conn.execute(
+                        "DELETE FROM enrollment_agent_tools WHERE agent_id = ?",
+                        (agent_id,),
+                    )
+                if cur.rowcount:
+                    log.info(
+                        "agent %s: removed %d uninstalled tool(s)",
+                        agent_id[:12],
+                        cur.rowcount,
+                    )
+
+                params = [
+                    (
+                        agent_id,
+                        t.get("client_id", ""),
+                        t.get("display_name", ""),
+                        t.get("version", ""),
+                        t.get("install_method", ""),
+                        int(t.get("proxy_configured", False)),
+                        int(t.get("routing_active", False)),
+                        t.get("proxy_config_type", ""),
+                        updated_at,
+                    )
+                    for t in tools
+                    if t.get("client_id")
+                ]
+                conn.executemany(
+                    """INSERT INTO enrollment_agent_tools
+                    (agent_id, client_id, display_name, version, install_method,
+                     proxy_configured, routing_active, proxy_config_type, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(agent_id, client_id) DO UPDATE SET
+                        display_name = excluded.display_name,
+                        version = excluded.version,
+                        install_method = excluded.install_method,
+                        proxy_configured = excluded.proxy_configured,
+                        routing_active = excluded.routing_active,
+                        proxy_config_type = excluded.proxy_config_type,
+                        updated_at = excluded.updated_at
+                    """,
+                    params,
+                )
+
+        unconfigured_count = sum(1 for t in tools if not t.get("proxy_configured"))
+        log.debug(
+            "agent %s: upserted %d tool(s) at %s",
+            agent_id[:12],
+            len(params),
+            updated_at,
+        )
+        if unconfigured_count:
+            log.info(
+                "agent %s: %d/%d tool(s) unconfigured",
+                agent_id[:12],
+                unconfigured_count,
+                len(params),
+            )
+
+    def get_agent_tools(self, agent_id: str) -> list[dict[str, Any]]:
+        """Get all tools for a specific agent."""
+        with self._store._lock:
+            with self._store._connect() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM enrollment_agent_tools WHERE agent_id = ? ORDER BY client_id",
+                    (agent_id,),
+                ).fetchall()
+        log.debug("agent %s: %d tool(s) found", agent_id[:12], len(rows))
+        return [dict(r) for r in rows]
+
+    def get_fleet_tools_summary(self) -> dict[str, Any]:
+        """Aggregate tool status across the fleet.
+
+        Returns per-tool install/configured/routing counts and a list of
+        unconfigured tools (capped at _GAPS_LIMIT) with agent context.
+        """
+        with self._store._lock:
+            with self._store._connect() as conn:
+                by_tool = [
+                    dict(r)
+                    for r in conn.execute(
+                        """SELECT
+                            client_id,
+                            display_name,
+                            COUNT(*) AS installed,
+                            SUM(proxy_configured) AS configured,
+                            SUM(routing_active) AS routing
+                        FROM enrollment_agent_tools t
+                        JOIN enrollment_agents a USING(agent_id)
+                        WHERE a.status != 'deregistered'
+                        GROUP BY client_id
+                        ORDER BY installed DESC
+                        """,
+                    ).fetchall()
+                ]
+
+                gaps = [
+                    dict(r)
+                    for r in conn.execute(
+                        """SELECT
+                            t.agent_id,
+                            a.hostname,
+                            t.client_id,
+                            t.display_name,
+                            t.proxy_config_type,
+                            CASE WHEN t.proxy_config_type != 'unsupported' THEN 1 ELSE 0 END AS actionable
+                        FROM enrollment_agent_tools t
+                        JOIN enrollment_agents a USING(agent_id)
+                        WHERE t.proxy_configured = 0
+                        AND a.status != 'deregistered'
+                        ORDER BY a.hostname, t.client_id
+                        LIMIT ?
+                        """,
+                        (_GAPS_LIMIT,),
+                    ).fetchall()
+                ]
+
+        # SQLite returns actionable as int; convert to bool for API consumers
+        for gap in gaps:
+            gap["actionable"] = bool(gap["actionable"])
+
+        actionable_count = sum(1 for g in gaps if g["actionable"])
+        log.debug(
+            "fleet tools summary: %d tool type(s), %d gap(s) (%d actionable)",
+            len(by_tool),
+            len(gaps),
+            actionable_count,
+        )
+
+        return {"by_tool": by_tool, "gaps": gaps}
 
     def mark_stale(self, stale_before: str) -> int:
         """Mark agents as stale if last heartbeat is before the given timestamp.
@@ -206,8 +366,3 @@ class EnrollmentRepository:
         if count:
             log.info("marked %d agents as stale (heartbeat before %s)", count, stale_before)
         return count
-
-
-def _dict_factory(cursor: Any, row: Any) -> dict[str, Any]:
-    """SQLite row factory that returns dicts."""
-    return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
