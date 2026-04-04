@@ -7,6 +7,7 @@ Moved from async_proxy.py to isolate session extraction logic from proxy transpo
 """
 
 import hashlib
+import hmac
 import json
 import logging
 import re
@@ -157,7 +158,9 @@ def _derive_session_fingerprint(data: dict[str, Any], provider: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def extract_session(req_data: Any, provider: str, headers: dict[str, str], source_ip: str) -> SessionContext:
+def extract_session(
+    req_data: Any, provider: str, headers: dict[str, str], source_ip: str, *, hmac_key: bytes = b""
+) -> SessionContext:
     """Extract session identity from request headers and body metadata.
 
     Args:
@@ -165,6 +168,7 @@ def extract_session(req_data: Any, provider: str, headers: dict[str, str], sourc
         provider: Provider name for format-specific extraction.
         headers: Lowercased HTTP headers dict.
         source_ip: Client IP address (from request.remote).
+        hmac_key: HMAC key for API key fingerprinting.
 
     Returns:
         SessionContext with all extractable identity, environment, and
@@ -184,7 +188,7 @@ def extract_session(req_data: Any, provider: str, headers: dict[str, str], sourc
     if api_key:
         if api_key.lower().startswith("bearer "):
             api_key = api_key[7:]
-        ctx.api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:16]
+        ctx.api_key_hash = hmac.new(hmac_key, api_key.encode(), hashlib.sha256).hexdigest()[:16]
 
     # Client tool identification from User-Agent
     client_id, _, version, _ = identify_client(headers.get("user-agent", ""))

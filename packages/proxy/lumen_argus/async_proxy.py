@@ -547,7 +547,7 @@ async def _do_forward(
 
         # Extract session context
         source_ip = request.remote or ""
-        session = _extract_session(req_data, provider, headers_dict, source_ip)
+        session = _extract_session(req_data, provider, headers_dict, source_ip, hmac_key=server.hmac_key)
 
         # Passthrough mode — skip all scanning, forward directly
         if server.mode == "passthrough":
@@ -1228,6 +1228,7 @@ class AsyncArgusProxy:
         self.ready: bool = False  # set True after pipeline is fully loaded
         self.ws_allowed_origins: list[str] = []  # set by cli.py
         self.mode: str = "active"  # "active" or "passthrough"
+        self.hmac_key: bytes = b""  # set by cli.py for API key fingerprinting
         self.standalone: bool = True  # False when managed by tray app
         self.client_session: aiohttp.ClientSession | None = None
         self._app: web.Application | None = None

@@ -14,6 +14,7 @@ Covers:
 """
 
 import hashlib
+import hmac
 import unittest
 from unittest.mock import MagicMock
 
@@ -39,8 +40,8 @@ class _HandlerShim:
     def __init__(self, client_address=("127.0.0.1", 54321)):
         self.client_address = client_address
 
-    def _extract_session(self, data, provider, headers):
-        return _extract_session(data, provider, headers, self.client_address[0])
+    def _extract_session(self, data, provider, headers, *, hmac_key=b""):
+        return _extract_session(data, provider, headers, self.client_address[0], hmac_key=hmac_key)
 
 
 def _make_handler(client_address=("127.0.0.1", 54321)):
@@ -349,15 +350,15 @@ class TestSourceIPAndAPIKey(unittest.TestCase):
 
     def test_api_key_hash_truncated(self):
         handler = _make_handler()
-        ctx = handler._extract_session({}, "anthropic", {"x-api-key": "sk-ant-test123"})
-        expected = hashlib.sha256(b"sk-ant-test123").hexdigest()[:16]
+        ctx = handler._extract_session({}, "anthropic", {"x-api-key": "sk-ant-test123"}, hmac_key=b"test-key")
+        expected = hmac.new(b"test-key", b"sk-ant-test123", hashlib.sha256).hexdigest()[:16]
         self.assertEqual(ctx.api_key_hash, expected)
         self.assertEqual(len(ctx.api_key_hash), 16)
 
     def test_bearer_token_stripped(self):
         handler = _make_handler()
-        ctx = handler._extract_session({}, "anthropic", {"authorization": "Bearer sk-test"})
-        expected = hashlib.sha256(b"sk-test").hexdigest()[:16]
+        ctx = handler._extract_session({}, "anthropic", {"authorization": "Bearer sk-test"}, hmac_key=b"test-key")
+        expected = hmac.new(b"test-key", b"sk-test", hashlib.sha256).hexdigest()[:16]
         self.assertEqual(ctx.api_key_hash, expected)
 
     def test_no_key_no_hash(self):

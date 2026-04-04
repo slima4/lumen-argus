@@ -747,6 +747,8 @@ def main(argv: list[str] | None = None) -> None:
         extensions.set_proxy_server(server)
         server.extensions = extensions
         server.response_scanner = response_scanner
+        if analytics_store and analytics_store._hmac_key:
+            server.hmac_key = analytics_store._hmac_key
     except OSError as e:
         print("Error: Could not bind to %s:%d — %s" % (bind, port, e), file=sys.stderr)
         sys.exit(1)
