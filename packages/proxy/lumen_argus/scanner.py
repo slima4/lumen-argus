@@ -189,6 +189,48 @@ def scan_text(
     return exit_code
 
 
+def _read_file(filepath: str) -> str | None:
+    """Read a file's contents, returning None on error."""
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except (OSError, IOError) as e:
+        print("lumen-argus: cannot read %s: %s" % (filepath, e), file=sys.stderr)
+        return None
+
+
+def _print_findings(filepath: str, findings: list[Finding], exit_code: int, output_format: str) -> None:
+    """Print findings for a single file in the requested format."""
+    if output_format == "json":
+        print(
+            json.dumps(
+                {
+                    "file": filepath,
+                    "count": len(findings),
+                    "exit_code": exit_code,
+                    "findings": [
+                        {
+                            "detector": f.detector,
+                            "type": f.type,
+                            "severity": f.severity,
+                            "location": f.location,
+                            "count": f.count,
+                        }
+                        for f in findings
+                    ],
+                }
+            )
+        )
+    else:
+        print("lumen-argus: %s — %d finding(s)" % (filepath, len(findings)), file=sys.stderr)
+        for f in findings:
+            count_str = " (\u00d7%d)" % f.count if f.count > 1 else ""
+            print(
+                "  [%s] %s: %s%s" % (f.severity.upper(), f.detector, f.type, count_str),
+                file=sys.stderr,
+            )
+
+
 def scan_files(
     files: list[str],
     config_path: str | None = None,
@@ -207,32 +249,22 @@ def scan_files(
     allowlist = _build_allowlist(config)
     detectors = _build_detectors(config)
     baseline = load_baseline(baseline_path) if baseline_path else set()
-    all_file_findings = {}  # type: dict[str, list[Finding]]
+    all_file_findings: dict[str, list[Finding]] = {}
     exit_code = 0
 
     for filepath in files:
-        try:
-            with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
-                text = fh.read()
-        except (OSError, IOError) as e:
-            print("lumen-argus: cannot read %s: %s" % (filepath, e), file=sys.stderr)
-            continue
-
-        if allowlist.is_allowed_path(filepath):
+        text = _read_file(filepath)
+        if text is None or allowlist.is_allowed_path(filepath):
             continue
 
         fields = [ScanField(path=filepath, text=text, source_filename=filepath)]
-        all_findings: list[Finding] = []
+        raw: list[Finding] = []
         for det in detectors:
-            all_findings.extend(det.scan(fields, allowlist))
+            raw.extend(det.scan(fields, allowlist))
+        findings = _deduplicate(raw)
 
-        findings = _deduplicate(all_findings)
-
-        # Collect all findings for create-baseline before filtering
         if create_baseline_path and findings:
             all_file_findings[filepath] = list(findings)
-
-        # Filter out baseline findings
         if baseline:
             findings = filter_baseline(findings, filepath, baseline)
 
@@ -240,35 +272,7 @@ def scan_files(
             file_exit = _resolve_exit_code(findings, config)
             if exit_code == 0 or file_exit < exit_code:
                 exit_code = file_exit
-
-            if output_format == "json":
-                print(
-                    json.dumps(
-                        {
-                            "file": filepath,
-                            "count": len(findings),
-                            "exit_code": file_exit,
-                            "findings": [
-                                {
-                                    "detector": f.detector,
-                                    "type": f.type,
-                                    "severity": f.severity,
-                                    "location": f.location,
-                                    "count": f.count,
-                                }
-                                for f in findings
-                            ],
-                        }
-                    )
-                )
-            else:
-                print("lumen-argus: %s — %d finding(s)" % (filepath, len(findings)), file=sys.stderr)
-                for f in findings:
-                    count_str = " (\u00d7%d)" % f.count if f.count > 1 else ""
-                    print(
-                        "  [%s] %s: %s%s" % (f.severity.upper(), f.detector, f.type, count_str),
-                        file=sys.stderr,
-                    )
+            _print_findings(filepath, findings, file_exit, output_format)
 
     if create_baseline_path:
         save_baseline(create_baseline_path, all_file_findings)

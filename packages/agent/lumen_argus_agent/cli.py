@@ -231,65 +231,75 @@ def _run_protection(args: argparse.Namespace) -> None:
         print(json.dumps(result, indent=2))
 
 
-def _run_watch(args: argparse.Namespace) -> None:
-    from lumen_argus_core.watch import (
-        get_service_status,
-        install_service,
-        run_watch_loop,
-        uninstall_service,
-    )
+def _watch_status() -> None:
+    """Print watch daemon status."""
+    from lumen_argus_core.watch import get_service_status
 
-    if args.status:
-        status = get_service_status()
-        print("Watch daemon status:")
-        print("  Platform:    %s" % status["platform"])
-        print("  Installed:   %s" % status["installed"])
-        if status["service_path"]:
-            print("  Service:     %s" % status["service_path"])
-        if status["last_scan"]:
-            print("  Last scan:   %s" % status["last_scan"])
-            print("  Known tools: %s" % status["known_tools"])
-        else:
-            print("  Last scan:   never")
+    status = get_service_status()
+    print("Watch daemon status:")
+    print("  Platform:    %s" % status["platform"])
+    print("  Installed:   %s" % status["installed"])
+    if status["service_path"]:
+        print("  Service:     %s" % status["service_path"])
+    if status["last_scan"]:
+        print("  Last scan:   %s" % status["last_scan"])
+        print("  Known tools: %s" % status["known_tools"])
+    else:
+        print("  Last scan:   never")
+
+
+def _watch_uninstall() -> None:
+    """Remove the watch daemon service."""
+    from lumen_argus_core.watch import uninstall_service
+
+    if not uninstall_service():
+        print("No watch service found to remove.")
         return
+    print("Watch service removed.")
+    print("Note: stop the running service manually:")
+    if platform.system() == "Darwin":
+        print("  launchctl unload ~/Library/LaunchAgents/io.lumen-argus.watch.plist")
+    else:
+        print("  systemctl --user stop lumen-argus-watch")
 
-    if args.uninstall:
-        if uninstall_service():
-            print("Watch service removed.")
-            print("Note: stop the running service manually:")
-            if platform.system() == "Darwin":
-                print("  launchctl unload ~/Library/LaunchAgents/io.lumen-argus.watch.plist")
-            else:
-                print("  systemctl --user stop lumen-argus-watch")
-        else:
-            print("No watch service found to remove.")
-        return
 
-    if args.install:
-        path = install_service(
-            proxy_url=args.proxy_url,
-            interval=args.interval,
-            auto_configure=args.auto_configure,
-        )
-        if path:
-            print("Watch service installed: %s" % path)
-            print("\nTo start the service:")
-            if platform.system() == "Darwin":
-                print("  launchctl load %s" % path)
-            else:
-                print("  systemctl --user daemon-reload")
-                print("  systemctl --user enable --now lumen-argus-watch")
-        else:
-            print("Service install not supported on this platform.")
-            print("Run 'lumen-argus-agent watch' directly instead.")
-        return
+def _watch_install(args: argparse.Namespace) -> None:
+    """Install the watch daemon as a system service."""
+    from lumen_argus_core.watch import install_service
 
-    # Foreground watch loop
-    run_watch_loop(
+    path = install_service(
         proxy_url=args.proxy_url,
         interval=args.interval,
         auto_configure=args.auto_configure,
     )
+    if not path:
+        print("Service install not supported on this platform.")
+        print("Run 'lumen-argus-agent watch' directly instead.")
+        return
+    print("Watch service installed: %s" % path)
+    print("\nTo start the service:")
+    if platform.system() == "Darwin":
+        print("  launchctl load %s" % path)
+    else:
+        print("  systemctl --user daemon-reload")
+        print("  systemctl --user enable --now lumen-argus-watch")
+
+
+def _run_watch(args: argparse.Namespace) -> None:
+    if args.status:
+        _watch_status()
+    elif args.uninstall:
+        _watch_uninstall()
+    elif args.install:
+        _watch_install(args)
+    else:
+        from lumen_argus_core.watch import run_watch_loop
+
+        run_watch_loop(
+            proxy_url=args.proxy_url,
+            interval=args.interval,
+            auto_configure=args.auto_configure,
+        )
 
 
 def _run_enroll(args: argparse.Namespace) -> None:
