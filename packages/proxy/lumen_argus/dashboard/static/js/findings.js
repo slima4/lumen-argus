@@ -1,34 +1,34 @@
 /* findings.js — filterable paginated table, detail panel, export */
 function _sessLabel(s){
   if(!s||!s.session_id)return '';
-  var wd=s.working_directory||'';
-  var short=wd?wd.split('/').pop()||wd:'';
-  var sid=s.session_id.length>15?s.session_id.slice(0,15):s.session_id;
-  var acct=s.account_id?s.account_id.slice(0,8)+'..':'';
-  var label=short||acct||sid;
+  const wd=s.working_directory||'';
+  const short=wd?wd.split('/').pop()||wd:'';
+  const sid=s.session_id.length>15?s.session_id.slice(0,15):s.session_id;
+  const acct=s.account_id?s.account_id.slice(0,8)+'..':'';
+  let label=short||acct||sid;
   if(label!==sid)label+=' ('+sid+')';
   return label;
 }
-function _dirShort(wd){if(!wd)return '';var parts=wd.split('/');return parts.pop()||wd;}
+function _dirShort(wd){if(!wd)return '';const parts=wd.split('/');return parts.pop()||wd;}
 function _loadSessionFilter(){
   fetch('/api/v1/sessions?limit=50').then(function(r){return r.json()}).then(function(d){
-    var sel=document.getElementById('f-sess');var cur=sel.value;
+    const sel=document.getElementById('f-sess');const cur=sel.value;
     while(sel.options.length>1)sel.removeChild(sel.lastChild);
     (d.sessions||[]).forEach(function(s){
-      var opt=document.createElement('option');opt.value=s.session_id;
+      const opt=document.createElement('option');opt.value=s.session_id;
       opt.textContent=_sessLabel(s);sel.appendChild(opt);});
     sel.value=cur;
   }).catch(function(){});}
 function _fillSelect(elId,items){
-  var sel=document.getElementById(elId),cur=sel.value;
+  const sel=document.getElementById(elId),cur=sel.value;
   while(sel.options.length>1)sel.removeChild(sel.lastChild);
   Object.keys(items).sort(function(a,b){return a.localeCompare(b)}).forEach(function(v){
-    var o=document.createElement('option');o.value=v;o.textContent=v;sel.appendChild(o);});
+    const o=document.createElement('option');o.value=v;o.textContent=v;sel.appendChild(o);});
   sel.value=cur;
 }
-var _lastFilterHash=null;
+let _lastFilterHash=null;
 function _populateDynamicFilters(stats){
-  var hash=JSON.stringify([
+  const hash=JSON.stringify([
     Object.keys(stats.top_finding_types||{}),Object.keys(stats.by_detector||{}),
     Object.keys(stats.by_provider||{}),Object.keys(stats.by_client||{})]);
   if(hash===_lastFilterHash)return;
@@ -40,15 +40,15 @@ function _populateDynamicFilters(stats){
 }
 function loadFindings(){
   _loadSessionFilter();
-  var url='/api/v1/findings?limit='+findPerPage+'&offset='+findPage*findPerPage;
-  var sevF=document.getElementById('f-sev').value;
-  var detF=document.getElementById('f-det').value;
-  var provF=document.getElementById('f-prov').value;
-  var sessF=document.getElementById('f-sess').value;
-  var actF=document.getElementById('f-action').value;
-  var typeF=document.getElementById('f-type').value;
-  var clientF=document.getElementById('f-client').value;
-  var daysF=document.getElementById('f-days').value;
+  let url='/api/v1/findings?limit='+findPerPage+'&offset='+findPage*findPerPage;
+  const sevF=document.getElementById('f-sev').value;
+  const detF=document.getElementById('f-det').value;
+  const provF=document.getElementById('f-prov').value;
+  const sessF=document.getElementById('f-sess').value;
+  const actF=document.getElementById('f-action').value;
+  const typeF=document.getElementById('f-type').value;
+  const clientF=document.getElementById('f-client').value;
+  const daysF=document.getElementById('f-days').value;
   if(sevF)url+='&severity='+encodeURIComponent(sevF);
   if(detF)url+='&detector='+encodeURIComponent(detF);
   if(provF)url+='&provider='+encodeURIComponent(provF);
@@ -62,36 +62,36 @@ function loadFindings(){
     renderFindingsTable();
   }).catch(function(e){showPageError('find-tbody','Failed to load findings: '+e.message,loadFindings);});}
 function renderFindingsTable(){
-  var thead=document.getElementById('find-thead');thead.replaceChildren();
-  var vis=ALL_COLS.filter(function(c){return c.on});
-  for(var i=0;i<vis.length;i++){(function(col){
-    var th=document.createElement('th');th.textContent=col.label;
-    var arrow=document.createElement('span');arrow.className='sort-arrow';
+  const thead=document.getElementById('find-thead');thead.replaceChildren();
+  const vis=ALL_COLS.filter(function(c){return c.on});
+  for(let i=0;i<vis.length;i++){(function(col){
+    const th=document.createElement('th');th.textContent=col.label;
+    const arrow=document.createElement('span');arrow.className='sort-arrow';
     arrow.textContent=sortCol===col.key?(sortAsc?'\u25b2':'\u25bc'):'\u25bc';
     if(sortCol===col.key)th.classList.add('sorted');th.appendChild(arrow);
     th.addEventListener('click',function(){if(sortCol===col.key)sortAsc=!sortAsc;
       else{sortCol=col.key;sortAsc=true;}loadFindings();});
     thead.appendChild(th);})(vis[i]);}
   document.getElementById('find-total').textContent=findTotal+' findings';
-  var tbody=document.getElementById('find-tbody');tbody.replaceChildren();
-  if(!allFindings.length){var tr=document.createElement('tr');var td=document.createElement('td');
+  const tbody=document.getElementById('find-tbody');tbody.replaceChildren();
+  if(!allFindings.length){const tr=document.createElement('tr');const td=document.createElement('td');
     td.colSpan=vis.length;td.className='empty';td.textContent='No findings match filters';
     tr.appendChild(td);tbody.appendChild(tr);return;}
-  for(var j=0;j<allFindings.length;j++){(function(f){
-    var tr=document.createElement('tr');if(f.id===selectedFindingId)tr.classList.add('selected');
-    for(var k=0;k<vis.length;k++){var col=vis[k];var td=document.createElement('td');
+  for(let j=0;j<allFindings.length;j++){(function(f){
+    const tr=document.createElement('tr');if(f.id===selectedFindingId)tr.classList.add('selected');
+    for(let k=0;k<vis.length;k++){const col=vis[k];const td=document.createElement('td');
       if(col.cls)td.className=col.cls;
       if(col.key==='severity')td.appendChild(makeBadge(f.severity));
-      else if(col.key==='action_taken'&&f.action_taken){var tag=document.createElement('span');
+      else if(col.key==='action_taken'&&f.action_taken){const tag=document.createElement('span');
         tag.className='action-tag';tag.textContent=f.action_taken;td.appendChild(tag);}
       else if(col.key==='finding_type'){td.textContent=f.finding_type||'';
-        if(f.seen_count>1){var sc=document.createElement('span');sc.className='seen-count';
+        if(f.seen_count>1){const sc=document.createElement('span');sc.className='seen-count';
           sc.textContent='\u00d7'+f.seen_count;sc.title='Seen '+f.seen_count+' times across requests';
           td.appendChild(sc);}}
       else if(col.key==='timestamp')td.textContent=fmtTime(f.timestamp);
       else if(col.key==='location'){td.textContent=f[col.key]||'';td.title=f[col.key]||'';}
       else if(col.key==='session_id'&&f.session_id){
-        var link=document.createElement('span');link.className='session-link';
+        const link=document.createElement('span');link.className='session-link';
         link.textContent=f.session_id;link.title='Filter by this session';
         link.addEventListener('click',function(e){e.stopPropagation();
           document.getElementById('f-sess').value=f.session_id;findPage=0;loadFindings();});
@@ -106,11 +106,11 @@ function renderFindingsTable(){
     function(pg){findPage=pg;loadFindings();},
     function(pp){findPerPage=pp;findPage=0;loadFindings();});}
 function showDetail(f){selectedFindingId=f.id;
-  var panel=document.getElementById('detail-panel');panel.classList.add('visible');
+  const panel=document.getElementById('detail-panel');panel.classList.add('visible');
   document.querySelector('.findings-layout').classList.add('has-detail');
   if(window.innerWidth<=1000)setTimeout(function(){panel.scrollIntoView({behavior:'smooth',block:'start'})},50);
-  var grid=document.getElementById('detail-grid');grid.replaceChildren();
-  var fields=[['ID',f.id],['Timestamp',f.timestamp],['Detector',f.detector],['Type',f.finding_type],
+  const grid=document.getElementById('detail-grid');grid.replaceChildren();
+  const fields=[['ID',f.id],['Timestamp',f.timestamp],['Detector',f.detector],['Type',f.finding_type],
    ['Severity',f.severity],['Action',f.action_taken||'none'],['Location',f.location],
    ['Provider',f.provider||'unknown'],['Model',f.model||'unknown'],['Preview',f.value_preview||'']];
   if(f.seen_count>1)fields.push(['Seen',f.seen_count+' times across requests']);
@@ -122,15 +122,15 @@ function showDetail(f){selectedFindingId=f.id;
   if(f.git_branch)fields.push(['Branch',f.git_branch]);
   if(f.os_platform)fields.push(['Platform',f.os_platform]);
   if(f.client_name)fields.push(['Client',f.client_name]);
-  fields.forEach(function(pair){var item=document.createElement('div');item.className='detail-item';
-    var lbl=document.createElement('label');lbl.textContent=pair[0];
-    var val=document.createElement('div');val.className='val';val.textContent=String(pair[1]);
+  fields.forEach(function(pair){const item=document.createElement('div');item.className='detail-item';
+    const lbl=document.createElement('label');lbl.textContent=pair[0];
+    const val=document.createElement('div');val.className='val';val.textContent=String(pair[1]);
     item.appendChild(lbl);item.appendChild(val);grid.appendChild(item);});
-  var ruleItem=document.createElement('div');ruleItem.className='detail-item';
-  var ruleLbl=document.createElement('label');ruleLbl.textContent='Rule';
-  var ruleVal=document.createElement('div');ruleVal.className='val';
-  var ruleLink=document.createElement('a');
-  var ruleQ=encodeURIComponent(f.finding_type||'');
+  const ruleItem=document.createElement('div');ruleItem.className='detail-item';
+  const ruleLbl=document.createElement('label');ruleLbl.textContent='Rule';
+  const ruleVal=document.createElement('div');ruleVal.className='val';
+  const ruleLink=document.createElement('a');
+  const ruleQ=encodeURIComponent(f.finding_type||'');
   ruleLink.href='#rules?q='+ruleQ;
   ruleLink.textContent='View Rule \u2192';
   ruleLink.style.cssText='color:var(--accent);font-size:.78rem;text-decoration:none';

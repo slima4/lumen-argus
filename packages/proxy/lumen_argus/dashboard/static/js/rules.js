@@ -2,9 +2,9 @@
    Paginated list with search/filters, stat chips, tag chips, rule cards
    with toggle/action/clone/delete, add/edit form with regex test. */
 
-var _rulesPage=0,_rulesPerPage=25,_rulesTotal=0,_rulesTag='',_editingRule=null;
+let _rulesPage=0,_rulesPerPage=25,_rulesTotal=0,_rulesTag='',_editingRule=null;
 
-var _rulesHtml=''
+const _rulesHtml=''
 +'<div class="sh"><h2>Detection Rules</h2><span class="count" id="rules-total"></span>'
 +'<div class="btn btn-primary btn-sm" id="add-rule-btn">+ Add Rule</div></div>'
 +'<div id="rules-stats" class="rules-stat-row"></div>'
@@ -54,14 +54,14 @@ var _rulesHtml=''
 
 registerPage('rules','Rules',{order:25,loadFn:loadRules,html:_rulesHtml});
 
-var _rulesOverlapCounts={};
+let _rulesOverlapCounts={};
 function _buildOverlapCounts(analysis){
-  var counts={};
+  const counts={};
   if(!analysis||!analysis.has_results)return counts;
-  var lists=['duplicates','subsets','overlaps'];
-  for(var i=0;i<lists.length;i++){
-    var items=analysis[lists[i]]||[];
-    for(var j=0;j<items.length;j++){
+  const lists=['duplicates','subsets','overlaps'];
+  for(let i=0;i<lists.length;i++){
+    const items=analysis[lists[i]]||[];
+    for(let j=0;j<items.length;j++){
       counts[items[j].rule_a]=(counts[items[j].rule_a]||0)+1;
       counts[items[j].rule_b]=(counts[items[j].rule_b]||0)+1;
     }
@@ -72,30 +72,30 @@ function _buildOverlapCounts(analysis){
 function loadRules(){
   _wireRulesEvents();
   /* Read hash query params (e.g. #rules?q=stripe_secret_key) */
-  var hashParts=location.hash.replace('#','').split('?');
+  const hashParts=location.hash.replace('#','').split('?');
   if(hashParts.length>1){
-    var hp={};hashParts[1].split('&').forEach(function(p){
-      var kv=p.split('=');if(kv.length===2)hp[kv[0]]=decodeURIComponent(kv[1]);});
+    const hp={};hashParts[1].split('&').forEach(function(p){
+      const kv=p.split('=');if(kv.length===2)hp[kv[0]]=decodeURIComponent(kv[1]);});
     if(hp.q){
-      var si=document.getElementById('r-search');
+      const si=document.getElementById('r-search');
       if(si){si.value=hp.q;_rulesPage=0;}
     }
     /* Clear hash params after applying — keep just the page name */
     history.replaceState(null,'','#rules');
   }
-  var url='/api/v1/rules?limit='+_rulesPerPage+'&offset='+_rulesPage*_rulesPerPage;
-  var search=document.getElementById('r-search');if(search&&search.value)url+='&search='+encodeURIComponent(search.value);
-  var tier=document.getElementById('r-tier');if(tier&&tier.value)url+='&tier='+encodeURIComponent(tier.value);
-  var det=document.getElementById('r-det');if(det&&det.value)url+='&detector='+encodeURIComponent(det.value);
-  var sev=document.getElementById('r-sev');if(sev&&sev.value)url+='&severity='+encodeURIComponent(sev.value);
-  var en=document.getElementById('r-enabled');if(en&&en.value)url+='&enabled='+en.value;
+  let url='/api/v1/rules?limit='+_rulesPerPage+'&offset='+_rulesPage*_rulesPerPage;
+  const search=document.getElementById('r-search');if(search&&search.value)url+='&search='+encodeURIComponent(search.value);
+  const tier=document.getElementById('r-tier');if(tier&&tier.value)url+='&tier='+encodeURIComponent(tier.value);
+  const det=document.getElementById('r-det');if(det&&det.value)url+='&detector='+encodeURIComponent(det.value);
+  const sev=document.getElementById('r-sev');if(sev&&sev.value)url+='&severity='+encodeURIComponent(sev.value);
+  const en=document.getElementById('r-enabled');if(en&&en.value)url+='&enabled='+en.value;
   if(_rulesTag)url+='&tag='+encodeURIComponent(_rulesTag);
   Promise.all([
     fetch(url).then(function(r){return r.json()}),
     fetch('/api/v1/rules/stats').then(function(r){return r.json()}),
     fetch('/api/v1/rules/analysis').then(function(r){return r.json()}).catch(function(){return{}})
   ]).then(function(res){
-    var data=res[0],stats=res[1],analysis=res[2]||{};
+    const data=res[0],stats=res[1],analysis=res[2]||{};
     _rulesOverlapCounts=_buildOverlapCounts(analysis);
     _rulesTotal=data.total;
     document.getElementById('rules-total').textContent=_rulesTotal+' rules';
@@ -111,8 +111,8 @@ function loadRules(){
 }
 
 function _renderRulesStats(stats){
-  var el=document.getElementById('rules-stats');if(!el)return;el.replaceChildren();
-  var items=[
+  const el=document.getElementById('rules-stats');if(!el)return;el.replaceChildren();
+  const items=[
     {label:'Total',value:stats.total||0,cls:''},
     {label:'Community',value:(stats.by_tier||{}).community||0,cls:'community'},
     {label:'Pro',value:(stats.by_tier||{}).pro||0,cls:'pro'},
@@ -121,19 +121,19 @@ function _renderRulesStats(stats){
     {label:'Disabled',value:stats.disabled||0,cls:''}
   ];
   items.forEach(function(it){
-    var chip=document.createElement('span');chip.className='stat-chip'+(it.cls?' '+it.cls:'');
+    const chip=document.createElement('span');chip.className='stat-chip'+(it.cls?' '+it.cls:'');
     chip.textContent=it.label+': '+it.value;el.appendChild(chip);
   });
 }
 
 function _renderRulesTags(tags){
-  var el=document.getElementById('rules-tags');if(!el)return;el.replaceChildren();
+  const el=document.getElementById('rules-tags');if(!el)return;el.replaceChildren();
   if(!tags.length)return;
   tags.forEach(function(t){
-    var chip=document.createElement('span');
+    const chip=document.createElement('span');
     chip.className='cat-chip'+(_rulesTag===t.tag?' active':'');
     chip.textContent=t.tag;
-    var cnt=document.createElement('span');cnt.className='cat-count';
+    const cnt=document.createElement('span');cnt.className='cat-count';
     cnt.textContent=' '+t.total;chip.appendChild(cnt);
     chip.addEventListener('click',function(){
       _rulesTag=(_rulesTag===t.tag)?'':t.tag;_rulesPage=0;loadRules();
@@ -143,44 +143,44 @@ function _renderRulesTags(tags){
 }
 
 function _renderRulesList(rules){
-  var el=document.getElementById('rules-list');if(!el)return;el.replaceChildren();
-  if(!rules.length){var empty=document.createElement('div');empty.className='empty';
+  const el=document.getElementById('rules-list');if(!el)return;el.replaceChildren();
+  if(!rules.length){const empty=document.createElement('div');empty.className='empty';
     empty.textContent='No rules found';el.appendChild(empty);return;}
   rules.forEach(function(r){el.appendChild(_ruleCard(r))});
 }
 
 function _ruleCard(r){
-  var card=document.createElement('div');card.className='rule-card';
+  const card=document.createElement('div');card.className='rule-card';
   /* Head: name + badges + actions */
-  var head=document.createElement('div');head.className='rule-head';
-  var name=document.createElement('span');name.className='rule-name';name.textContent=r.name;
+  const head=document.createElement('div');head.className='rule-head';
+  const name=document.createElement('span');name.className='rule-name';name.textContent=r.name;
   head.appendChild(name);
   /* Tier badge */
-  var tier=document.createElement('span');tier.className='rule-source '+(r.tier||'community');
+  const tier=document.createElement('span');tier.className='rule-source '+(r.tier||'community');
   tier.textContent=r.tier||'community';head.appendChild(tier);
   /* Source badge */
   if(r.source&&r.source!==r.tier){
-    var src=document.createElement('span');src.className='rule-src-badge';
+    const src=document.createElement('span');src.className='rule-src-badge';
     src.textContent=r.source;head.appendChild(src);
   }
   /* Severity badge */
-  var sev=document.createElement('span');sev.className='badge '+sevCls(r.severity);
-  var dot=document.createElement('span');dot.className='badge-dot';sev.appendChild(dot);
+  const sev=document.createElement('span');sev.className='badge '+sevCls(r.severity);
+  const dot=document.createElement('span');dot.className='badge-dot';sev.appendChild(dot);
   sev.appendChild(document.createTextNode(r.severity));head.appendChild(sev);
   /* Overlap badge */
-  var ovrCount=_rulesOverlapCounts[r.name]||0;
+  const ovrCount=_rulesOverlapCounts[r.name]||0;
   if(ovrCount>0){
-    var ovrBadge=document.createElement('a');ovrBadge.className='ra-ovr-badge';
+    const ovrBadge=document.createElement('a');ovrBadge.className='ra-ovr-badge';
     ovrBadge.textContent=ovrCount+' ovr';ovrBadge.href='#rule-analysis';
     head.appendChild(ovrBadge);
   }
   /* Actions area */
-  var acts=document.createElement('div');acts.className='rule-actions';
+  const acts=document.createElement('div');acts.className='rule-actions';
   /* Toggle */
-  var toggle=document.createElement('label');toggle.className='toggle';
-  var cb=document.createElement('input');cb.type='checkbox';cb.checked=r.enabled;
-  var track=document.createElement('span');track.className='toggle-track'+(r.enabled?' on':'');
-  var thumb=document.createElement('span');thumb.className='toggle-thumb'+(r.enabled?' on':'');
+  const toggle=document.createElement('label');toggle.className='toggle';
+  const cb=document.createElement('input');cb.type='checkbox';cb.checked=r.enabled;
+  const track=document.createElement('span');track.className='toggle-track'+(r.enabled?' on':'');
+  const thumb=document.createElement('span');thumb.className='toggle-thumb'+(r.enabled?' on':'');
   toggle.appendChild(cb);toggle.appendChild(track);toggle.appendChild(thumb);
   cb.addEventListener('change',function(){
     _updateRule(r.name,{enabled:cb.checked});
@@ -189,29 +189,29 @@ function _ruleCard(r){
   });
   acts.appendChild(toggle);
   /* Action select */
-  var actSel=document.createElement('select');actSel.className='rule-action-sel';
+  const actSel=document.createElement('select');actSel.className='rule-action-sel';
   actSel.dataset.action=r.action||'';
   [['','Default'],['log','Log'],['alert','Alert'],['block','Block']].forEach(function(opt){
-    var o=document.createElement('option');o.value=opt[0];o.textContent=opt[1];
+    const o=document.createElement('option');o.value=opt[0];o.textContent=opt[1];
     if((r.action||'')===opt[0])o.selected=true;actSel.appendChild(o);
   });
   actSel.addEventListener('change',function(){_updateRule(r.name,{action:actSel.value})});
   acts.appendChild(actSel);
   /* Clone button — "Customize" for yaml rules (fork-to-own workflow) */
-  var cloneBtn=document.createElement('div');cloneBtn.className='btn btn-sm btn-cancel';
+  const cloneBtn=document.createElement('div');cloneBtn.className='btn btn-sm btn-cancel';
   cloneBtn.textContent=r.source==='yaml'?'Customize':'Clone';
   cloneBtn.addEventListener('click',function(){_cloneRule(r.name)});
   acts.appendChild(cloneBtn);
   /* Edit for dashboard + import rules (not yaml — config-managed) */
   if(r.source!=='yaml'){
-    var editBtn=document.createElement('div');editBtn.className='btn btn-sm btn-cancel';
+    const editBtn=document.createElement('div');editBtn.className='btn btn-sm btn-cancel';
     editBtn.textContent='Edit';
     editBtn.addEventListener('click',function(){_openEditForm(r)});
     acts.appendChild(editBtn);
   }
   /* Delete only for dashboard-created rules */
   if(r.source==='dashboard'){
-    var delBtn=document.createElement('div');delBtn.className='btn btn-sm btn-danger';
+    const delBtn=document.createElement('div');delBtn.className='btn btn-sm btn-danger';
     delBtn.textContent='Delete';
     delBtn.addEventListener('click',function(){_deleteRule(r.name)});
     acts.appendChild(delBtn);
@@ -219,18 +219,18 @@ function _ruleCard(r){
   head.appendChild(acts);card.appendChild(head);
   /* Description */
   if(r.description){
-    var desc=document.createElement('div');desc.className='rule-desc';
+    const desc=document.createElement('div');desc.className='rule-desc';
     desc.textContent=r.description;card.appendChild(desc);
   }
   /* Pattern preview */
-  var meta=document.createElement('div');meta.className='rule-meta';
+  const meta=document.createElement('div');meta.className='rule-meta';
   meta.textContent=r.pattern;card.appendChild(meta);
   /* Tags */
-  var tags=r.tags||[];
+  const tags=r.tags||[];
   if(tags.length){
-    var tagRow=document.createElement('div');tagRow.className='rule-tags';
+    const tagRow=document.createElement('div');tagRow.className='rule-tags';
     tags.forEach(function(t){
-      var chip=document.createElement('span');chip.className='cat-chip';
+      const chip=document.createElement('span');chip.className='cat-chip';
       chip.textContent=t;chip.style.cssText='font-size:.65rem;padding:2px 6px;cursor:pointer';
       chip.addEventListener('click',function(){_rulesTag=t;_rulesPage=0;loadRules()});
       tagRow.appendChild(chip);
@@ -267,7 +267,7 @@ function _deleteRule(name){
 }
 
 function _resetForm(rule){
-  var form=document.getElementById('rule-form');
+  const form=document.getElementById('rule-form');
   _editingRule=rule?rule.name:null;
   document.getElementById('rule-form-title').textContent=rule?'Edit rule: '+rule.name:'Add custom rule';
   document.getElementById('rf-name').value=rule?rule.name:'';
@@ -292,15 +292,15 @@ function _closeForm(){
 }
 
 function _saveRule(){
-  var name=document.getElementById('rf-name').value.trim();
-  var pattern=document.getElementById('rf-pattern').value.trim();
-  var err=document.getElementById('rf-error');
+  const name=document.getElementById('rf-name').value.trim();
+  const pattern=document.getElementById('rf-pattern').value.trim();
+  const err=document.getElementById('rf-error');
   err.style.display='none';
   if(!name){err.textContent='Name is required';err.style.display='block';return;}
   if(!pattern){err.textContent='Pattern is required';err.style.display='block';return;}
   try{new RegExp(pattern)}catch(e){err.textContent='Invalid regex: '+e.message;err.style.display='block';return;}
-  var tags=document.getElementById('rf-tags').value.split(',').map(function(t){return t.trim()}).filter(Boolean);
-  var data={
+  const tags=document.getElementById('rf-tags').value.split(',').map(function(t){return t.trim()}).filter(Boolean);
+  const data={
     name:name,pattern:pattern,
     detector:document.getElementById('rf-detector').value,
     severity:document.getElementById('rf-severity').value,
@@ -308,7 +308,7 @@ function _saveRule(){
     description:document.getElementById('rf-desc').value.trim(),
     tags:tags
   };
-  var url,method;
+  let url,method;
   if(_editingRule){
     delete data.name;
     url='/api/v1/rules/'+encodeURIComponent(_editingRule);method='PUT';
@@ -325,13 +325,13 @@ function _saveRule(){
 }
 
 function _testPattern(){
-  var pattern=document.getElementById('rf-pattern').value;
-  var input=document.getElementById('rf-test-input').value;
-  var result=document.getElementById('rf-test-result');
+  const pattern=document.getElementById('rf-pattern').value;
+  const input=document.getElementById('rf-test-input').value;
+  const result=document.getElementById('rf-test-result');
   if(!pattern||!input){result.textContent='Enter pattern and test text';return;}
   try{
-    var re=new RegExp(pattern,'g');
-    var matches=input.match(re);
+    const re=new RegExp(pattern,'g');
+    const matches=input.match(re);
     if(matches){
       result.textContent='Match: '+matches.join(', ');
       result.style.color='var(--accent)';
@@ -343,29 +343,29 @@ function _testPattern(){
 }
 
 /* Debounced search */
-var _rulesSearchTimer=null;
+let _rulesSearchTimer=null;
 function _onRulesSearch(){
   if(_rulesSearchTimer)clearTimeout(_rulesSearchTimer);
   _rulesSearchTimer=setTimeout(function(){_rulesPage=0;loadRules()},300);
 }
 
 /* Wire up form event listeners on first loadRules call */
-var _rulesEventsWired=false;
+let _rulesEventsWired=false;
 function _wireRulesEvents(){
   if(_rulesEventsWired)return;
   _rulesEventsWired=true;
-  var addBtn=document.getElementById('add-rule-btn');
+  const addBtn=document.getElementById('add-rule-btn');
   if(addBtn)addBtn.addEventListener('click',_openAddForm);
-  var saveBtn=document.getElementById('rf-save');
+  const saveBtn=document.getElementById('rf-save');
   if(saveBtn)saveBtn.addEventListener('click',_saveRule);
-  var cancelBtn=document.getElementById('rf-cancel');
+  const cancelBtn=document.getElementById('rf-cancel');
   if(cancelBtn)cancelBtn.addEventListener('click',_closeForm);
-  var testBtn=document.getElementById('rf-test-btn');
+  const testBtn=document.getElementById('rf-test-btn');
   if(testBtn)testBtn.addEventListener('click',_testPattern);
-  var searchInput=document.getElementById('r-search');
+  const searchInput=document.getElementById('r-search');
   if(searchInput)searchInput.addEventListener('input',_onRulesSearch);
   ['r-tier','r-det','r-sev','r-enabled'].forEach(function(id){
-    var el=document.getElementById(id);
+    const el=document.getElementById(id);
     if(el)el.addEventListener('change',function(){_rulesPage=0;loadRules()});
   });
 }

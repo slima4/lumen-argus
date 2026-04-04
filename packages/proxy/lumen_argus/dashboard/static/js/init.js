@@ -19,11 +19,11 @@ registerPage('enrollment', 'Enrollment', {hidden: true, order: 80});
 
 /* Export helpers */
 function exportFindings(fmt){
-  var url='/api/v1/findings/export?format='+fmt;
-  var filters={severity:'f-sev',detector:'f-det',provider:'f-prov',
+  let url='/api/v1/findings/export?format='+fmt;
+  const filters={severity:'f-sev',detector:'f-det',provider:'f-prov',
     session_id:'f-sess',action:'f-action',finding_type:'f-type',
     client:'f-client',days:'f-days'};
-  for(var k in filters){var v=document.getElementById(filters[k]).value;
+  for(const k in filters){const v=document.getElementById(filters[k]).value;
     if(v)url+='&'+k+'='+encodeURIComponent(v);}
   window.location.href=url;
 }
@@ -31,9 +31,9 @@ document.getElementById('export-csv').addEventListener('click',function(){export
 document.getElementById('export-json').addEventListener('click',function(){exportFindings('json')});
 
 /* TIME RANGE TOGGLE */
-var trendDays=Number.parseInt(localStorage.getItem('lumen_trend_days'))||30;
+let trendDays=Number.parseInt(localStorage.getItem('lumen_trend_days'))||30;
 (function initRange(){
-  var btns=document.querySelectorAll('#range-toggle .range-btn');
+  const btns=document.querySelectorAll('#range-toggle .range-btn');
   btns.forEach(function(b){
     if(Number.parseInt(b.getAttribute('data-days'))===trendDays)
       {b.classList.add('active');}else{b.classList.remove('active');}
@@ -50,14 +50,14 @@ var trendDays=Number.parseInt(localStorage.getItem('lumen_trend_days'))||30;
 })();
 
 /* SSE / POLLING TOGGLE */
-var _forceProCharts=true; /* force on initial load */
-var sseMode=localStorage.getItem('lumen_sse_mode')==='true';
-var sseSource=null;
-var pollTimer=null;
-var _pipelineStages=null; /* cached — fetched once */
+let _forceProCharts=true; /* force on initial load */
+let sseMode=localStorage.getItem('lumen_sse_mode')==='true';
+let sseSource=null;
+let pollTimer=null;
+let _pipelineStages=null; /* cached — fetched once */
 
 async function loadData(){try{
-  var fetches=[
+  const fetches=[
     fetch('/api/v1/status').then(function(r){return r.json()}),
     fetch('/api/v1/stats?days='+trendDays).then(function(r){return r.json()}),
     fetch('/api/v1/findings?limit=8').then(function(r){return r.json()}),
@@ -67,43 +67,43 @@ async function loadData(){try{
   if(!_pipelineStages){
     fetches.push(fetch('/api/v1/pipeline').then(function(r){return r.json()}));
   }
-  var r=await Promise.all(fetches);
-  var st=r[0],stats=r[1],fd=r[2],sess=r[3];
+  const r=await Promise.all(fetches);
+  const st=r[0],stats=r[1],fd=r[2],sess=r[3];
   if(r[4])_pipelineStages=r[4].stages||[];
   document.getElementById('hdr-status').textContent='operational';
   document.getElementById('hdr-version').textContent='v'+st.version;
   document.getElementById('hdr-uptime').textContent=fmtUptime(st.uptime_seconds);
   /* Quick stats */
-  var sessionList=sess.sessions||[];
-  var sessionTotal=sess.total||0;
+  const sessionList=sess.sessions||[];
+  const sessionTotal=sess.total||0;
   renderQuickStats(stats,sessionTotal);
   /* Trend chart */
-  var chartSvg=document.getElementById('chart');
+  const chartSvg=document.getElementById('chart');
   if(stats.daily_trend&&stats.daily_trend.length){
-    var trend=stats.daily_trend;
-    if(trend.length===1){var ymd=trend[0].date.split('-');
-      var d=new Date(Date.UTC(+ymd[0],+ymd[1]-1,+ymd[2]-1));
-      var prev=d.toISOString().slice(0,10);trend=[{date:prev,count:0}].concat(trend);}
+    let trend=stats.daily_trend;
+    if(trend.length===1){const ymd=trend[0].date.split('-');
+      const d=new Date(Date.UTC(+ymd[0],+ymd[1]-1,+ymd[2]-1));
+      const prev=d.toISOString().slice(0,10);trend=[{date:prev,count:0}].concat(trend);}
     chartSvg.parentNode.classList.remove('chart-empty');
     renderChart(trend);
   } else {
     while(chartSvg.firstChild)chartSvg.removeChild(chartSvg.firstChild);
     chartSvg.parentNode.classList.add('chart-empty');
-    var emptyEl=chartSvg.parentNode.querySelector('.chart-empty-msg');
+    let emptyEl=chartSvg.parentNode.querySelector('.chart-empty-msg');
     if(!emptyEl){emptyEl=document.createElement('div');emptyEl.className='chart-empty-msg';
       emptyEl.textContent='Findings will appear here as requests are scanned';
       chartSvg.parentNode.appendChild(emptyEl);}
   }
   if(stats.by_detector)renderBars('det-list',stats.by_detector);
   if(stats.by_provider)renderBars('prov-list',stats.by_provider);
-  var _f=_forceProCharts;_forceProCharts=false;renderProCharts(trendDays,_f);
+  const _f=_forceProCharts;_forceProCharts=false;renderProCharts(trendDays,_f);
   /* Bottom panels */
   renderActivityFeed(fd.findings||[]);
   renderActiveSessions(sessionList);
   if(_pipelineStages)renderPipelineHealth(_pipelineStages);
   /* Populate findings page filter dropdowns from stats */
   _populateDynamicFilters(stats);
-  var findingsActive=document.getElementById('page-findings').classList.contains('active');
+  const findingsActive=document.getElementById('page-findings').classList.contains('active');
   if(findingsActive)loadFindings();
   }catch(e){document.getElementById('hdr-status').textContent='connection error';}}
 
@@ -117,12 +117,12 @@ function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
 function startSSE(){
   if(sseSource)return;
   sseSource=new EventSource('/api/v1/live');
-  var sseConnectedOnce=false;
+  let sseConnectedOnce=false;
   sseSource.addEventListener('connected',function(){
     document.getElementById('live-label').textContent='Live';
     document.getElementById('live-toggle').classList.remove('reconnecting');
     document.getElementById('live-toggle').classList.add('live');
-    if(sseConnectedOnce){var p=location.hash.replace('#','')||'dashboard';
+    if(sseConnectedOnce){const p=location.hash.replace('#','')||'dashboard';
       if(VALID_PAGES[p])navigate(p);}
     sseConnectedOnce=true;
   });

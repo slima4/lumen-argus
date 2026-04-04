@@ -3,35 +3,35 @@
    Community: stage toggles, sub-detector toggles, default action selector.
    Pro: per-stage/per-detector action overrides (via plugin extension). */
 
-var _pipelineActionOpts=['log','alert','block'];
+let _pipelineActionOpts=['log','alert','block'];
 
 function loadPipeline(){
   Promise.all([
     fetch('/api/v1/pipeline').then(function(r){return r.json()}),
     fetch('/api/v1/status').then(function(r){return r.json()})
   ]).then(function(results){
-    var data=results[0],status=results[1];
-    var isProActive=(status.tier==='pro'||status.tier==='enterprise');
+    const data=results[0],status=results[1];
+    const isProActive=(status.tier==='pro'||status.tier==='enterprise');
     _pipelineActionOpts=isProActive?['log','alert','redact','block']:['log','alert','block'];
 
-    var el=document.getElementById('page-pipeline');el.replaceChildren();
+    const el=document.getElementById('page-pipeline');el.replaceChildren();
 
     /* Header bar with title + default action selector */
-    var hdr=document.createElement('div');hdr.className='pipeline-header';
-    var title=document.createElement('h2');title.textContent='Pipeline';
+    const hdr=document.createElement('div');hdr.className='pipeline-header';
+    const title=document.createElement('h2');title.textContent='Pipeline';
     title.style.cssText='margin:0;font-size:1.1rem;font-weight:600';
     hdr.appendChild(title);
 
-    var actWrap=document.createElement('div');actWrap.className='pipeline-action-wrap';
-    var actLabel=document.createElement('span');actLabel.textContent='Default action';
+    const actWrap=document.createElement('div');actWrap.className='pipeline-action-wrap';
+    const actLabel=document.createElement('span');actLabel.textContent='Default action';
     actLabel.style.cssText='font-size:.72rem;color:var(--text-secondary);margin-right:8px';
     actWrap.appendChild(actLabel);
-    var actSel=document.createElement('select');
+    const actSel=document.createElement('select');
     actSel.className='config-input pipeline-select';
     actSel.setAttribute('data-config-key','default_action');
     actSel.setAttribute('data-original',data.default_action);
     _pipelineActionOpts.forEach(function(a){
-      var o=document.createElement('option');o.value=a;o.textContent=a;
+      const o=document.createElement('option');o.value=a;o.textContent=a;
       if(a===data.default_action)o.selected=true;actSel.appendChild(o);
     });
     actWrap.appendChild(actSel);
@@ -39,46 +39,46 @@ function loadPipeline(){
     el.appendChild(hdr);
 
     /* Group stages by direction */
-    var groups={request:[],response:[],protocol:[]};
-    var groupLabels={request:'Request Scanning',response:'Response Scanning',protocol:'Protocol Scanning'};
+    const groups={request:[],response:[],protocol:[]};
+    const groupLabels={request:'Request Scanning',response:'Response Scanning',protocol:'Protocol Scanning'};
     (data.stages||[]).forEach(function(s){
       if(groups[s.group])groups[s.group].push(s);
     });
 
-    for(var g in groups){if(!groups.hasOwnProperty(g))continue;
-      var stages=groups[g];
+    for(const g in groups){if(!groups.hasOwnProperty(g))continue;
+      const stages=groups[g];
       if(!stages.length)continue;
-      var card=document.createElement('div');card.className='pipeline-group';
-      var glabel=document.createElement('div');glabel.className='pipeline-group-label';
+      const card=document.createElement('div');card.className='pipeline-group';
+      const glabel=document.createElement('div');glabel.className='pipeline-group-label';
       glabel.textContent=groupLabels[g]||g;
       card.appendChild(glabel);
 
       stages.forEach(function(stage){
-        var row=_pipelineStageRow(stage);
+        const row=_pipelineStageRow(stage);
         card.appendChild(row);
       });
       el.appendChild(card);
     }
 
     /* Advanced settings */
-    var advCard=document.createElement('div');advCard.className='pipeline-group';
-    var advLabel=document.createElement('div');advLabel.className='pipeline-group-label';
+    const advCard=document.createElement('div');advCard.className='pipeline-group';
+    const advLabel=document.createElement('div');advLabel.className='pipeline-group-label';
     advLabel.textContent='Advanced';advCard.appendChild(advLabel);
 
-    var parRow=document.createElement('div');parRow.className='pipeline-stage';
-    var parTop=document.createElement('div');parTop.className='pipeline-stage-top';
-    var parToggle=document.createElement('label');parToggle.className='pipeline-toggle';
-    var parCb=document.createElement('input');parCb.type='checkbox';
+    const parRow=document.createElement('div');parRow.className='pipeline-stage';
+    const parTop=document.createElement('div');parTop.className='pipeline-stage-top';
+    const parToggle=document.createElement('label');parToggle.className='pipeline-toggle';
+    const parCb=document.createElement('input');parCb.type='checkbox';
     parCb.checked=!!data.parallel_batching;
     parCb.setAttribute('data-config-key','parallel_batching');
     parCb.setAttribute('data-original',String(!!data.parallel_batching));
-    var parSlider=document.createElement('span');parSlider.className='pipeline-slider';
+    const parSlider=document.createElement('span');parSlider.className='pipeline-slider';
     parToggle.appendChild(parCb);parToggle.appendChild(parSlider);
     parTop.appendChild(parToggle);
-    var parLabel=document.createElement('div');parLabel.className='pipeline-stage-info';
-    var parName=document.createElement('div');parName.className='pipeline-stage-name';
+    const parLabel=document.createElement('div');parLabel.className='pipeline-stage-info';
+    const parName=document.createElement('div');parName.className='pipeline-stage-name';
     parName.textContent='Parallel rule evaluation';
-    var parDesc=document.createElement('div');parDesc.className='pipeline-stage-desc';
+    const parDesc=document.createElement('div');parDesc.className='pipeline-stage-desc';
     parDesc.textContent='Evaluate candidate rules in parallel threads (experimental)';
     parLabel.appendChild(parName);parLabel.appendChild(parDesc);
     parTop.appendChild(parLabel);
@@ -86,10 +86,10 @@ function loadPipeline(){
     el.appendChild(advCard);
 
     /* Save button */
-    var saveBar=document.createElement('div');saveBar.className='pipeline-save-bar';
-    var saveBtn=document.createElement('button');saveBtn.className='btn btn-primary';
+    const saveBar=document.createElement('div');saveBar.className='pipeline-save-bar';
+    const saveBtn=document.createElement('button');saveBtn.className='btn btn-primary';
     saveBtn.textContent='Save Pipeline Config';
-    var saveStatus=document.createElement('span');saveStatus.className='pipeline-save-status';
+    const saveStatus=document.createElement('span');saveStatus.className='pipeline-save-status';
     saveBtn.addEventListener('click',function(){_savePipeline(saveStatus)});
     saveBar.appendChild(saveStatus);
     saveBar.appendChild(saveBtn);
@@ -104,33 +104,33 @@ function loadPipeline(){
 }
 
 function _pipelineStageRow(stage){
-  var row=document.createElement('div');
+  const row=document.createElement('div');
   row.className='pipeline-stage'+(stage.available?'':' pipeline-stage-unavailable');
 
   /* Toggle + label line */
-  var top=document.createElement('div');top.className='pipeline-stage-top';
+  const top=document.createElement('div');top.className='pipeline-stage-top';
 
-  var toggle=document.createElement('label');toggle.className='pipeline-toggle';
-  var cb=document.createElement('input');cb.type='checkbox';
+  const toggle=document.createElement('label');toggle.className='pipeline-toggle';
+  const cb=document.createElement('input');cb.type='checkbox';
   cb.checked=stage.enabled;cb.disabled=!stage.available;
   cb.setAttribute('data-stage',stage.name);
   cb.setAttribute('data-original',String(stage.enabled));
   cb.className='pipeline-cb';
-  var slider=document.createElement('span');slider.className='pipeline-slider';
+  const slider=document.createElement('span');slider.className='pipeline-slider';
   toggle.appendChild(cb);toggle.appendChild(slider);
   top.appendChild(toggle);
 
-  var info=document.createElement('div');info.className='pipeline-stage-info';
-  var nameEl=document.createElement('span');nameEl.className='pipeline-stage-name';
+  const info=document.createElement('div');info.className='pipeline-stage-info';
+  const nameEl=document.createElement('span');nameEl.className='pipeline-stage-name';
   nameEl.textContent=stage.label;
   info.appendChild(nameEl);
-  var desc=document.createElement('span');desc.className='pipeline-stage-desc';
+  const desc=document.createElement('span');desc.className='pipeline-stage-desc';
   desc.textContent=stage.description;
   info.appendChild(desc);
   top.appendChild(info);
 
   /* Right side: badge */
-  var badge=document.createElement('span');
+  const badge=document.createElement('span');
   if(!stage.available){
     badge.className='badge info';badge.textContent='Coming soon';
   } else if(stage.finding_count>0){
@@ -145,36 +145,36 @@ function _pipelineStageRow(stage){
 
   /* Sub-detectors (only for outbound_dlp) */
   if(stage.sub_detectors&&stage.sub_detectors.length){
-    var subs=document.createElement('div');subs.className='pipeline-sub-detectors';
+    const subs=document.createElement('div');subs.className='pipeline-sub-detectors';
     stage.sub_detectors.forEach(function(det){
-      var sub=document.createElement('div');sub.className='pipeline-sub-det';
+      const sub=document.createElement('div');sub.className='pipeline-sub-det';
 
-      var subToggle=document.createElement('label');subToggle.className='pipeline-toggle pipeline-toggle-sm';
-      var subCb=document.createElement('input');subCb.type='checkbox';
+      const subToggle=document.createElement('label');subToggle.className='pipeline-toggle pipeline-toggle-sm';
+      const subCb=document.createElement('input');subCb.type='checkbox';
       subCb.checked=det.enabled;subCb.className='pipeline-cb';
       subCb.setAttribute('data-detector',det.name);
       subCb.setAttribute('data-original',String(det.enabled));
-      var subSlider=document.createElement('span');subSlider.className='pipeline-slider';
+      const subSlider=document.createElement('span');subSlider.className='pipeline-slider';
       subToggle.appendChild(subCb);subToggle.appendChild(subSlider);
       sub.appendChild(subToggle);
 
-      var subName=document.createElement('span');subName.className='pipeline-sub-name';
+      const subName=document.createElement('span');subName.className='pipeline-sub-name';
       subName.textContent=det.name.charAt(0).toUpperCase()+det.name.slice(1);
       sub.appendChild(subName);
 
-      var subActionSel=document.createElement('select');
+      const subActionSel=document.createElement('select');
       subActionSel.className='pipeline-action-select config-input';
       subActionSel.setAttribute('data-config-key','detectors.'+det.name+'.action');
       subActionSel.setAttribute('data-original',det.action);
       ['default'].concat(_pipelineActionOpts).forEach(function(a){
-        var o=document.createElement('option');o.value=a;o.textContent=a;
+        const o=document.createElement('option');o.value=a;o.textContent=a;
         subActionSel.appendChild(o);
       });
       subActionSel.value=det.action;
       sub.appendChild(subActionSel);
 
       if(det.finding_count>0){
-        var subCount=document.createElement('span');subCount.className='pipeline-sub-count';
+        const subCount=document.createElement('span');subCount.className='pipeline-sub-count';
         subCount.textContent=det.finding_count;sub.appendChild(subCount);
       }
       subs.appendChild(sub);
@@ -184,32 +184,32 @@ function _pipelineStageRow(stage){
 
   /* Encoding settings (only for encoding_decode) */
   if(stage.encoding_settings){
-    var enc=stage.encoding_settings;
-    var encWrap=document.createElement('div');encWrap.className='pipeline-sub-detectors';
+    const enc=stage.encoding_settings;
+    const encWrap=document.createElement('div');encWrap.className='pipeline-sub-detectors';
 
     /* Encoding toggles row */
-    var encToggles=document.createElement('div');encToggles.className='pipeline-enc-row';
-    var encLabel=document.createElement('span');encLabel.className='pipeline-enc-label';
+    const encToggles=document.createElement('div');encToggles.className='pipeline-enc-row';
+    const encLabel=document.createElement('span');encLabel.className='pipeline-enc-label';
     encLabel.textContent='Encodings';encToggles.appendChild(encLabel);
     ['base64','hex','url','unicode'].forEach(function(e){
-      var item=document.createElement('label');item.className='pipeline-enc-item';
-      var cb=document.createElement('input');cb.type='checkbox';cb.checked=enc[e];
+      const item=document.createElement('label');item.className='pipeline-enc-item';
+      const cb=document.createElement('input');cb.type='checkbox';cb.checked=enc[e];
       cb.className='pipeline-enc-cb';cb.setAttribute('data-encoding',e);
       cb.setAttribute('data-original',String(enc[e]));
       item.appendChild(cb);
-      var lbl=document.createElement('span');lbl.textContent=e;item.appendChild(lbl);
+      const lbl=document.createElement('span');lbl.textContent=e;item.appendChild(lbl);
       encToggles.appendChild(item);
     });
     encWrap.appendChild(encToggles);
 
     /* Numeric settings row */
-    var numRow=document.createElement('div');numRow.className='pipeline-enc-row';
+    const numRow=document.createElement('div');numRow.className='pipeline-enc-row';
     [['max_depth','Depth',1,5],['min_decoded_length','Min length',1,100],
      ['max_decoded_length','Max length',100,1000000]].forEach(function(s){
-      var item=document.createElement('div');item.className='pipeline-enc-num';
-      var lbl=document.createElement('span');lbl.className='pipeline-enc-label';
+      const item=document.createElement('div');item.className='pipeline-enc-num';
+      const lbl=document.createElement('span');lbl.className='pipeline-enc-label';
       lbl.textContent=s[1];item.appendChild(lbl);
-      var inp=document.createElement('input');inp.type='number';
+      const inp=document.createElement('input');inp.type='number';
       inp.className='pipeline-enc-input';inp.value=enc[s[0]];
       inp.min=s[2];inp.max=s[3];
       inp.setAttribute('data-enc-setting',s[0]);
@@ -224,19 +224,19 @@ function _pipelineStageRow(stage){
 }
 
 function _savePipeline(statusEl){
-  var changes={};
+  const changes={};
 
   /* Default action */
-  var actSel=document.querySelector('.pipeline-select[data-config-key="default_action"]');
+  const actSel=document.querySelector('.pipeline-select[data-config-key="default_action"]');
   if(actSel&&actSel.value!==actSel.getAttribute('data-original')){
     changes.default_action=actSel.value;
   }
 
   /* Stage toggles — only include changed */
-  var stageCbs=document.querySelectorAll('.pipeline-cb[data-stage]');
-  var stageChanges={};
-  for(var i=0;i<stageCbs.length;i++){
-    var cb=stageCbs[i];
+  const stageCbs=document.querySelectorAll('.pipeline-cb[data-stage]');
+  const stageChanges={};
+  for(let i=0;i<stageCbs.length;i++){
+    const cb=stageCbs[i];
     if(String(cb.checked)!==cb.getAttribute('data-original')){
       stageChanges[cb.getAttribute('data-stage')]={enabled:cb.checked};
     }
@@ -244,21 +244,21 @@ function _savePipeline(statusEl){
   if(Object.keys(stageChanges).length)changes.stages=stageChanges;
 
   /* Detector toggles + action overrides — only include changed */
-  var detCbs=document.querySelectorAll('.pipeline-cb[data-detector]');
-  var detChanges={};
-  for(var j=0;j<detCbs.length;j++){
-    var dcb=detCbs[j];
+  const detCbs=document.querySelectorAll('.pipeline-cb[data-detector]');
+  const detChanges={};
+  for(let j=0;j<detCbs.length;j++){
+    const dcb=detCbs[j];
     if(String(dcb.checked)!==dcb.getAttribute('data-original')){
       if(!detChanges[dcb.getAttribute('data-detector')])detChanges[dcb.getAttribute('data-detector')]={};
       detChanges[dcb.getAttribute('data-detector')].enabled=dcb.checked;
     }
   }
-  var detActionSels=document.querySelectorAll('.pipeline-action-select');
-  for(var k=0;k<detActionSels.length;k++){
-    var sel=detActionSels[k];
-    var key=sel.getAttribute('data-config-key');
+  const detActionSels=document.querySelectorAll('.pipeline-action-select');
+  for(let k=0;k<detActionSels.length;k++){
+    const sel=detActionSels[k];
+    const key=sel.getAttribute('data-config-key');
     if(!key)continue;
-    var detName=key.split('.')[1]; /* detectors.secrets.action -> secrets */
+    const detName=key.split('.')[1]; /* detectors.secrets.action -> secrets */
     if(sel.value!==sel.getAttribute('data-original')){
       if(!detChanges[detName])detChanges[detName]={};
       detChanges[detName].action=sel.value;
@@ -267,17 +267,17 @@ function _savePipeline(statusEl){
   if(Object.keys(detChanges).length)changes.detectors=detChanges;
 
   /* Encoding settings — only include changed */
-  var encCbs=document.querySelectorAll('.pipeline-enc-cb');
-  var encChanges={};
-  for(var m=0;m<encCbs.length;m++){
-    var ecb=encCbs[m];
+  const encCbs=document.querySelectorAll('.pipeline-enc-cb');
+  const encChanges={};
+  for(let m=0;m<encCbs.length;m++){
+    const ecb=encCbs[m];
     if(String(ecb.checked)!==ecb.getAttribute('data-original')){
       encChanges[ecb.getAttribute('data-encoding')]=ecb.checked;
     }
   }
-  var encInputs=document.querySelectorAll('.pipeline-enc-input');
-  for(var n=0;n<encInputs.length;n++){
-    var ei=encInputs[n];
+  const encInputs=document.querySelectorAll('.pipeline-enc-input');
+  for(let n=0;n<encInputs.length;n++){
+    const ei=encInputs[n];
     if(ei.value!==ei.getAttribute('data-original')){
       encChanges[ei.getAttribute('data-enc-setting')]=Number(ei.value);
     }
@@ -285,7 +285,7 @@ function _savePipeline(statusEl){
   if(Object.keys(encChanges).length)changes.encoding_settings=encChanges;
 
   /* Parallel batching toggle */
-  var parCb=document.querySelector('input[data-config-key="parallel_batching"]');
+  const parCb=document.querySelector('input[data-config-key="parallel_batching"]');
   if(parCb&&String(parCb.checked)!==parCb.getAttribute('data-original')){
     changes.parallel_batching=parCb.checked;
   }
@@ -302,14 +302,14 @@ function _savePipeline(statusEl){
   }).then(function(r){return r.json().then(function(d){return{status:r.status,data:d}})})
   .then(function(res){
     if(res.data.applied){
-      var n=Object.keys(res.data.applied).length;
+      const n=Object.keys(res.data.applied).length;
       statusEl.textContent=n+' setting(s) saved';
       statusEl.style.color='var(--accent)';
       /* Reload page after brief delay to show message and reflect saved state.
          Use the registered loadFn so Pro extensions are preserved. */
       _pipelineStages=null; /* invalidate dashboard health cache */
       setTimeout(function(){
-        var reg=_registeredPages['pipeline'];
+        const reg=_registeredPages['pipeline'];
         if(reg&&reg.loadFn)reg.loadFn();else loadPipeline();
       }, 600);
     }
