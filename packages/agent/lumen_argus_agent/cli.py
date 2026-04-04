@@ -10,6 +10,10 @@ import argparse
 import json
 import platform
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lumen_argus_core.detect import DetectionReport
 
 __version__ = "0.1.0"
 
@@ -116,47 +120,39 @@ def _run_clients(args: argparse.Namespace) -> None:
     print("Run 'lumen-argus-agent setup' to auto-configure detected tools.")
 
 
-def _run_detect(args: argparse.Namespace) -> None:
-    from lumen_argus_core.detect import detect_installed_clients
+def _detect_check_quiet(report: DetectionReport) -> None:
+    """Output for --check-quiet: warn on stderr if unconfigured tools exist."""
+    unconfigured = [c for c in report.clients if c.installed and not c.proxy_configured]
+    if unconfigured:
+        names = ", ".join(c.display_name for c in unconfigured)
+        sys.stderr.write(
+            "\033[33m[lumen-argus]\033[0m %d unconfigured tool(s): %s"
+            " — run 'lumen-argus-agent setup'\n" % (len(unconfigured), names)
+        )
 
-    report = detect_installed_clients(
-        proxy_url=args.proxy_url,
-        include_versions=args.versions,
-    )
 
-    if args.check_quiet:
-        unconfigured = [c for c in report.clients if c.installed and not c.proxy_configured]
-        if unconfigured:
-            names = ", ".join(c.display_name for c in unconfigured)
-            sys.stderr.write(
-                "\033[33m[lumen-argus]\033[0m %d unconfigured tool(s): %s"
-                " — run 'lumen-argus-agent setup'\n" % (len(unconfigured), names)
-            )
+def _detect_audit(report: DetectionReport) -> None:
+    """Output for --audit: compliance report."""
+    print("AI Tool Proxy Compliance Audit:\n")
+    detected = [c for c in report.clients if c.installed]
+    if not detected:
+        print("  No AI tools detected on this machine.")
         return
+    for c in detected:
+        ver = " %s" % c.version if c.version else ""
+        if c.proxy_configured:
+            print("  [OK]   %-20s%s  Proxied (%s)" % (c.display_name, ver, c.proxy_config_location))
+        elif c.proxy_config_type == "unsupported":
+            print("  [N/A]  %-20s%s  No reverse proxy support" % (c.display_name, ver))
+        else:
+            print("  [FAIL] %-20s%s  NOT PROXIED — %s" % (c.display_name, ver, c.setup_instructions))
+    print("\nSummary: %d/%d tools routed through proxy" % (report.total_configured, report.total_detected))
+    if report.total_configured < report.total_detected:
+        print("Action required: run 'lumen-argus-agent setup' to configure uncovered tools.")
 
-    if args.json:
-        print(json.dumps(report.to_dict(), indent=2))
-        return
 
-    if args.audit:
-        print("AI Tool Proxy Compliance Audit:\n")
-        detected = [c for c in report.clients if c.installed]
-        if not detected:
-            print("  No AI tools detected on this machine.")
-            return
-        for c in detected:
-            ver = " %s" % c.version if c.version else ""
-            if c.proxy_configured:
-                print("  [OK]   %-20s%s  Proxied (%s)" % (c.display_name, ver, c.proxy_config_location))
-            elif c.proxy_config_type == "unsupported":
-                print("  [N/A]  %-20s%s  No reverse proxy support" % (c.display_name, ver))
-            else:
-                print("  [FAIL] %-20s%s  NOT PROXIED — %s" % (c.display_name, ver, c.setup_instructions))
-        print("\nSummary: %d/%d tools routed through proxy" % (report.total_configured, report.total_detected))
-        if report.total_configured < report.total_detected:
-            print("Action required: run 'lumen-argus-agent setup' to configure uncovered tools.")
-        return
-
+def _detect_table(report: DetectionReport, proxy_url: str) -> None:
+    """Output for default mode: table of detected tools."""
     if report.total_detected == 0:
         print("No AI tools detected on this machine.\n")
         print("Popular tools you can install:")
@@ -179,9 +175,27 @@ def _run_detect(args: argparse.Namespace) -> None:
     if report.ci_environment:
         print("\nCI/CD environment: %s" % report.ci_environment.display_name)
 
-    print("\n%d/%d configured for proxy (%s)" % (report.total_configured, report.total_detected, args.proxy_url))
+    print("\n%d/%d configured for proxy (%s)" % (report.total_configured, report.total_detected, proxy_url))
     if report.total_configured < report.total_detected:
         print("Run 'lumen-argus-agent setup' to configure remaining tools.")
+
+
+def _run_detect(args: argparse.Namespace) -> None:
+    from lumen_argus_core.detect import detect_installed_clients
+
+    report = detect_installed_clients(
+        proxy_url=args.proxy_url,
+        include_versions=args.versions,
+    )
+
+    if args.check_quiet:
+        _detect_check_quiet(report)
+    elif args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    elif args.audit:
+        _detect_audit(report)
+    else:
+        _detect_table(report, args.proxy_url)
 
 
 def _run_setup(args: argparse.Namespace) -> None:

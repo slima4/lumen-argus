@@ -92,6 +92,19 @@ def _resolve_exit_code(findings: list[Finding], config: Config) -> int:
     return exit_code
 
 
+def _load_db_allowlist(store: AnalyticsStore) -> dict[str, list[str]]:
+    """Load allowlist entries from the database, grouped by list_type."""
+    buckets: dict[str, list[str]] = {"secrets": [], "pii": [], "paths": []}
+    try:
+        for entry in store.list_enabled_allowlist_entries():
+            lt = entry["list_type"]
+            if lt in buckets:
+                buckets[lt].append(entry["pattern"])
+    except Exception as e:
+        log.warning("failed to load DB allowlist entries: %s", e)
+    return buckets
+
+
 def _build_allowlist(
     config: Config, store: AnalyticsStore | None = None, extensions: ExtensionRegistry | None = None
 ) -> AllowlistMatcher:
@@ -100,17 +113,10 @@ def _build_allowlist(
     pii = list(config.allowlist.pii)
     paths = list(config.allowlist.paths)
     if store:
-        try:
-            for entry in store.list_enabled_allowlist_entries():
-                lt = entry["list_type"]
-                if lt == "secrets":
-                    secrets.append(entry["pattern"])
-                elif lt == "pii":
-                    pii.append(entry["pattern"])
-                elif lt == "paths":
-                    paths.append(entry["pattern"])
-        except Exception as e:
-            log.warning("failed to load DB allowlist entries: %s", e)
+        db = _load_db_allowlist(store)
+        secrets.extend(db["secrets"])
+        pii.extend(db["pii"])
+        paths.extend(db["paths"])
     # Use custom factory if registered (Enterprise: Hyperscan)
     if extensions:
         factory = extensions.get_allowlist_matcher_factory()
