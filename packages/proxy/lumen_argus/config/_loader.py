@@ -12,9 +12,9 @@ from typing import Any
 
 import yaml
 
-from lumen_argus.config.apply import _apply_config, _apply_project_config
-from lumen_argus.config.schema import Config
-from lumen_argus.config.validation import _validate_config
+from lumen_argus.config._apply import _apply_config, _apply_project_config
+from lumen_argus.config._schema import Config
+from lumen_argus.config._validation import _validate_config
 
 log = logging.getLogger("argus.config")
 

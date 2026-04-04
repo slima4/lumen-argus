@@ -1,8 +1,8 @@
 """Configuration loading using PyYAML."""
 
-from lumen_argus.config.apply import _apply_config, _apply_project_config
-from lumen_argus.config.loader import _parse_yaml, load_config
-from lumen_argus.config.schema import (
+from lumen_argus.config._apply import _apply_config, _apply_project_config
+from lumen_argus.config._loader import _parse_yaml, load_config
+from lumen_argus.config._schema import (
     _ENCODING_NAMES,
     _PIPELINE_STAGE_NAMES,
     PIPELINE_AVAILABLE_STAGES,
@@ -29,7 +29,7 @@ from lumen_argus.config.schema import (
     RulesConfig,
     WebSocketConfig,
 )
-from lumen_argus.config.validation import _validate_config
+from lumen_argus.config._validation import _validate_config
 
 __all__ = [
     "PIPELINE_AVAILABLE_STAGES",

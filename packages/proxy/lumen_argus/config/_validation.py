@@ -9,7 +9,7 @@ import os
 import re
 from typing import Any
 
-from lumen_argus.config.schema import _ENCODING_NAMES, _PIPELINE_STAGE_NAMES
+from lumen_argus.config._schema import _ENCODING_NAMES, _PIPELINE_STAGE_NAMES
 from lumen_argus.models import ACTION_SET, SEVERITY_SET
 
 _VALID_ACTIONS = ACTION_SET
