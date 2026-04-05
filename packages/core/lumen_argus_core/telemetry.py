@@ -17,6 +17,17 @@ from lumen_argus_core.time_utils import now_iso
 
 log = logging.getLogger("argus.telemetry")
 
+# Loopback hostnames where HTTP is safe (no network exposure)
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
+
+
+def _is_loopback_url(url: str) -> bool:
+    """Return True if the URL targets a loopback address."""
+    from urllib.parse import urlparse
+
+    host = urlparse(url).hostname or ""
+    return host in _LOOPBACK_HOSTS
+
 
 def send_heartbeat() -> bool:
     """Send a heartbeat to the central proxy.
@@ -73,7 +84,7 @@ def send_heartbeat() -> bool:
     headers = {"Content-Type": "application/json"}
     agent_token = enrollment.get("agent_token", "")
     if agent_token:
-        if not url.startswith("https://"):
+        if not url.startswith("https://") and not _is_loopback_url(url):
             log.warning("bearer token not sent — dashboard_url is not HTTPS")
         else:
             headers["Authorization"] = f"Bearer {agent_token}"
