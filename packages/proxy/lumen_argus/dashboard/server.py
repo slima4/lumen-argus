@@ -371,7 +371,18 @@ class AsyncDashboardServer:
         if path in (_LOGIN_PATH, "/logout"):
             return await handler(request)
 
-        # No password = open access
+        # Agent bearer tokens are independent of dashboard password — validate
+        # first so endpoints that need agent_identity (heartbeat, per-agent
+        # stats) work in open-access mode too.
+        if self.extensions and self.extensions.get_agent_auth_provider():
+            agent_result = await self._try_agent_auth(request)
+            if isinstance(agent_result, web.Response):
+                return agent_result
+            if agent_result:
+                request["user"] = agent_result
+                return await handler(request)
+
+        # No password = open access for non-agent callers (browser admins)
         if not self.password:
             request["user"] = "dashboard"
             return await handler(request)
@@ -387,14 +398,6 @@ class AsyncDashboardServer:
         ext_user = await self._try_extension_auth(request)
         if ext_user:
             request["user"] = ext_user
-            return await handler(request)
-
-        # Try agent auth provider (Bearer token from enrolled agents)
-        agent_result = await self._try_agent_auth(request)
-        if isinstance(agent_result, web.Response):
-            return agent_result
-        if agent_result:
-            request["user"] = agent_result
             return await handler(request)
 
         # API requests → 401 JSON
