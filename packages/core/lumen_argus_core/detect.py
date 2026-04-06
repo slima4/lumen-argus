@@ -75,6 +75,36 @@ def _get_powershell_profiles() -> tuple[str, ...]:
     )
 
 
+def _strip_jsonc_comments(text: str) -> str:
+    """Strip // comments from JSONC text, preserving // inside strings."""
+    result: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            # String literal — copy until closing quote, respecting escapes
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                elif text[j] == '"':
+                    j += 1
+                    break
+                else:
+                    j += 1
+            result.append(text[i:j])
+            i = j
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
+            # Line comment — skip to end of line
+            while i < n and text[i] != "\n":
+                i += 1
+        else:
+            result.append(c)
+            i += 1
+    return "".join(result)
+
+
 def load_jsonc(path: str) -> dict[str, Any]:
     """Load a JSONC file (JSON with // comments). Returns parsed dict or empty dict on error."""
     expanded = os.path.expanduser(path)
@@ -82,8 +112,8 @@ def load_jsonc(path: str) -> dict[str, Any]:
         return {}
     try:
         with open(expanded, "r", encoding="utf-8") as f:
-            lines = [line for line in f if not line.lstrip().startswith("//")]
-        result: dict[str, Any] = json.loads("".join(lines))
+            raw = f.read()
+        result: dict[str, Any] = json.loads(_strip_jsonc_comments(raw))
         return result
     except json.JSONDecodeError as e:
         log.warning("invalid JSON in %s: %s", path, e)
@@ -581,6 +611,12 @@ def detect_mcp_servers(
     plugin_servers, plugin_checked = _detect_claude_code_plugins()
     servers.extend(plugin_servers)
     checked.extend(plugin_checked)
+
+    # Deduplicate: same (name, source_tool) → last wins (project overrides global)
+    seen: dict[tuple[str, str], int] = {}
+    for i, s in enumerate(servers):
+        seen[(s.name, s.source_tool)] = i
+    servers = [servers[i] for i in sorted(seen.values())]
 
     total_scanning = sum(1 for s in servers if s.scanning_enabled)
 

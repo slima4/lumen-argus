@@ -30,7 +30,7 @@ This scans your system using 8 detection layers (in priority order):
 | pip | `importlib.metadata` (no subprocess) | `aider-chat` |
 | npm | Global `node_modules/package.json` | `@anthropic-ai/claude-code` |
 | Homebrew | Cellar directory (macOS) | `aider` formula |
-| VS Code extensions | 5 IDE variants (VS Code, Insiders, VSCodium, Cursor, Windsurf) | `github.copilot` |
+| VS Code extensions | 8 IDE variants (VS Code, Insiders, VSCodium, Cursor, Windsurf, Kiro, Trae, Antigravity) | `github.copilot` |
 | macOS app bundles | `/Applications/*.app` with Info.plist version | `Cursor.app` |
 | JetBrains plugins | Product plugin directories | `github-copilot-intellij` |
 | Neovim plugins | lazy.nvim, vim-plug, native pack directories | `copilot.vim` |

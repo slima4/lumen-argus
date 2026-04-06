@@ -10,6 +10,7 @@ from unittest.mock import patch
 from lumen_argus_core.detect import (
     _parse_mcp_server,
     _read_mcp_config,
+    _strip_jsonc_comments,
     detect_mcp_servers,
 )
 from lumen_argus_core.detect_models import MCPConfigSource, MCPDetectionReport, MCPServerEntry
@@ -264,6 +265,32 @@ class TestReadMCPConfig(unittest.TestCase):
         entries = _read_mcp_config(path, self._source())
         self.assertEqual(len(entries), 1)
 
+    def test_jsonc_trailing_comments(self):
+        """Trailing // comments on value lines are stripped."""
+        path = os.path.join(self.tmpdir, "trailing.json")
+        with open(path, "w") as f:
+            f.write("{\n")
+            f.write('  "mcpServers": {\n')
+            f.write('    "fs": {"command": "npx"} // filesystem server\n')
+            f.write("  }\n")
+            f.write("}\n")
+        entries = _read_mcp_config(path, self._source())
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].name, "fs")
+
+    def test_jsonc_preserves_urls_in_strings(self):
+        """// inside string values (URLs) must not be stripped."""
+        path = os.path.join(self.tmpdir, "url.json")
+        with open(path, "w") as f:
+            f.write("{\n")
+            f.write('  "mcpServers": {\n')
+            f.write('    "remote": {"url": "http://localhost:3000/mcp"}\n')
+            f.write("  }\n")
+            f.write("}\n")
+        entries = _read_mcp_config(path, self._source())
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].url, "http://localhost:3000/mcp")
+
     def test_skips_non_dict_entries(self):
         path = self._write_config(
             {
@@ -277,6 +304,40 @@ class TestReadMCPConfig(unittest.TestCase):
         entries = _read_mcp_config(path, self._source())
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].name, "good")
+
+
+class TestStripJSONCComments(unittest.TestCase):
+    """Test _strip_jsonc_comments for correct comment stripping."""
+
+    def test_full_line_comment(self):
+        self.assertEqual(_strip_jsonc_comments("// comment\n{}"), "\n{}")
+
+    def test_trailing_comment(self):
+        result = _strip_jsonc_comments('{"key": "value"} // comment\n')
+        self.assertEqual(result, '{"key": "value"} \n')
+
+    def test_url_in_string_preserved(self):
+        text = '{"url": "http://localhost:3000/mcp"}'
+        self.assertEqual(_strip_jsonc_comments(text), text)
+
+    def test_double_slash_in_string_preserved(self):
+        text = '{"path": "//network/share"}'
+        self.assertEqual(_strip_jsonc_comments(text), text)
+
+    def test_escaped_quote_in_string(self):
+        text = r'{"msg": "say \"hello\" // not a comment"}'
+        self.assertEqual(_strip_jsonc_comments(text), text)
+
+    def test_comment_after_string_with_slashes(self):
+        text = '{"url": "http://x"} // comment'
+        self.assertEqual(_strip_jsonc_comments(text), '{"url": "http://x"} ')
+
+    def test_no_comments(self):
+        text = '{"key": "value"}'
+        self.assertEqual(_strip_jsonc_comments(text), text)
+
+    def test_empty_string(self):
+        self.assertEqual(_strip_jsonc_comments(""), "")
 
 
 def _no_plugins():
@@ -415,6 +476,67 @@ class TestDetectMCPServers(unittest.TestCase):
 
         project_servers = [s for s in report.servers if os.path.realpath(s.config_path) == real_cfg]
         self.assertEqual(len(project_servers), 1)
+
+    def test_deduplicates_same_server_from_multiple_configs(self):
+        """Same server name from same tool in multiple config files → last wins."""
+        cfg1 = os.path.join(self.tmpdir, "config1.json")
+        with open(cfg1, "w") as f:
+            json.dump({"mcpServers": {"github": {"command": "docker", "args": ["run", "old-image"]}}}, f)
+
+        cfg2 = os.path.join(self.tmpdir, "config2.json")
+        with open(cfg2, "w") as f:
+            json.dump({"mcpServers": {"github": {"command": "docker", "args": ["run", "new-image"]}}}, f)
+
+        source = MCPConfigSource(
+            tool_id="claude_code",
+            display_name="Claude Code",
+            config_paths=(cfg1, cfg2),
+            json_key="mcpServers",
+            scope="global",
+        )
+
+        with patch("lumen_argus_core.mcp_configs.GLOBAL_MCP_SOURCES", (source,)):
+            with patch("lumen_argus_core.mcp_configs.PROJECT_MCP_SOURCES", ()):
+                with _no_plugins():
+                    report = detect_mcp_servers()
+
+        github_servers = [s for s in report.servers if s.name == "github"]
+        self.assertEqual(len(github_servers), 1)
+        # Last config wins
+        self.assertEqual(github_servers[0].args, ["run", "new-image"])
+
+    def test_no_dedup_across_different_tools(self):
+        """Same server name from different tools should NOT be deduped."""
+        cfg1 = os.path.join(self.tmpdir, "claude.json")
+        with open(cfg1, "w") as f:
+            json.dump({"mcpServers": {"fs": {"command": "npx", "args": ["@mcp/fs"]}}}, f)
+
+        cfg2 = os.path.join(self.tmpdir, "cursor.json")
+        with open(cfg2, "w") as f:
+            json.dump({"mcpServers": {"fs": {"command": "npx", "args": ["@mcp/fs"]}}}, f)
+
+        source1 = MCPConfigSource(
+            tool_id="claude_code",
+            display_name="Claude Code",
+            config_paths=(cfg1,),
+            json_key="mcpServers",
+            scope="global",
+        )
+        source2 = MCPConfigSource(
+            tool_id="cursor",
+            display_name="Cursor",
+            config_paths=(cfg2,),
+            json_key="mcpServers",
+            scope="global",
+        )
+
+        with patch("lumen_argus_core.mcp_configs.GLOBAL_MCP_SOURCES", (source1, source2)):
+            with patch("lumen_argus_core.mcp_configs.PROJECT_MCP_SOURCES", ()):
+                with _no_plugins():
+                    report = detect_mcp_servers()
+
+        fs_servers = [s for s in report.servers if s.name == "fs"]
+        self.assertEqual(len(fs_servers), 2)
 
     def test_to_dict_serialization(self):
         entry = MCPServerEntry(
