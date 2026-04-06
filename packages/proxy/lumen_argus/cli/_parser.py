@@ -214,6 +214,11 @@ def _add_setup_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     setup_parser.add_argument("--undo", action="store_true", help="Remove all proxy configuration")
     setup_parser.add_argument("--dry-run", action="store_true", help="Show changes without applying")
     setup_parser.add_argument("--non-interactive", action="store_true", help="Auto-configure without prompting")
+    setup_parser.add_argument("--mcp", action="store_true", help="Wrap MCP servers through scanning proxy")
+    setup_parser.add_argument("--server", type=str, default="", help="MCP server name (with --mcp)")
+    setup_parser.add_argument(
+        "--source", type=str, default="", help="Source tool ID (with --mcp, e.g. 'claude_desktop')"
+    )
 
 
 def _add_protection_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

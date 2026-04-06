@@ -51,6 +51,11 @@ def _build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--undo", action="store_true", help="Remove all proxy configuration")
     setup_parser.add_argument("--dry-run", action="store_true", help="Show changes without applying")
     setup_parser.add_argument("--non-interactive", action="store_true", help="Auto-configure without prompting")
+    setup_parser.add_argument("--mcp", action="store_true", help="Wrap MCP servers through scanning proxy")
+    setup_parser.add_argument("--server", type=str, default="", help="MCP server name (with --mcp)")
+    setup_parser.add_argument(
+        "--source", type=str, default="", help="Source tool ID (with --mcp, e.g. 'claude_desktop')"
+    )
 
     # protection
     protection_parser = subparsers.add_parser("protection", help="Toggle proxy routing (enable/disable/status)")
@@ -220,6 +225,12 @@ def _run_detect(args: argparse.Namespace) -> None:
 
 
 def _run_setup(args: argparse.Namespace) -> None:
+    if getattr(args, "mcp", False):
+        from lumen_argus_core.mcp_setup import dispatch_mcp_setup
+
+        dispatch_mcp_setup(args)
+        return
+
     from lumen_argus_core.setup_wizard import run_setup, undo_setup
 
     if args.undo:

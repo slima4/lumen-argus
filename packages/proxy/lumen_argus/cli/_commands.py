@@ -89,6 +89,12 @@ def run_clients(args: argparse.Namespace) -> None:
 
 def run_setup(args: argparse.Namespace) -> None:
     """Execute the 'setup' subcommand — configure tools to use proxy."""
+    if getattr(args, "mcp", False):
+        from lumen_argus_core.mcp_setup import dispatch_mcp_setup
+
+        dispatch_mcp_setup(args)
+        return
+
     from lumen_argus_core.setup_wizard import run_setup, undo_setup
 
     if args.undo:

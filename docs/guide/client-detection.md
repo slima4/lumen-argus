@@ -98,6 +98,32 @@ that tool.
     through `lumen-argus mcp` for scanning. Combine with `--json` for
     machine-readable output.
 
+### MCP server wrapping
+
+Once you've detected MCP servers with `--mcp`, you can wrap them through
+`lumen-argus mcp` for scanning:
+
+```bash
+# Interactive — prompts for each server
+lumen-argus setup --mcp
+
+# Wrap all detected stdio servers without prompting
+lumen-argus setup --mcp --non-interactive
+
+# Wrap a specific server
+lumen-argus setup --mcp --server filesystem --source claude_desktop
+
+# Undo — restore original config
+lumen-argus setup --mcp --undo
+```
+
+Wrapping rewrites the config file so `{"command": "npx", "args": [...]}` becomes
+`{"command": "lumen-argus", "args": ["mcp", "--", "npx", ...]}`. The original
+config is backed up to `~/.lumen-argus/setup/backups/`.
+
+Only stdio MCP servers are supported for wrapping. HTTP/SSE servers are detected
+but cannot be wrapped yet.
+
 ### Proxy configuration check
 
 Detection checks two sources to determine if a tool is routed through the proxy:

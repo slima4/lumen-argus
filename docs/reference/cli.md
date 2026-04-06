@@ -320,6 +320,9 @@ lumen-argus setup [CLIENT] [OPTIONS]
 | `--undo` | `bool` | `false` | Remove all proxy configuration and restore backups. |
 | `--dry-run` | `bool` | `false` | Show what would change without modifying files. |
 | `--non-interactive` | `bool` | `false` | Auto-configure without prompting. |
+| `--mcp` | `bool` | `false` | Wrap MCP servers through `lumen-argus mcp` scanning proxy instead of configuring AI client proxy vars. |
+| `--server` | `str` | `""` | MCP server name to wrap/unwrap (with `--mcp`). Empty = all detected. |
+| `--source` | `str` | `""` | Source tool ID filter (with `--mcp`, e.g. `claude_desktop`). |
 
 ### Examples
 
@@ -338,12 +341,31 @@ lumen-argus setup --non-interactive
 
 # Undo all changes
 lumen-argus setup --undo
+
+# Wrap MCP servers through scanning proxy (interactive)
+lumen-argus setup --mcp
+
+# Wrap all MCP servers without prompting
+lumen-argus setup --mcp --non-interactive
+
+# Wrap a specific MCP server
+lumen-argus setup --mcp --server filesystem --source claude_desktop
+
+# Preview MCP wrapping
+lumen-argus setup --mcp --dry-run
+
+# Unwrap all MCP servers
+lumen-argus setup --mcp --undo
+
+# Unwrap a specific MCP server
+lumen-argus setup --mcp --undo --server filesystem
 ```
 
 ### What setup modifies
 
 - **Shell profiles**: Adds `export VAR=URL` lines tagged with `# lumen-argus:managed` to `~/.zshrc`, `~/.bashrc`, `~/.config/fish/config.fish`, or PowerShell profiles.
 - **IDE settings**: Updates `settings.json` for VS Code, Cursor, Windsurf, and other IDE variants.
+- **MCP configs** (with `--mcp`): Rewrites `mcpServers` entries in AI tool config files (Claude Desktop, Claude Code, Cursor, Windsurf, Cline, Roo Code) to route through `lumen-argus mcp -- <original-command>`. Only stdio servers are supported; HTTP/SSE servers are detected but not wrapped yet.
 - **Backups**: Every modification is backed up to `~/.lumen-argus/setup/backups/` with a manifest for undo.
 
 ---

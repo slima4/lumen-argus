@@ -89,6 +89,9 @@ lumen-argus detect --mcp
 # Auto-configure all detected tools
 lumen-argus setup
 
+# Wrap MCP servers through scanning proxy
+lumen-argus setup --mcp
+
 # Or configure manually:
 ANTHROPIC_BASE_URL=http://localhost:8080 claude
 OPENAI_BASE_URL=http://localhost:8080 aider
