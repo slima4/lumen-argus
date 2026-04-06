@@ -431,5 +431,126 @@ class TestDetectMCPServers(unittest.TestCase):
         json.dumps(d)
 
 
+class TestVSCodeDetection(unittest.TestCase):
+    """Test VS Code MCP server detection (uses 'servers' key, not 'mcpServers')."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def test_detects_vscode_global_servers(self):
+        cfg_path = os.path.join(self.tmpdir, "mcp.json")
+        with open(cfg_path, "w") as f:
+            json.dump(
+                {
+                    "servers": {
+                        "filesystem": {
+                            "type": "stdio",
+                            "command": "npx",
+                            "args": ["-y", "@mcp/fs"],
+                        },
+                        "api": {
+                            "type": "http",
+                            "url": "http://localhost:3000/mcp",
+                        },
+                    }
+                },
+                f,
+            )
+
+        source = MCPConfigSource(
+            tool_id="vscode",
+            display_name="VS Code",
+            config_paths=(cfg_path,),
+            json_key="servers",
+            scope="global",
+        )
+
+        with patch("lumen_argus_core.mcp_configs.GLOBAL_MCP_SOURCES", (source,)):
+            with patch("lumen_argus_core.mcp_configs.PROJECT_MCP_SOURCES", ()):
+                report = detect_mcp_servers()
+
+        self.assertEqual(report.total_detected, 2)
+        names = {s.name for s in report.servers}
+        self.assertEqual(names, {"filesystem", "api"})
+
+        stdio = [s for s in report.servers if s.name == "filesystem"][0]
+        self.assertEqual(stdio.transport, "stdio")
+        self.assertEqual(stdio.command, "npx")
+        self.assertEqual(stdio.source_tool, "vscode")
+
+        http = [s for s in report.servers if s.name == "api"][0]
+        self.assertEqual(http.transport, "http")
+        self.assertEqual(http.url, "http://localhost:3000/mcp")
+
+    def test_detects_vscode_workspace_servers(self):
+        project_dir = os.path.join(self.tmpdir, "project")
+        vscode_dir = os.path.join(project_dir, ".vscode")
+        os.makedirs(vscode_dir)
+        cfg_path = os.path.join(vscode_dir, "mcp.json")
+        with open(cfg_path, "w") as f:
+            json.dump(
+                {"servers": {"local-db": {"type": "stdio", "command": "python", "args": ["db_server.py"]}}},
+                f,
+            )
+
+        source = MCPConfigSource(
+            tool_id="vscode",
+            display_name="VS Code (workspace)",
+            config_paths=(".vscode/mcp.json",),
+            json_key="servers",
+            scope="project",
+        )
+
+        with patch("lumen_argus_core.mcp_configs.GLOBAL_MCP_SOURCES", ()):
+            with patch("lumen_argus_core.mcp_configs.PROJECT_MCP_SOURCES", (source,)):
+                report = detect_mcp_servers(project_dirs=[project_dir])
+
+        project_servers = [s for s in report.servers if s.scope == "project"]
+        self.assertTrue(len(project_servers) >= 1)
+        self.assertEqual(project_servers[0].name, "local-db")
+        self.assertEqual(project_servers[0].source_tool, "vscode")
+
+    def test_vscode_with_env_and_inputs(self):
+        """VS Code configs can have env and inputs — env should be detected, inputs ignored."""
+        cfg_path = os.path.join(self.tmpdir, "mcp.json")
+        with open(cfg_path, "w") as f:
+            json.dump(
+                {
+                    "servers": {
+                        "custom": {
+                            "type": "stdio",
+                            "command": "node",
+                            "args": ["server.js"],
+                            "env": {"API_KEY": "secret-123"},
+                        },
+                    },
+                    "inputs": [{"type": "promptString", "id": "api-key"}],
+                },
+                f,
+            )
+
+        source = MCPConfigSource(
+            tool_id="vscode",
+            display_name="VS Code",
+            config_paths=(cfg_path,),
+            json_key="servers",
+            scope="global",
+        )
+
+        with patch("lumen_argus_core.mcp_configs.GLOBAL_MCP_SOURCES", (source,)):
+            with patch("lumen_argus_core.mcp_configs.PROJECT_MCP_SOURCES", ()):
+                report = detect_mcp_servers()
+
+        self.assertEqual(report.total_detected, 1)
+        server = report.servers[0]
+        self.assertEqual(server.env, {"API_KEY": "secret-123"})
+        # to_dict should redact env values
+        d = server.to_dict()
+        self.assertEqual(d["env"], {"API_KEY": "[REDACTED]"})
+
+
 if __name__ == "__main__":
     unittest.main()

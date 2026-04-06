@@ -127,6 +127,32 @@ _ROO_CODE = MCPConfigSource(
     scope="global",
 )
 
+# --- VS Code ---
+# VS Code uses a dedicated mcp.json file (not settings.json).
+# JSON key is "servers" (not "mcpServers" like other tools).
+
+_VSCODE = MCPConfigSource(
+    tool_id="vscode",
+    display_name="VS Code",
+    config_paths=_platform_paths(
+        (
+            _app_support("Code", "User", "mcp.json"),
+            _xdg_config("Code", "User", "mcp.json"),
+            _appdata("Code", "User", "mcp.json"),
+        ),
+    ),
+    json_key="servers",
+    scope="global",
+)
+
+_VSCODE_WORKSPACE = MCPConfigSource(
+    tool_id="vscode",
+    display_name="VS Code (workspace)",
+    config_paths=(".vscode/mcp.json",),
+    json_key="servers",
+    scope="project",
+)
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -139,7 +165,11 @@ GLOBAL_MCP_SOURCES: tuple[MCPConfigSource, ...] = (
     _WINDSURF,
     _CLINE,
     _ROO_CODE,
+    _VSCODE,
 )
 
 # Project-scoped sources — checked per directory
-PROJECT_MCP_SOURCES: tuple[MCPConfigSource, ...] = (_CLAUDE_CODE_PROJECT,)
+PROJECT_MCP_SOURCES: tuple[MCPConfigSource, ...] = (
+    _CLAUDE_CODE_PROJECT,
+    _VSCODE_WORKSPACE,
+)
