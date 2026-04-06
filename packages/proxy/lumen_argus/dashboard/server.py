@@ -371,6 +371,11 @@ class AsyncDashboardServer:
         if path in (_LOGIN_PATH, "/logout"):
             return await handler(request)
 
+        # MCP approval callbacks are token-authenticated (not session/cookie)
+        if "/mcp/approvals/" in path and path.endswith("/callback"):
+            request["user"] = "callback"
+            return await handler(request)
+
         # Agent bearer tokens are independent of dashboard password — validate
         # first so endpoints that need agent_identity (heartbeat, per-agent
         # stats) work in open-access mode too.
@@ -420,6 +425,11 @@ class AsyncDashboardServer:
 
         # Login form POST is exempted (no session yet)
         if request.path == _LOGIN_PATH:
+            resp = await handler(request)
+            return resp
+
+        # MCP approval callbacks are token-authenticated (not CSRF)
+        if "/mcp/approvals/" in request.path and request.path.endswith("/callback"):
             resp = await handler(request)
             return resp
 
