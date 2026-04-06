@@ -332,6 +332,15 @@ class TestStripJSONCComments(unittest.TestCase):
         text = '{"url": "http://x"} // comment'
         self.assertEqual(_strip_jsonc_comments(text), '{"url": "http://x"} ')
 
+    def test_escaped_backslash_at_end_of_string(self):
+        # "\\" is a string containing one backslash; closing " is not escaped
+        text = r'{"path": "C:\\"}'
+        self.assertEqual(_strip_jsonc_comments(text), text)
+
+    def test_escaped_backslash_then_comment(self):
+        text = '{"path": "C:\\\\"} // comment\n'
+        self.assertEqual(_strip_jsonc_comments(text), '{"path": "C:\\\\"} \n')
+
     def test_no_comments(self):
         text = '{"key": "value"}'
         self.assertEqual(_strip_jsonc_comments(text), text)
