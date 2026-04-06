@@ -49,7 +49,15 @@ class AuditLogger:
 
     def log(self, entry: AuditEntry) -> None:
         """Write an audit entry as a single JSONL line."""
-        line = json.dumps(entry.to_dict(), separators=(",", ":"))
+        self.log_dict(entry.to_dict())
+
+    def log_dict(self, entry: dict[str, object]) -> None:
+        """Write a raw dict as a single JSONL line.
+
+        Used for non-AuditEntry records (e.g., MCP tool call decisions)
+        that have their own schema but share the same audit file.
+        """
+        line = json.dumps(entry, separators=(",", ":"))
         try:
             with self._lock:
                 self._file.write(line + "\n")

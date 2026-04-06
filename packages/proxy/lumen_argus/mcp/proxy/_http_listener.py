@@ -32,6 +32,7 @@ async def run_http_listener(
     approval_gate: Any = None,
     server_id: str = "",
     sse_broadcaster: Any = None,
+    audit_logger: Any = None,
 ) -> int:
     """Run MCP proxy in HTTP reverse proxy mode (HTTP listener -> HTTP upstream).
 
@@ -112,6 +113,7 @@ async def run_http_listener(
                 approval_gate=approval_gate,
                 server_id=server_id,
                 sse_broadcaster=sse_broadcaster,
+                audit_logger=audit_logger,
             )
             if error:
                 return web.json_response(error, status=400)

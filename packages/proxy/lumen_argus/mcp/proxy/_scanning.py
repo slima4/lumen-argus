@@ -6,7 +6,10 @@ Used by all 4 transport modes.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import time
 from typing import Any
 
 from lumen_argus.mcp.scanner import MCPScanner
@@ -134,6 +137,66 @@ def _broadcast_mcp_event(
         log.debug("mcp: SSE broadcast failed for %s", event_type, exc_info=True)
 
 
+def _audit_mcp_tool_call(
+    audit_logger: Any,
+    tool_name: str,
+    decision: str,
+    server_id: str = "",
+    session_id: str = "",
+    policy_name: str = "",
+    risk_level: str = "",
+    approval_id: str = "",
+    decided_by: str = "",
+    arguments: dict[str, Any] | None = None,
+    latency_ms: float = 0.0,
+    findings_count: int = 0,
+) -> None:
+    """Write an MCP tool call decision to the JSONL audit log.
+
+    Safe to call when audit_logger is None (no-op).
+    Arguments are hashed (SHA-256) — never written in plaintext.
+    """
+    if audit_logger is None:
+        return
+    try:
+        from lumen_argus_core.time_utils import now_iso
+
+        # Hash arguments — never store raw arguments in audit log
+        args_hash = ""
+        if arguments:
+            args_hash = hashlib.sha256(json.dumps(arguments, sort_keys=True).encode()).hexdigest()
+
+        entry: dict[str, Any] = {
+            "action": "mcp_tool_call",
+            "tool_name": tool_name,
+            "decision": decision,
+            "timestamp": now_iso(),
+        }
+        # Include optional fields only when populated (keeps JSONL compact)
+        if server_id:
+            entry["server_id"] = server_id
+        if session_id:
+            entry["session_id"] = session_id
+        if policy_name:
+            entry["policy_name"] = policy_name
+        if risk_level:
+            entry["risk_level"] = risk_level
+        if approval_id:
+            entry["approval_id"] = approval_id
+        if decided_by:
+            entry["decided_by"] = decided_by
+        if args_hash:
+            entry["arguments_hash"] = args_hash
+        if latency_ms > 0:
+            entry["latency_ms"] = round(latency_ms, 1)
+        if findings_count:
+            entry["findings_count"] = findings_count
+
+        audit_logger.log_dict(entry)
+    except Exception:
+        log.debug("mcp: audit log write failed", exc_info=True)
+
+
 def _jsonrpc_error(msg_id: Any, message: str) -> dict[str, Any]:
     """Build a JSON-RPC 2.0 error response."""
     return {
@@ -154,6 +217,7 @@ async def _check_tools_call(
     approval_gate: Any = None,
     server_id: str = "",
     sse_broadcaster: Any = None,
+    audit_logger: Any = None,
 ) -> dict[str, Any] | None:
     """Validate a tools/call request through the full scanning pipeline.
 
@@ -172,8 +236,9 @@ async def _check_tools_call(
     msg_id = msg.get("id")
     tool_name = msg.get("params", {}).get("name", "")
     arguments = msg.get("params", {}).get("arguments", {})
+    _t0 = time.monotonic()
 
-    # Helper to broadcast + return error in one step
+    # Helper to broadcast + audit + return error in one step
     def _block(reason: str, policy: str = "", sse_decision: str = "blocked") -> dict[str, Any]:
         _broadcast_mcp_event(
             sse_broadcaster,
@@ -183,6 +248,16 @@ async def _check_tools_call(
             server_id=server_id,
             session_id=session_id,
             policy_name=policy,
+        )
+        _audit_mcp_tool_call(
+            audit_logger,
+            tool_name,
+            sse_decision,
+            server_id=server_id,
+            session_id=session_id,
+            policy_name=policy,
+            arguments=arguments,
+            latency_ms=(time.monotonic() - _t0) * 1000,
         )
         return _jsonrpc_error(msg_id, reason)
 
@@ -276,11 +351,34 @@ async def _check_tools_call(
                     sse_decision_broadcast = True
                     if approval_status != "approved":
                         log.info("mcp: tool call %s: %s (approval %s)", approval_status, tool_name, approval_id)
+                        _audit_mcp_tool_call(
+                            audit_logger,
+                            tool_name,
+                            approval_status,
+                            server_id=server_id,
+                            session_id=session_id,
+                            policy_name=policy_name,
+                            approval_id=approval_id,
+                            arguments=arguments,
+                            latency_ms=(time.monotonic() - _t0) * 1000,
+                        )
                         return _jsonrpc_error(
                             msg_id,
                             "Tool call %s: %s (approval %s)" % (approval_status, tool_name, approval_id),
                         )
                     log.info("mcp: tool call approved: %s (approval %s)", tool_name, approval_id)
+                    _audit_mcp_tool_call(
+                        audit_logger,
+                        tool_name,
+                        "approved",
+                        server_id=server_id,
+                        session_id=session_id,
+                        policy_name=policy_name,
+                        approval_id=approval_id,
+                        decided_by=getattr(approval, "decided_by", ""),
+                        arguments=arguments,
+                        latency_ms=(time.monotonic() - _t0) * 1000,
+                    )
 
     # 4. Legacy policy engine check
     policy_findings = _run_policy_engine(policy_engine, tool_name, arguments)
@@ -294,7 +392,8 @@ async def _check_tools_call(
         _signal_escalation(escalation_fn, "block", session_id, {"tool": tool_name})
         return _block("Request blocked by lumen-argus: sensitive data detected", sse_decision="blocked")
 
-    # Not blocked — signal near_miss or clean and broadcast allowed event
+    # Not blocked — signal near_miss or clean, broadcast + audit
+    latency = (time.monotonic() - _t0) * 1000
     if findings:
         _signal_escalation(escalation_fn, "near_miss", session_id, {"tool": tool_name})
         if not sse_decision_broadcast:
@@ -307,6 +406,16 @@ async def _check_tools_call(
                 session_id=session_id,
                 findings_count=len(findings),
             )
+        _audit_mcp_tool_call(
+            audit_logger,
+            tool_name,
+            "alerted",
+            server_id=server_id,
+            session_id=session_id,
+            arguments=arguments,
+            latency_ms=latency,
+            findings_count=len(findings),
+        )
     else:
         _signal_escalation(escalation_fn, "clean", session_id, {"tool": tool_name})
         if not sse_decision_broadcast:
@@ -317,6 +426,17 @@ async def _check_tools_call(
                 "allowed",
                 server_id=server_id,
                 session_id=session_id,
+            )
+        if not sse_decision_broadcast:
+            # Only audit "allowed" if not already audited by approval gate
+            _audit_mcp_tool_call(
+                audit_logger,
+                tool_name,
+                "allowed",
+                server_id=server_id,
+                session_id=session_id,
+                arguments=arguments,
+                latency_ms=latency,
             )
     return None
 

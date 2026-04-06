@@ -76,6 +76,9 @@ def run_mcp(args: argparse.Namespace, extensions: ExtensionRegistry | None = Non
     approval_gate = extensions.get_approval_gate()
     sse_broadcaster = extensions.get_sse_broadcaster()
 
+    # Build audit logger for MCP tool call decisions
+    audit_logger = _build_audit_logger(config)
+
     # Determine action (CLI flag > config)
     action_override = getattr(args, "action", None)
     action = action_override or config.pipeline.mcp_arguments.action or config.default_action
@@ -117,6 +120,7 @@ def run_mcp(args: argparse.Namespace, extensions: ExtensionRegistry | None = Non
             approval_gate,
             server_id,
             sse_broadcaster,
+            audit_logger,
         )
     elif listen:
         _run_http_listener(
@@ -129,6 +133,7 @@ def run_mcp(args: argparse.Namespace, extensions: ExtensionRegistry | None = Non
             approval_gate,
             server_id,
             sse_broadcaster,
+            audit_logger,
         )
     else:
         _run_bridge(
@@ -140,6 +145,7 @@ def run_mcp(args: argparse.Namespace, extensions: ExtensionRegistry | None = Non
             approval_gate,
             server_id,
             sse_broadcaster,
+            audit_logger,
         )
 
 
@@ -162,6 +168,21 @@ def _validate_transport_args(upstream: str | None, listen: str | None, cmd: list
     if upstream and cmd:
         print("Error: Cannot use both --upstream and a server command", file=sys.stderr)
         sys.exit(1)
+
+
+def _build_audit_logger(config: Any) -> Any:
+    """Build an AuditLogger for MCP tool call decisions. Returns None if disabled."""
+    audit_cfg = getattr(config, "audit", None)
+    if audit_cfg and not getattr(audit_cfg, "enabled", True):
+        return None
+    try:
+        from lumen_argus.audit import AuditLogger
+
+        log_dir = getattr(audit_cfg, "log_dir", None) if audit_cfg else None
+        return AuditLogger(log_dir=log_dir)
+    except Exception as e:
+        log.warning("mcp: could not open audit logger: %s", e)
+        return None
 
 
 def _open_mcp_store(config: Any, _mcp_cfg: Any) -> Any:
@@ -222,6 +243,7 @@ def _run_stdio(
     approval_gate: Any = None,
     server_id: str = "",
     sse_broadcaster: Any = None,
+    audit_logger: Any = None,
 ) -> None:
     import asyncio
 
@@ -251,6 +273,7 @@ def _run_stdio(
             approval_gate=approval_gate,
             server_id=server_id,
             sse_broadcaster=sse_broadcaster,
+            audit_logger=audit_logger,
         )
     )
     sys.exit(exit_code)
@@ -266,6 +289,7 @@ def _run_http_listener(
     approval_gate: Any = None,
     server_id: str = "",
     sse_broadcaster: Any = None,
+    audit_logger: Any = None,
 ) -> None:
     import asyncio
 
@@ -294,6 +318,7 @@ def _run_http_listener(
             approval_gate=approval_gate,
             server_id=server_id,
             sse_broadcaster=sse_broadcaster,
+            audit_logger=audit_logger,
         )
     )
 
@@ -307,6 +332,7 @@ def _run_bridge(
     approval_gate: Any = None,
     server_id: str = "",
     sse_broadcaster: Any = None,
+    audit_logger: Any = None,
 ) -> None:
     import asyncio
 
@@ -326,6 +352,7 @@ def _run_bridge(
                 approval_gate=approval_gate,
                 server_id=server_id,
                 sse_broadcaster=sse_broadcaster,
+                audit_logger=audit_logger,
             )
         )
     else:
@@ -341,6 +368,7 @@ def _run_bridge(
                 approval_gate=approval_gate,
                 server_id=server_id,
                 sse_broadcaster=sse_broadcaster,
+                audit_logger=audit_logger,
             )
         )
     sys.exit(exit_code)

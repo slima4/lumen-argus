@@ -1,12 +1,17 @@
-"""Tests for MCP tool policy evaluator and approval gate integration in _check_tools_call."""
+"""Tests for MCP tool policy evaluator, approval gate, SSE, and audit integration in _check_tools_call."""
 
 import asyncio
+import json
 import unittest
 from dataclasses import dataclass
 from typing import Any
 
 from lumen_argus.allowlist import AllowlistMatcher
-from lumen_argus.mcp.proxy._scanning import _check_tools_call, _run_tool_policy_evaluator
+from lumen_argus.mcp.proxy._scanning import (
+    _audit_mcp_tool_call,
+    _check_tools_call,
+    _run_tool_policy_evaluator,
+)
 from lumen_argus.mcp.scanner import MCPScanner
 
 
@@ -506,6 +511,158 @@ class TestSSEBroadcast(unittest.TestCase):
             )
         )
         self.assertEqual(broadcaster.events[0][1]["server_id"], "npx @mcp/fs")
+
+
+class FakeAuditLogger:
+    """Fake audit logger that records entries."""
+
+    def __init__(self) -> None:
+        self.entries: list[dict] = []
+
+    def log_dict(self, entry: dict) -> None:
+        self.entries.append(entry)
+
+
+class TestAuditLogging(unittest.TestCase):
+    """Test JSONL audit logging from _check_tools_call pipeline."""
+
+    def _run(self, coro: Any) -> Any:
+        return asyncio.run(coro)
+
+    def test_allowed_call_audited(self):
+        scanner = _make_scanner()
+        logger = FakeAuditLogger()
+        msg = _make_tools_call()
+        self._run(_check_tools_call(msg, scanner, "block", None, None, audit_logger=logger))
+        self.assertEqual(len(logger.entries), 1)
+        entry = logger.entries[0]
+        self.assertEqual(entry["action"], "mcp_tool_call")
+        self.assertEqual(entry["tool_name"], "write_file")
+        self.assertEqual(entry["decision"], "allowed")
+        self.assertIn("timestamp", entry)
+        self.assertNotIn("arguments", entry)
+
+    def test_blocked_call_audited(self):
+        scanner = _make_scanner()
+        logger = FakeAuditLogger()
+        evaluator = FakeEvaluator(FakePolicyDecision(action="block", policy_name="deny-all", reason="Denied"))
+        msg = _make_tools_call()
+        self._run(
+            _check_tools_call(
+                msg,
+                scanner,
+                "block",
+                None,
+                None,
+                tool_policy_evaluator=evaluator,
+                audit_logger=logger,
+            )
+        )
+        self.assertEqual(len(logger.entries), 1)
+        entry = logger.entries[0]
+        self.assertEqual(entry["decision"], "blocked")
+        self.assertEqual(entry["policy_name"], "deny-all")
+
+    def test_arguments_hashed_not_plaintext(self):
+        scanner = _make_scanner()
+        logger = FakeAuditLogger()
+        msg = _make_tools_call("write_file", {"path": "/etc/passwd", "content": "secret"})
+        self._run(_check_tools_call(msg, scanner, "block", None, None, audit_logger=logger))
+        entry = logger.entries[0]
+        self.assertIn("arguments_hash", entry)
+        self.assertEqual(len(entry["arguments_hash"]), 64)  # SHA-256 hex
+        self.assertNotIn("arguments", entry)
+        self.assertNotIn("secret", json.dumps(entry))
+
+    def test_latency_tracked(self):
+        scanner = _make_scanner()
+        logger = FakeAuditLogger()
+        msg = _make_tools_call()
+        self._run(_check_tools_call(msg, scanner, "block", None, None, audit_logger=logger))
+        entry = logger.entries[0]
+        self.assertIn("latency_ms", entry)
+        self.assertGreaterEqual(entry["latency_ms"], 0)
+
+    def test_approval_denied_audited(self):
+        scanner = _make_scanner()
+        logger = FakeAuditLogger()
+        evaluator = FakeEvaluator(FakePolicyDecision(action="approval", policy_name="require-approval"))
+        gate = FakeApprovalGate(FakeApprovalDecision(status="denied", approval_id="apr_xyz"))
+        msg = _make_tools_call()
+        self._run(
+            _check_tools_call(
+                msg,
+                scanner,
+                "block",
+                None,
+                None,
+                tool_policy_evaluator=evaluator,
+                approval_gate=gate,
+                audit_logger=logger,
+            )
+        )
+        self.assertEqual(len(logger.entries), 1)
+        entry = logger.entries[0]
+        self.assertEqual(entry["decision"], "denied")
+        self.assertEqual(entry["approval_id"], "apr_xyz")
+
+    def test_no_logger_does_not_fail(self):
+        scanner = _make_scanner()
+        msg = _make_tools_call()
+        result = self._run(_check_tools_call(msg, scanner, "block", None, None, audit_logger=None))
+        self.assertIsNone(result)
+
+    def test_server_id_in_audit(self):
+        scanner = _make_scanner()
+        logger = FakeAuditLogger()
+        msg = _make_tools_call()
+        self._run(
+            _check_tools_call(
+                msg,
+                scanner,
+                "block",
+                None,
+                None,
+                server_id="npx @mcp/fs",
+                audit_logger=logger,
+            )
+        )
+        self.assertEqual(logger.entries[0]["server_id"], "npx @mcp/fs")
+
+
+class TestAuditMcpToolCallDirect(unittest.TestCase):
+    """Test _audit_mcp_tool_call helper directly."""
+
+    def test_none_logger(self):
+        # Should not raise
+        _audit_mcp_tool_call(None, "tool", "allowed")
+
+    def test_writes_entry(self):
+        logger = FakeAuditLogger()
+        _audit_mcp_tool_call(logger, "write_file", "blocked", policy_name="deny-all")
+        self.assertEqual(len(logger.entries), 1)
+        self.assertEqual(logger.entries[0]["tool_name"], "write_file")
+        self.assertEqual(logger.entries[0]["decision"], "blocked")
+        self.assertEqual(logger.entries[0]["policy_name"], "deny-all")
+
+    def test_arguments_hashed(self):
+        logger = FakeAuditLogger()
+        _audit_mcp_tool_call(logger, "tool", "allowed", arguments={"key": "value"})
+        self.assertIn("arguments_hash", logger.entries[0])
+        self.assertEqual(len(logger.entries[0]["arguments_hash"]), 64)
+
+    def test_empty_arguments_no_hash(self):
+        logger = FakeAuditLogger()
+        _audit_mcp_tool_call(logger, "tool", "allowed")
+        self.assertNotIn("arguments_hash", logger.entries[0])
+
+    def test_optional_fields_omitted_when_empty(self):
+        logger = FakeAuditLogger()
+        _audit_mcp_tool_call(logger, "tool", "allowed")
+        entry = logger.entries[0]
+        self.assertNotIn("server_id", entry)
+        self.assertNotIn("policy_name", entry)
+        self.assertNotIn("approval_id", entry)
 
 
 if __name__ == "__main__":

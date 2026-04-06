@@ -26,6 +26,7 @@ async def run_http_bridge(
     approval_gate: Any = None,
     server_id: str = "",
     sse_broadcaster: Any = None,
+    audit_logger: Any = None,
 ) -> int:
     """Run MCP proxy in HTTP bridge mode (stdio client -> HTTP upstream).
 
@@ -77,6 +78,7 @@ async def run_http_bridge(
                         approval_gate=approval_gate,
                         server_id=server_id,
                         sse_broadcaster=sse_broadcaster,
+                        audit_logger=audit_logger,
                     )
                     if error:
                         sys.stdout.buffer.write(json.dumps(error).encode() + b"\n")
