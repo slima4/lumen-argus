@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -460,6 +461,85 @@ async def _handle_request(request: web.Request) -> web.StreamResponse:
 
 
 # ---------------------------------------------------------------------------
+# Relay state file
+# ---------------------------------------------------------------------------
+
+_ARGUS_DIR = os.path.expanduser("~/.lumen-argus")
+_RELAY_STATE_PATH = os.path.join(_ARGUS_DIR, "relay.json")
+
+
+def _write_relay_state(config: RelayConfig) -> None:
+    """Write relay state file so the setup wizard can detect the relay."""
+    import json
+
+    from lumen_argus_core.time_utils import now_iso
+
+    os.makedirs(_ARGUS_DIR, mode=0o700, exist_ok=True)
+    state = {
+        "port": config.port,
+        "bind": config.bind,
+        "upstream_url": config.upstream_url,
+        "pid": os.getpid(),
+        "started_at": now_iso(),
+    }
+    try:
+        tmp = _RELAY_STATE_PATH + ".tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp, _RELAY_STATE_PATH)
+        log.info("relay state written to %s", _RELAY_STATE_PATH)
+    except OSError as exc:
+        log.warning("could not write relay state: %s", exc)
+
+
+def _remove_relay_state() -> None:
+    """Remove relay state file on shutdown."""
+    try:
+        os.remove(_RELAY_STATE_PATH)
+        log.debug("relay state removed")
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        log.warning("could not remove relay state: %s", exc)
+
+
+def load_relay_state() -> dict[str, Any] | None:
+    """Load relay state from disk. Returns None if relay is not running.
+
+    Validates the PID — if the recorded process is dead, removes the stale
+    state file and returns None.
+    """
+    import json
+
+    try:
+        with open(_RELAY_STATE_PATH, encoding="utf-8") as f:
+            state: dict[str, Any] = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+    # Check if the relay process is still alive
+    pid = state.get("pid", 0)
+    if pid and not _pid_alive(pid):
+        log.debug("stale relay state (pid %d dead) — removing", pid)
+        _remove_relay_state()
+        return None
+
+    return state
+
+
+def _pid_alive(pid: int) -> bool:
+    """Check if a PID is still running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+    except OSError:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Entry point (called from CLI)
 # ---------------------------------------------------------------------------
 
@@ -468,6 +548,7 @@ async def run_relay(config: RelayConfig) -> None:
     """Start the relay and run until interrupted."""
     relay = AgentRelay(config)
     await relay.start()
+    _write_relay_state(config)
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -487,3 +568,4 @@ async def run_relay(config: RelayConfig) -> None:
     if remaining:
         log.warning("draining timed out with %d active requests", remaining)
     await relay.stop()
+    _remove_relay_state()

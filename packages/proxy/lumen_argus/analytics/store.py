@@ -133,6 +133,9 @@ class AnalyticsStore:
         action: str | None = None,
         finding_type: str | None = None,
         client_name: str | None = None,
+        working_directory: str | None = None,
+        hostname: str | None = None,
+        username: str | None = None,
         days: int | None = None,
         namespace_id: int = 1,
     ) -> tuple[list[dict[str, Any]], Any]:
@@ -147,6 +150,9 @@ class AnalyticsStore:
             action=action,
             finding_type=finding_type,
             client_name=client_name,
+            working_directory=working_directory,
+            hostname=hostname,
+            username=username,
             days=days,
             namespace_id=namespace_id,
         )
@@ -194,6 +200,9 @@ class AnalyticsStore:
 
     def get_top_projects(self, days: int = 30, limit: int = 8, namespace_id: int = 1) -> list[dict[str, Any]]:
         return self.findings.get_top_projects(days=days, limit=limit, namespace_id=namespace_id)
+
+    def get_by_project(self, days: int = 30, limit: int = 20, namespace_id: int = 1) -> list[dict[str, Any]]:
+        return self.findings.get_by_project(days=days, limit=limit, namespace_id=namespace_id)
 
     def cleanup(self, retention_days: int = 365, namespace_id: int = 1) -> int:
         return self.findings.cleanup(retention_days, namespace_id=namespace_id)

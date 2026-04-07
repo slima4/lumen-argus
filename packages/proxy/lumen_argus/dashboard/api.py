@@ -94,6 +94,9 @@ def _dispatch_api(
         if path == "/api/v1/findings":
             return api_findings.handle_findings_list(params, store)
 
+        if path == "/api/v1/findings/by-project":
+            return api_findings.handle_findings_by_project(params, store)
+
         if path == "/api/v1/stats":
             return api_findings.handle_stats(params, store)
 

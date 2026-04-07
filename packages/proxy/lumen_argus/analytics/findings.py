@@ -142,6 +142,9 @@ class FindingsRepository(BaseRepository):
         action: str | None = None,
         finding_type: str | None = None,
         client_name: str | None = None,
+        working_directory: str | None = None,
+        hostname: str | None = None,
+        username: str | None = None,
         days: int | None = None,
         namespace_id: int = 1,
     ) -> tuple[list[dict[str, Any]], Any]:
@@ -173,6 +176,16 @@ class FindingsRepository(BaseRepository):
         if client_name:
             conditions.append("client_name = ?")
             params.append(client_name)
+        if working_directory:
+            escaped_wd = working_directory.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append("working_directory LIKE ? ESCAPE '\\'")
+            params.append("%%%s%%" % escaped_wd)
+        if hostname:
+            conditions.append("hostname = ?")
+            params.append(hostname)
+        if username:
+            conditions.append("username = ?")
+            params.append(username)
         if days and days > 0:
             conditions.append(self._adapter.date_diff_sql("timestamp", min(days, 365)))
         where = " WHERE " + " AND ".join(conditions)
@@ -392,6 +405,54 @@ class FindingsRepository(BaseRepository):
                 (namespace_id, limit),
             ).fetchall()
         return [{"working_directory": r["working_directory"], "count": r["cnt"]} for r in rows]
+
+    def get_by_project(self, days: int = 30, limit: int = 20, namespace_id: int = 1) -> list[dict[str, Any]]:
+        """Return findings grouped by working_directory with severity breakdown.
+
+        Each entry includes project name (last path component), finding count,
+        critical count, last finding time, and distinct agent list.
+        """
+        days = max(1, min(days, 365))
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT working_directory, "
+                "COUNT(*) as finding_count, "
+                "SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) as critical_count, "
+                "MAX(timestamp) as last_finding_at "
+                "FROM findings "
+                "WHERE working_directory IS NOT NULL AND working_directory != '' "
+                f"AND {self._adapter.date_diff_sql('timestamp', days)} AND namespace_id = ? "
+                "GROUP BY working_directory "
+                "ORDER BY finding_count DESC LIMIT ?",
+                (namespace_id, limit),
+            ).fetchall()
+
+            projects = []
+            for r in rows:
+                wd = r["working_directory"]
+                # Get distinct agents for this project
+                agent_rows = conn.execute(
+                    "SELECT DISTINCT client_name FROM findings "
+                    "WHERE working_directory = ? AND client_name != '' AND namespace_id = ? "
+                    f"AND {self._adapter.date_diff_sql('timestamp', days)}",
+                    (wd, namespace_id),
+                ).fetchall()
+                agents = [a["client_name"] for a in agent_rows]
+
+                project_name = wd.rsplit("/", 1)[-1] if "/" in wd else wd.rsplit("\\", 1)[-1] if "\\" in wd else wd
+                projects.append(
+                    {
+                        "working_directory": wd,
+                        "project_name": project_name,
+                        "finding_count": r["finding_count"],
+                        "critical_count": r["critical_count"] or 0,
+                        "last_finding_at": r["last_finding_at"],
+                        "agents": agents,
+                    }
+                )
+
+        return projects
 
     def get_total_count(
         self,

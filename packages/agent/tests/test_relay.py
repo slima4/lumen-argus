@@ -1,6 +1,7 @@
 """Tests for the agent relay forwarding proxy."""
 
 import json
+import os
 import unittest
 
 from aiohttp import web
@@ -369,6 +370,75 @@ class TestRelayConfig(unittest.TestCase):
         self.assertEqual(config.agent_id, "")
         self.assertEqual(config.agent_token, "")
         self.assertEqual(config.timeout, 150)
+
+
+class TestRelayStateFile(unittest.TestCase):
+    """Relay state file write/read/remove."""
+
+    def setUp(self):
+        import tempfile
+
+        self._tmp = tempfile.mkdtemp()
+        # Patch the state path to a temp directory
+        import lumen_argus_agent.relay as relay_mod
+
+        self._orig_dir = relay_mod._ARGUS_DIR
+        self._orig_path = relay_mod._RELAY_STATE_PATH
+        relay_mod._ARGUS_DIR = self._tmp
+        relay_mod._RELAY_STATE_PATH = os.path.join(self._tmp, "relay.json")
+
+    def tearDown(self):
+        import shutil
+
+        import lumen_argus_agent.relay as relay_mod
+
+        relay_mod._ARGUS_DIR = self._orig_dir
+        relay_mod._RELAY_STATE_PATH = self._orig_path
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_write_and_load(self):
+        from lumen_argus_agent.relay import _write_relay_state, load_relay_state
+
+        config = RelayConfig(port=9999, bind="0.0.0.0", upstream_url="http://proxy:8080")
+        _write_relay_state(config)
+
+        state = load_relay_state()
+        self.assertIsNotNone(state)
+        self.assertEqual(state["port"], 9999)
+        self.assertEqual(state["bind"], "0.0.0.0")
+        self.assertEqual(state["upstream_url"], "http://proxy:8080")
+        self.assertEqual(state["pid"], os.getpid())
+
+    def test_load_missing_returns_none(self):
+        from lumen_argus_agent.relay import load_relay_state
+
+        self.assertIsNone(load_relay_state())
+
+    def test_remove(self):
+        from lumen_argus_agent.relay import _remove_relay_state, _write_relay_state, load_relay_state
+
+        config = RelayConfig()
+        _write_relay_state(config)
+        self.assertIsNotNone(load_relay_state())
+
+        _remove_relay_state()
+        self.assertIsNone(load_relay_state())
+
+    def test_stale_pid_cleaned_up(self):
+        """State file with dead PID is automatically removed."""
+        import json
+
+        import lumen_argus_agent.relay as relay_mod
+        from lumen_argus_agent.relay import load_relay_state
+
+        state = {"port": 8070, "bind": "127.0.0.1", "pid": 999999999, "upstream_url": ""}
+        with open(relay_mod._RELAY_STATE_PATH, "w") as f:
+            json.dump(state, f)
+
+        # Dead PID should cause cleanup
+        result = load_relay_state()
+        self.assertIsNone(result)
+        self.assertFalse(os.path.exists(relay_mod._RELAY_STATE_PATH))
 
 
 if __name__ == "__main__":

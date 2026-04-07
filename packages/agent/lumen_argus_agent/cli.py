@@ -102,6 +102,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Behavior when proxy unreachable (default: open)",
     )
     relay_parser.add_argument("--log-level", type=str, default="info", help="Log level (default: info)")
+    relay_parser.add_argument("--install", action="store_true", help="Install as system service (launchd/systemd)")
+    relay_parser.add_argument("--uninstall", action="store_true", help="Remove system service")
+    relay_parser.add_argument("--status", action="store_true", help="Show relay status")
 
     return parser
 
@@ -109,6 +112,19 @@ def _build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 # Command handlers
 # ---------------------------------------------------------------------------
+
+
+def _resolve_relay_url() -> str:
+    """Check if the agent relay is running and return its URL, or empty string."""
+    from lumen_argus_agent.relay import load_relay_state
+
+    state = load_relay_state()
+    if not state:
+        return ""
+    bind = state.get("bind", "127.0.0.1")
+    port = state.get("port", 8070)
+    url = "http://%s:%d" % (bind, port)
+    return url
 
 
 def _run_clients(args: argparse.Namespace) -> None:
@@ -257,8 +273,15 @@ def _run_setup(args: argparse.Namespace) -> None:
             print("Nothing to undo.")
         return
 
+    # Use relay URL if relay is active and user didn't explicitly set --proxy-url
+    proxy_url = args.proxy_url
+    if proxy_url == "http://localhost:8080":
+        relay_url = _resolve_relay_url()
+        if relay_url:
+            proxy_url = relay_url
+
     run_setup(
-        proxy_url=args.proxy_url,
+        proxy_url=proxy_url,
         client_id=args.client,
         non_interactive=args.non_interactive,
         dry_run=args.dry_run,
@@ -407,6 +430,17 @@ def _run_enroll(args: argparse.Namespace) -> None:
 
 
 def _run_relay(args: argparse.Namespace) -> None:
+    # Handle --status, --install, --uninstall before starting relay
+    if getattr(args, "status", False):
+        _relay_status()
+        return
+    if getattr(args, "uninstall", False):
+        _relay_uninstall()
+        return
+    if getattr(args, "install", False):
+        _relay_install(args)
+        return
+
     import asyncio
     import logging
 
@@ -460,6 +494,57 @@ def _run_relay(args: argparse.Namespace) -> None:
     )
 
     asyncio.run(run_relay(config))
+
+
+def _relay_status() -> None:
+    """Print relay service status."""
+    from lumen_argus_core.relay_service import get_service_status
+
+    status = get_service_status()
+    print("Relay status:")
+    print("  Platform:    %s" % status["platform"])
+    print("  Service:     %s" % ("installed" if status["installed"] == "true" else "not installed"))
+    if status.get("service_path"):
+        print("  Service file: %s" % status["service_path"])
+    running = status.get("running", "unknown")
+    print("  Running:     %s" % running)
+    if running == "true":
+        print("  Port:        %s" % status.get("port", ""))
+        print("  Upstream:    %s" % status.get("upstream_url", ""))
+        print("  PID:         %s" % status.get("pid", ""))
+
+
+def _relay_install(args: argparse.Namespace) -> None:
+    """Install relay as system service."""
+    from lumen_argus_core.relay_service import install_service
+
+    upstream = args.upstream or ""
+    path = install_service(upstream=upstream, fail_mode=args.fail_mode, port=args.port)
+    if not path:
+        print("Service install not supported on this platform.")
+        print("Run 'lumen-argus-agent relay' directly instead.")
+        return
+    print("Relay service installed: %s" % path)
+    print("\nTo start the service:")
+    if platform.system() == "Darwin":
+        print("  launchctl load %s" % path)
+    else:
+        print("  systemctl --user daemon-reload")
+        print("  systemctl --user enable --now lumen-argus-relay")
+
+
+def _relay_uninstall() -> None:
+    """Remove relay system service."""
+    from lumen_argus_core.relay_service import uninstall_service
+
+    if not uninstall_service():
+        print("No relay service found to remove.")
+        return
+    print("Relay service removed.")
+    if platform.system() == "Darwin":
+        print("Stop the running service: launchctl unload ~/Library/LaunchAgents/io.lumen-argus.relay.plist")
+    else:
+        print("Stop the running service: systemctl --user stop lumen-argus-relay")
 
 
 def _run_heartbeat(_args: argparse.Namespace) -> None:

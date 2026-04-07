@@ -28,6 +28,9 @@ _FINDING_FILTER_KEYS: list[tuple[str, str]] = [
     ("action", "action"),
     ("finding_type", "finding_type"),
     ("client_name", "client"),
+    ("working_directory", "working_directory"),
+    ("hostname", "hostname"),
+    ("username", "username"),
 ]
 
 
@@ -80,6 +83,15 @@ def handle_dashboard_sessions(params: dict[str, str], store: AnalyticsStore | No
     limit, _ = result
     data = store.get_dashboard_sessions(limit=limit)
     return json_response(200, data)
+
+
+def handle_findings_by_project(params: dict[str, str], store: AnalyticsStore | None) -> tuple[int, bytes]:
+    """Return findings grouped by working_directory."""
+    if not store:
+        return json_response(200, {"projects": []})
+    days = parse_days(params)
+    projects = store.get_by_project(days=days)
+    return json_response(200, {"projects": projects})
 
 
 def handle_stats(params: dict[str, str], store: AnalyticsStore | None) -> tuple[int, bytes]:

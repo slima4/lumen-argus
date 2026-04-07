@@ -795,6 +795,17 @@ class TestTrustedAgentHeaders(unittest.TestCase):
 class TestAnalyticsStoreHostnameUsername(StoreTestCase):
     """Test hostname and username storage in findings."""
 
+    def _finding(self, ftype="aws_access_key", mv="AKIAIOSFODNN7EXAMPLE"):
+        return Finding(
+            detector="secrets",
+            type=ftype,
+            severity="critical",
+            location="messages[0].content",
+            value_preview="AKIA****",
+            matched_value=mv,
+            action="alert",
+        )
+
     def test_record_with_hostname_username(self):
         session = SessionContext(
             session_id="sess-1",
@@ -802,22 +813,76 @@ class TestAnalyticsStoreHostnameUsername(StoreTestCase):
             username="slim",
             working_directory="/dev/proj",
         )
-        f = Finding(
-            detector="secrets",
-            type="aws_access_key",
-            severity="critical",
-            location="messages[0].content",
-            value_preview="AKIA****",
-            matched_value="AKIAIOSFODNN7EXAMPLE",
-            action="alert",
-        )
-        self.store.record_findings([f], provider="anthropic", session=session)
+        self.store.record_findings([self._finding()], provider="anthropic", session=session)
         rows, total = self.store.get_findings_page()
         self.assertEqual(total, 1)
         r = rows[0]
         self.assertEqual(r["hostname"], "macbook-pro")
         self.assertEqual(r["username"], "slim")
         self.assertEqual(r["working_directory"], "/dev/proj")
+
+    def test_filter_by_working_directory_substring(self):
+        """working_directory filter uses LIKE (substring match)."""
+        s1 = SessionContext(session_id="s1", working_directory="/Users/slim/dev/project-a")
+        s2 = SessionContext(session_id="s2", working_directory="/Users/slim/dev/project-b")
+        self.store.record_findings([self._finding(mv="key1")], session=s1)
+        self.store.record_findings([self._finding(mv="key2")], session=s2)
+        rows, total = self.store.get_findings_page(working_directory="project-a")
+        self.assertEqual(total, 1)
+        self.assertIn("project-a", rows[0]["working_directory"])
+
+    def test_filter_by_hostname(self):
+        s1 = SessionContext(session_id="s1", hostname="macbook")
+        s2 = SessionContext(session_id="s2", hostname="linux-dev")
+        self.store.record_findings([self._finding(mv="key1")], session=s1)
+        self.store.record_findings([self._finding(mv="key2")], session=s2)
+        rows, total = self.store.get_findings_page(hostname="macbook")
+        self.assertEqual(total, 1)
+        self.assertEqual(rows[0]["hostname"], "macbook")
+
+    def test_filter_by_username(self):
+        s1 = SessionContext(session_id="s1", username="alice")
+        s2 = SessionContext(session_id="s2", username="bob")
+        self.store.record_findings([self._finding(mv="key1")], session=s1)
+        self.store.record_findings([self._finding(mv="key2")], session=s2)
+        rows, total = self.store.get_findings_page(username="bob")
+        self.assertEqual(total, 1)
+        self.assertEqual(rows[0]["username"], "bob")
+
+    def test_get_by_project(self):
+        """get_by_project returns grouped summary with project name and agents."""
+        s1 = SessionContext(
+            session_id="s1",
+            working_directory="/Users/slim/dev/project-a",
+            client_name="claude_code",
+        )
+        s2 = SessionContext(
+            session_id="s2",
+            working_directory="/Users/slim/dev/project-b",
+            client_name="cursor",
+        )
+        self.store.record_findings([self._finding(mv="key1")], session=s1)
+        self.store.record_findings([self._finding(mv="key2")], session=s1)
+        self.store.record_findings([self._finding(ftype="github_token", mv="key3")], session=s2)
+
+        projects = self.store.get_by_project()
+        self.assertEqual(len(projects), 2)
+
+        # Sorted by finding_count desc
+        proj_a = next(p for p in projects if "project-a" in p["working_directory"])
+        proj_b = next(p for p in projects if "project-b" in p["working_directory"])
+
+        self.assertEqual(proj_a["project_name"], "project-a")
+        self.assertEqual(proj_a["finding_count"], 2)
+        self.assertIn("claude_code", proj_a["agents"])
+
+        self.assertEqual(proj_b["project_name"], "project-b")
+        self.assertEqual(proj_b["finding_count"], 1)
+        self.assertIn("cursor", proj_b["agents"])
+
+    def test_get_by_project_empty(self):
+        projects = self.store.get_by_project()
+        self.assertEqual(projects, [])
 
 
 if __name__ == "__main__":

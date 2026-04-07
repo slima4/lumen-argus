@@ -97,7 +97,9 @@ function renderFindingsTable(){
           document.getElementById('f-sess').value=f.session_id;findPage=0;loadFindings();});
         td.appendChild(link);}
       else if(col.key==='working_directory'){
-        td.textContent=_dirShort(f[col.key]);td.title=f[col.key]||'';}
+        td.textContent=_dirShort(f[col.key])||'\u2014';td.title=f[col.key]||'';}
+      else if(col.key==='hostname'||col.key==='username'||col.key==='git_branch'||col.key==='client_name'){
+        td.textContent=f[col.key]||'\u2014';}
       else td.textContent=f[col.key]!=null?String(f[col.key]):'';
       tr.appendChild(td);}
     tr.addEventListener('click',function(){showDetail(f)});
@@ -118,10 +120,12 @@ function showDetail(f){selectedFindingId=f.id;
   if(f.session_id)fields.push(['Session',f.session_id]);
   if(f.account_id)fields.push(['Account',f.account_id]);
   if(f.device_id)fields.push(['Device',f.device_id]);
-  if(f.working_directory)fields.push(['Directory',f.working_directory]);
+  if(f.working_directory)fields.push(['Project',f.working_directory]);
   if(f.git_branch)fields.push(['Branch',f.git_branch]);
   if(f.os_platform)fields.push(['Platform',f.os_platform]);
-  if(f.client_name)fields.push(['Client',f.client_name]);
+  if(f.hostname)fields.push(['Machine',f.hostname]);
+  if(f.username)fields.push(['User',f.username]);
+  if(f.client_name)fields.push(['Agent',f.client_name]);
   fields.forEach(function(pair){const item=document.createElement('div');item.className='detail-item';
     const lbl=document.createElement('label');lbl.textContent=pair[0];
     const val=document.createElement('div');val.className='val';val.textContent=String(pair[1]);
