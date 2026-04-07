@@ -107,6 +107,16 @@ class TestInjectIdentityHeaders(unittest.TestCase):
         self.assertNotIn("X-Lumen-Argus-Username", headers)
         self.assertEqual(headers["X-Lumen-Argus-Hostname"], "macbook")
 
+    def test_root_cwd_not_injected(self):
+        """Root '/' cwd is meaningless (e.g. Node.js process) — don't send it."""
+        headers: dict[str, str] = {}
+        config = RelayConfig()
+        ctx = CallerContext(working_directory="/", os_platform="darwin")
+        _inject_identity_headers(headers, config, ctx)
+
+        self.assertNotIn("X-Lumen-Argus-Working-Dir", headers)
+        self.assertEqual(headers["X-Lumen-Argus-OS-Platform"], "darwin")
+
     def test_send_hostname_false_omits_header(self):
         headers: dict[str, str] = {}
         config = RelayConfig(send_username=True, send_hostname=False)

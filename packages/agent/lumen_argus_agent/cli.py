@@ -121,10 +121,11 @@ def _resolve_relay_url() -> str:
     state = load_relay_state()
     if not state:
         return ""
-    bind = state.get("bind", "127.0.0.1")
-    port = state.get("port", 8070)
-    url = "http://%s:%d" % (bind, port)
-    return url
+    bind = state.get("bind")
+    port = state.get("port")
+    if not bind or not port:
+        return ""
+    return "http://%s:%d" % (bind, port)
 
 
 def _run_clients(args: argparse.Namespace) -> None:

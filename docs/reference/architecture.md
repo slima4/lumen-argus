@@ -512,6 +512,9 @@ The relay resolves caller context from OS-level APIs, not from system prompt reg
 
 Falls back to static machine context (hostname, username, OS) when PID resolution fails.
 
+!!! note "Working directory on first request"
+    Some AI tools (e.g., Claude Code) don't include the full system prompt in the first 1–2 requests of a new conversation. Since the relay resolves `working_directory` from the OS process cwd — which may be `/` for Node.js-based tools — findings captured on early requests may have an empty `working_directory`. Fields populated from the relay (hostname, username, device_id) are always present. The `working_directory` populates on subsequent requests once the AI tool sends its full system prompt. Findings in the same `session_id` can be correlated to fill in the gap.
+
 ### Fail modes
 
 | Mode | Behavior when proxy unreachable |

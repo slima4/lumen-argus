@@ -249,6 +249,7 @@ class TestHeartbeat(unittest.TestCase):
 
         with (
             patch("lumen_argus_core.telemetry.load_enrollment", return_value=enrollment),
+            patch("lumen_argus_core.telemetry._relay_url_or", side_effect=lambda fb: fb),
             patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report) as mock_detect,
             patch("lumen_argus_core.setup_wizard.protection_status", return_value={"enabled": True}),
             patch("lumen_argus_core.telemetry.urllib.request.urlopen", return_value=mock_resp) as mock_urlopen,

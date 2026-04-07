@@ -45,7 +45,11 @@ def send_heartbeat() -> bool:
     from lumen_argus_core.setup_wizard import protection_status
 
     proxy_url = enrollment.get("proxy_url") or enrollment["server"]
-    report = detect_installed_clients(proxy_url=proxy_url)
+    # When relay is active, tools are configured against the relay URL,
+    # not the remote proxy URL. Use relay URL for accurate detection.
+    detection_url = _relay_url_or(proxy_url)
+    log.info("heartbeat: detecting tools against %s (proxy=%s)", detection_url, proxy_url)
+    report = detect_installed_clients(proxy_url=detection_url)
     prot_status = protection_status()
 
     tools = [
@@ -118,6 +122,42 @@ def send_heartbeat() -> bool:
     except urllib.error.URLError as e:
         log.warning("heartbeat failed: %s", e.reason)
         return False
+
+
+def _relay_url_or(fallback: str) -> str:
+    """Return the relay URL if the agent relay is running, otherwise fallback.
+
+    Reads ~/.lumen-argus/relay.json directly (no agent package import —
+    core must not depend on agent).  Validates PID liveness to avoid
+    stale state.
+    """
+    import os
+
+    state_path = os.path.join(os.path.expanduser("~"), ".lumen-argus", "relay.json")
+    try:
+        with open(state_path, encoding="utf-8") as f:
+            state = json.load(f)
+        pid = state.get("pid", 0)
+        if pid:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                log.debug("relay state file has stale pid=%d — using fallback", pid)
+                return fallback
+        bind = state.get("bind")
+        port = state.get("port")
+        if not bind or not port:
+            log.warning("relay state file missing bind/port — using fallback")
+            return fallback
+        url = "http://%s:%d" % (bind, port)
+        log.debug("heartbeat detection using relay url=%s (pid=%d)", url, pid)
+        return url
+    except FileNotFoundError:
+        log.debug("no relay state file — using proxy url for detection")
+        return fallback
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        log.warning("failed to read relay state: %s — using fallback", exc)
+        return fallback
 
 
 def _check_watch_daemon() -> bool:

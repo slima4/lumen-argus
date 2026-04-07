@@ -417,7 +417,7 @@ def _inject_identity_headers(headers: dict[str, str], config: RelayConfig, ctx: 
         headers["X-Lumen-Argus-Agent-Id"] = config.agent_id
     if config.machine_id:
         headers["X-Lumen-Argus-Device-Id"] = config.machine_id
-    if ctx.working_directory:
+    if ctx.working_directory and ctx.working_directory != "/":
         headers["X-Lumen-Argus-Working-Dir"] = ctx.working_directory
     if ctx.git_branch:
         headers["X-Lumen-Argus-Git-Branch"] = ctx.git_branch

@@ -90,5 +90,39 @@ class TestDetectMCPForHeartbeat(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class TestRelayUrlOr(unittest.TestCase):
+    """Test _relay_url_or — use relay URL when relay is active."""
+
+    def test_no_state_file_returns_fallback(self):
+        from lumen_argus_core.telemetry import _relay_url_or
+
+        with patch("builtins.open", side_effect=FileNotFoundError):
+            result = _relay_url_or("http://proxy:8080")
+        self.assertEqual(result, "http://proxy:8080")
+
+    def test_active_relay_returns_relay_url(self):
+        import json
+        import os
+        from io import StringIO
+
+        from lumen_argus_core.telemetry import _relay_url_or
+
+        state = json.dumps({"bind": "127.0.0.1", "port": 8070, "pid": os.getpid()})
+        with patch("builtins.open", return_value=StringIO(state)):
+            result = _relay_url_or("http://proxy:8080")
+        self.assertEqual(result, "http://127.0.0.1:8070")
+
+    def test_stale_pid_returns_fallback(self):
+        import json
+        from io import StringIO
+
+        from lumen_argus_core.telemetry import _relay_url_or
+
+        state = json.dumps({"bind": "127.0.0.1", "port": 8070, "pid": 999999})
+        with patch("builtins.open", return_value=StringIO(state)):
+            result = _relay_url_or("http://proxy:8080")
+        self.assertEqual(result, "http://proxy:8080")
+
+
 if __name__ == "__main__":
     unittest.main()
