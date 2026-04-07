@@ -98,6 +98,35 @@ class TestInjectIdentityHeaders(unittest.TestCase):
         lumen_headers = [k for k in headers if k.lower().startswith("x-lumen-argus-")]
         self.assertEqual(lumen_headers, [])
 
+    def test_send_username_false_omits_header(self):
+        headers: dict[str, str] = {}
+        config = RelayConfig(send_username=False, send_hostname=True)
+        ctx = CallerContext(hostname="macbook", username="slim")
+        _inject_identity_headers(headers, config, ctx)
+
+        self.assertNotIn("X-Lumen-Argus-Username", headers)
+        self.assertEqual(headers["X-Lumen-Argus-Hostname"], "macbook")
+
+    def test_send_hostname_false_omits_header(self):
+        headers: dict[str, str] = {}
+        config = RelayConfig(send_username=True, send_hostname=False)
+        ctx = CallerContext(hostname="macbook", username="slim")
+        _inject_identity_headers(headers, config, ctx)
+
+        self.assertEqual(headers["X-Lumen-Argus-Username"], "slim")
+        self.assertNotIn("X-Lumen-Argus-Hostname", headers)
+
+    def test_both_privacy_flags_false(self):
+        headers: dict[str, str] = {}
+        config = RelayConfig(send_username=False, send_hostname=False)
+        ctx = CallerContext(hostname="macbook", username="slim", os_platform="darwin")
+        _inject_identity_headers(headers, config, ctx)
+
+        self.assertNotIn("X-Lumen-Argus-Username", headers)
+        self.assertNotIn("X-Lumen-Argus-Hostname", headers)
+        # Other headers still injected
+        self.assertEqual(headers["X-Lumen-Argus-OS-Platform"], "darwin")
+
     def test_does_not_overwrite_existing(self):
         headers = {"Authorization": "Bearer sk-ant-123", "x-api-key": "test"}
         config = RelayConfig(agent_id="agent_test")

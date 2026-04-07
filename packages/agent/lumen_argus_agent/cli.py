@@ -464,11 +464,13 @@ def _run_relay(args: argparse.Namespace) -> None:
     if not upstream:
         upstream = "http://localhost:8080"
 
-    # Load enrollment identity
+    # Load enrollment identity and policy
     agent_id = ""
     agent_token = ""
     machine_id = ""
     fail_mode = args.fail_mode
+    send_username = True
+    send_hostname = True
     from lumen_argus_core.enrollment import load_enrollment
 
     enrollment = load_enrollment()
@@ -476,12 +478,17 @@ def _run_relay(args: argparse.Namespace) -> None:
         agent_id = enrollment.get("agent_id", "")
         agent_token = enrollment.get("agent_token", "")
         machine_id = enrollment.get("machine_id", "")
-        # Enrollment policy can override fail_mode
+        # Enrollment policy can override relay behavior
         policy = enrollment.get("policy", {})
-        if isinstance(policy, dict) and "fail_mode" in policy:
-            policy_fm = policy["fail_mode"]
-            if policy_fm in ("open", "closed"):
-                fail_mode = policy_fm
+        if isinstance(policy, dict):
+            if "fail_mode" in policy:
+                policy_fm = policy["fail_mode"]
+                if policy_fm in ("open", "closed"):
+                    fail_mode = policy_fm
+            if "relay_send_username" in policy:
+                send_username = bool(policy["relay_send_username"])
+            if "relay_send_hostname" in policy:
+                send_hostname = bool(policy["relay_send_hostname"])
 
     config = RelayConfig(
         bind=args.host,
@@ -491,6 +498,8 @@ def _run_relay(args: argparse.Namespace) -> None:
         agent_id=agent_id,
         agent_token=agent_token,
         machine_id=machine_id,
+        send_username=send_username,
+        send_hostname=send_hostname,
     )
 
     asyncio.run(run_relay(config))

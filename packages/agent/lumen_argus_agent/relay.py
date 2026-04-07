@@ -71,6 +71,8 @@ class RelayConfig:
     agent_id: str = ""
     agent_token: str = ""
     machine_id: str = ""
+    send_username: bool = True
+    send_hostname: bool = True
     timeout: int = 150
     max_connections: int = 20
     health_interval: int = 5
@@ -421,9 +423,9 @@ def _inject_identity_headers(headers: dict[str, str], config: RelayConfig, ctx: 
         headers["X-Lumen-Argus-Git-Branch"] = ctx.git_branch
     if ctx.os_platform:
         headers["X-Lumen-Argus-OS-Platform"] = ctx.os_platform
-    if ctx.hostname:
+    if ctx.hostname and config.send_hostname:
         headers["X-Lumen-Argus-Hostname"] = ctx.hostname
-    if ctx.username:
+    if ctx.username and config.send_username:
         headers["X-Lumen-Argus-Username"] = ctx.username
     if ctx.client_pid:
         headers["X-Lumen-Argus-Client-PID"] = str(ctx.client_pid)
