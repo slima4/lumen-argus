@@ -23,6 +23,7 @@ from lumen_argus.async_proxy._response import (
 from lumen_argus.async_proxy._server import _PROXY_KEY, AsyncArgusProxy
 from lumen_argus.async_proxy._ssl import _HOP_BY_HOP
 from lumen_argus.async_proxy._websocket import _handle_websocket
+from lumen_argus.auth import AuthenticationError
 from lumen_argus.models import ScanResult, SessionContext
 from lumen_argus.session import extract_session as _extract_session
 
@@ -136,13 +137,20 @@ async def _do_forward(
         else:
             is_streaming = False
 
-        # Check if request comes from authenticated agent relay
+        # Check if request comes from authenticated agent relay.
+        # AuthenticationError propagates — Pro uses it to enforce relay_required.
         trusted_agent = False
         auth_provider = server.extensions.get_agent_auth_provider() if server.extensions else None
         if auth_provider:
             try:
                 agent_identity = await auth_provider.authenticate(headers_dict)
                 trusted_agent = agent_identity is not None
+            except AuthenticationError:
+                log.info("#%d agent auth rejected", request_id)
+                return web.json_response(
+                    {"error": {"type": "authentication_error", "message": "Agent authentication failed"}},
+                    status=401,
+                )
             except Exception:
                 log.debug("#%d agent auth check failed", request_id, exc_info=True)
 
