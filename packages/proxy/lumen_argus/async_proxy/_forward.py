@@ -106,12 +106,25 @@ async def _do_forward(
 
         # Detect provider and determine upstream
         headers_dict = {k.lower(): v for k, v in request.headers.items()}
-        host, port, use_ssl, provider = server.router.route(path, headers_dict)
+
+        # Named upstream routing: /_upstream/<name>/... → configured upstream
+        inbound_path = path
+        named = server.router.resolve_named_upstream(path)
+        if named:
+            host, port, use_ssl, provider, path = named
+            # Named upstreams use OpenAI-compatible API format for session
+            # extraction (system prompt parsing, user field, fingerprinting).
+            # Keep the upstream name in provider for routing/audit, but use
+            # the API format provider for session context extraction.
+            api_provider = server.router.detect_api_provider(path)
+        else:
+            host, port, use_ssl, provider = server.router.route(path, headers_dict)
+            api_provider = provider
         log.debug(
             "#%d %s %s -> %s:%d (ssl=%s, provider=%s, %d bytes)",
             request_id,
             method,
-            path,
+            inbound_path,
             host,
             port,
             use_ssl,
@@ -161,14 +174,15 @@ async def _do_forward(
         if not trusted_agent:
             headers_dict = {k: v for k, v in headers_dict.items() if not k.startswith("x-lumen-argus-")}
 
-        # Extract session context
+        # Extract session context — use api_provider for correct system prompt
+        # parsing (e.g. "openai" format for gateway providers like Zen/Groq).
         source_ip = request.remote or ""
         session = _extract_session(
-            req_data, provider, headers_dict, source_ip, hmac_key=server.hmac_key, trusted_agent=trusted_agent
+            req_data, api_provider, headers_dict, source_ip, hmac_key=server.hmac_key, trusted_agent=trusted_agent
         )
 
         # Scan request body
-        scan_result = await scan_request_body(server, request_id, body, provider, model, session, span)
+        scan_result = await scan_request_body(server, request_id, body, api_provider, model, session, span)
 
         # MCP-aware scanning
         scan_result, _mcp_info, _mcp_method, mcp_block_resp = await scan_mcp_request(

@@ -182,12 +182,15 @@ CLIENT_REGISTRY: list[ClientDef] = [
             config_type=ProxyConfigType.ENV_VAR,
             env_var="OPENAI_BASE_URL",
             setup_cmd="OPENAI_BASE_URL=http://localhost:8080 opencode",
-            setup_instructions="Set OPENAI_BASE_URL to the proxy URL, or set baseURL in opencode.json.",
+            setup_instructions=(
+                "Set OPENAI_BASE_URL for OpenAI models. For Anthropic models, also set ANTHROPIC_BASE_URL. "
+                "For other providers (Zen, Go, etc.), set per-provider baseURL in opencode.json."
+            ),
             alt_config=ProxyConfig(
-                config_type=ProxyConfigType.CONFIG_FILE,
-                config_file_path="~/.config/opencode/config.json",
-                config_key="baseURL",
-                setup_instructions='Set "baseURL" in ~/.config/opencode/config.json per provider.',
+                config_type=ProxyConfigType.ENV_VAR,
+                env_var="ANTHROPIC_BASE_URL",
+                setup_cmd="ANTHROPIC_BASE_URL=http://localhost:8080 opencode",
+                setup_instructions="Set ANTHROPIC_BASE_URL for Anthropic model routing.",
             ),
         ),
         website="https://opencode.ai",

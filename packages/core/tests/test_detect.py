@@ -886,5 +886,106 @@ class TestNpmFnmVolta(unittest.TestCase):
         self.assertEqual(result.version, "0.3.0")
 
 
+class TestNavigateJsonPath(unittest.TestCase):
+    """Test _navigate_json_path — dot-path key navigation in JSON."""
+
+    def test_top_level_key(self):
+        from lumen_argus_core.detect import _navigate_json_path
+
+        data = {"baseURL": "http://proxy:8080"}
+        self.assertEqual(_navigate_json_path(data, "baseURL"), "http://proxy:8080")
+
+    def test_nested_key(self):
+        from lumen_argus_core.detect import _navigate_json_path
+
+        data = {"provider": {"openai": {"options": {"baseURL": "http://proxy:8080"}}}}
+        self.assertEqual(
+            _navigate_json_path(data, "provider.openai.options.baseURL"),
+            "http://proxy:8080",
+        )
+
+    def test_missing_segment_returns_empty(self):
+        from lumen_argus_core.detect import _navigate_json_path
+
+        data = {"provider": {"openai": {}}}
+        self.assertEqual(_navigate_json_path(data, "provider.openai.options.baseURL"), "")
+
+    def test_non_dict_segment_returns_empty(self):
+        from lumen_argus_core.detect import _navigate_json_path
+
+        data = {"provider": "string_value"}
+        self.assertEqual(_navigate_json_path(data, "provider.openai.options"), "")
+
+    def test_none_value_returns_empty(self):
+        from lumen_argus_core.detect import _navigate_json_path
+
+        data = {"key": None}
+        self.assertEqual(_navigate_json_path(data, "key"), "")
+
+
+class TestCheckConfigFileDotPath(unittest.TestCase):
+    """Test _check_config_file with dot-path keys for nested JSON."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def test_nested_baseurl_detected(self):
+        from lumen_argus_core.detect import _check_config_file
+
+        cfg = os.path.join(self.tmpdir, "opencode.json")
+        data = {"provider": {"openai": {"options": {"baseURL": "http://localhost:8080"}}}}
+        with open(cfg, "w") as f:
+            json.dump(data, f)
+
+        result = _check_config_file(cfg, "provider.openai.options.baseURL", "http://localhost:8080")
+        self.assertIsNotNone(result)
+        is_configured, value, _path = result
+        self.assertTrue(is_configured)
+        self.assertEqual(value, "http://localhost:8080")
+
+    def test_nested_key_not_configured(self):
+        from lumen_argus_core.detect import _check_config_file
+
+        cfg = os.path.join(self.tmpdir, "opencode.json")
+        data = {"provider": {"openai": {"options": {"baseURL": "https://api.openai.com"}}}}
+        with open(cfg, "w") as f:
+            json.dump(data, f)
+
+        result = _check_config_file(cfg, "provider.openai.options.baseURL", "http://localhost:8080")
+        self.assertIsNotNone(result)
+        is_configured, value, _ = result
+        self.assertFalse(is_configured)
+        self.assertEqual(value, "https://api.openai.com")
+
+    def test_missing_nested_key_returns_none(self):
+        from lumen_argus_core.detect import _check_config_file
+
+        cfg = os.path.join(self.tmpdir, "opencode.json")
+        data = {"$schema": "https://opencode.ai/config.json"}
+        with open(cfg, "w") as f:
+            json.dump(data, f)
+
+        result = _check_config_file(cfg, "provider.openai.options.baseURL", "http://localhost:8080")
+        self.assertIsNone(result)
+
+    def test_backward_compat_top_level_key(self):
+        """Existing CONFIG_FILE clients with top-level keys still work."""
+        from lumen_argus_core.detect import _check_config_file
+
+        cfg = os.path.join(self.tmpdir, "config.json")
+        data = {"apiBase": "http://localhost:8080"}
+        with open(cfg, "w") as f:
+            json.dump(data, f)
+
+        result = _check_config_file(cfg, "apiBase", "http://localhost:8080")
+        self.assertIsNotNone(result)
+        is_configured, value, _ = result
+        self.assertTrue(is_configured)
+        self.assertEqual(value, "http://localhost:8080")
+
+
 if __name__ == "__main__":
     unittest.main()

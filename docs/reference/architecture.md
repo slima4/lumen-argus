@@ -42,6 +42,31 @@ The proxy uses `aiohttp.web` with non-blocking I/O. Each request is handled by a
 | **WebSocket** | Native upgrade on same port (`/ws?url=ws://target`) — no separate port needed |
 | **Thread safety** | Free-threaded Python 3.13+ safe — `ScannerPipeline.scan()` snapshots shared references under `_reload_lock`, `_active_requests` uses lock |
 
+### Provider routing
+
+**Module:** `lumen_argus/provider.py`
+
+The `ProviderRouter` determines which upstream API to forward to:
+
+| Mode | Detection | Example |
+|------|-----------|---------|
+| **Auto-detect** | Path + header heuristics | `/v1/messages` + `x-api-key` → Anthropic |
+| **Named upstream** | `/_upstream/<name>/` path prefix | `/_upstream/opencode_zen/chat/completions` → configured URL |
+
+Auto-detect covers Anthropic, OpenAI, and Gemini. Named upstream routing handles gateway providers (OpenCode Zen/Go, Groq, OpenRouter, etc.) whose API endpoints are not one of the three built-in targets.
+
+Well-known gateway upstreams are built-in from `opencode_providers.py` — no manual `config.yaml` needed. The setup wizard / `enable_protection()` auto-configures `~/.config/opencode/opencode.json` with per-provider `baseURL` overrides pointing to the proxy. Standard providers point directly to the proxy; gateway providers use the `/_upstream/<name>` prefix.
+
+Custom upstreams can also be added via `config.yaml`:
+
+```yaml
+proxy:
+  upstream:
+    my_provider: https://api.myprovider.com/v1
+```
+
+Then point the tool's `baseURL` at `http://proxy:8080/_upstream/my_provider`. The proxy strips the prefix and forwards to the configured upstream with the remaining path appended.
+
 !!! info "Backpressure"
     The proxy limits concurrent upstream connections via `aiohttp.TCPConnector(limit=max_connections)`.
 

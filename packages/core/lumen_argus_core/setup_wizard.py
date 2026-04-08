@@ -20,9 +20,10 @@ import os
 import platform
 import re
 import shutil
+import tempfile
 from dataclasses import asdict, dataclass
 
-from lumen_argus_core.detect import _SHELL_PROFILES, detect_installed_clients, load_jsonc
+from lumen_argus_core.detect import _SHELL_PROFILES, _strip_jsonc_comments, detect_installed_clients, load_jsonc
 from lumen_argus_core.time_utils import now_iso
 
 log = logging.getLogger("argus.setup")
@@ -106,6 +107,23 @@ def _backup_file(file_path: str) -> str:
         log.error("backup failed for %s: %s", file_path, e, exc_info=True)
         raise
     return backup_path
+
+
+def _atomic_write_json(path: str, data: dict[str, object]) -> None:
+    """Write JSON to a file atomically via write-to-temp-then-rename."""
+    dir_name = os.path.dirname(path)
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _save_manifest(changes: list[SetupChange]) -> None:
@@ -395,6 +413,9 @@ def add_env_to_shell_profile(
 def enable_protection(proxy_url: str = "http://localhost:8080") -> dict[str, object]:
     """Write all configured tool env vars to ~/.lumen-argus/env.
 
+    Also writes per-provider baseURL overrides to opencode.json if OpenCode
+    is installed.
+
     Returns status dict with enabled flag and tool count.
     """
     from lumen_argus_core.clients import CLIENT_REGISTRY, ProxyConfigType
@@ -408,17 +429,25 @@ def enable_protection(proxy_url: str = "http://localhost:8080") -> dict[str, obj
                 entries.append((pc.alt_config.env_var, proxy_url, client.id))
 
     write_env_file(entries)
+
+    # Configure OpenCode per-provider baseURLs
+    opencode_change = configure_opencode(proxy_url)
+    if opencode_change:
+        log.info("OpenCode providers configured for %s", proxy_url)
+
     log.info("protection enabled: %d env var(s) for %s", len(entries), proxy_url)
     return {"enabled": True, "env_file": _ENV_FILE, "env_vars_set": len(entries)}
 
 
 def disable_protection() -> dict[str, object]:
-    """Truncate ~/.lumen-argus/env to disable all routing.
+    """Truncate ~/.lumen-argus/env and remove OpenCode overrides.
 
     Returns status dict.
     """
     # Write empty file atomically via write_env_file
     write_env_file([])
+    # Remove OpenCode per-provider overrides
+    unconfigure_opencode()
     return {"enabled": False, "env_file": _ENV_FILE, "env_vars_set": 0}
 
 
@@ -500,6 +529,219 @@ def update_ide_settings(
         detail="%s=%s" % (key, value),
         backup_path=backup_path,
     )
+
+
+# ---------------------------------------------------------------------------
+# OpenCode per-provider config
+# ---------------------------------------------------------------------------
+
+# Tracking file for provider IDs we configured (outside opencode.json to
+# avoid schema validation errors — OpenCode rejects unknown keys).
+_OPENCODE_TRACKING_FILE = os.path.join(os.path.expanduser("~"), ".lumen-argus", "opencode_providers.json")
+
+
+def configure_opencode(
+    proxy_url: str,
+    dry_run: bool = False,
+) -> SetupChange | None:
+    """Write per-provider baseURL overrides to opencode.json.
+
+    Merges provider entries into the existing config.  Preserves all
+    user-defined keys.  Tracks which providers we configured in a
+    separate file (``~/.lumen-argus/opencode_providers.json``) so
+    undo can identify and remove only our overrides.
+
+    Returns SetupChange on success, None if nothing changed.
+    """
+    from lumen_argus_core.opencode_providers import OPENCODE_CONFIG_PATH, build_provider_overrides
+
+    expanded = os.path.expanduser(OPENCODE_CONFIG_PATH)
+
+    # Load existing config (or start fresh).
+    # Read directly instead of load_jsonc() to get proper error handling.
+    data: dict[str, object] = {}
+    if os.path.isfile(expanded):
+        try:
+            with open(expanded, "r", encoding="utf-8") as f:
+                raw = f.read()
+            # Strip JSONC comments (// and /* */) before parsing
+            data = json.loads(_strip_jsonc_comments(raw))
+            if not isinstance(data, dict):
+                data = {}
+        except (json.JSONDecodeError, OSError) as e:
+            log.error("could not parse %s — skipping OpenCode config: %s", OPENCODE_CONFIG_PATH, e)
+            return None
+
+    overrides = build_provider_overrides(proxy_url)
+    existing_providers = data.get("provider", {})
+    if not isinstance(existing_providers, dict):
+        existing_providers = {}
+
+    tracked = _load_opencode_tracking()
+    changed = False
+    configured_ids: list[str] = []
+    for provider_id, override in overrides.items():
+        entry = existing_providers.get(provider_id, {})
+        if not isinstance(entry, dict):
+            entry = {}
+        options = entry.get("options", {})
+        if not isinstance(options, dict):
+            options = {}
+        override_options: dict[str, str] = override["options"]  # type: ignore[assignment]
+        new_url = override_options["baseURL"]
+        if options.get("baseURL") == new_url and provider_id in tracked:
+            configured_ids.append(provider_id)
+            continue  # already configured by us
+        options["baseURL"] = new_url
+        entry["options"] = options
+        existing_providers[provider_id] = entry
+        configured_ids.append(provider_id)
+        changed = True
+
+    if not changed:
+        log.info("OpenCode providers already configured for %s", proxy_url)
+        return None
+
+    data["provider"] = existing_providers
+
+    if dry_run:
+        log.info("[dry-run] would write %d provider overrides to %s", len(overrides), OPENCODE_CONFIG_PATH)
+        return SetupChange(
+            timestamp=now_iso(),
+            client_id="opencode",
+            method="config_file",
+            file=OPENCODE_CONFIG_PATH,
+            detail="%d provider baseURL overrides" % len(overrides),
+        )
+
+    # Ensure parent directory exists
+    os.makedirs(os.path.dirname(expanded), exist_ok=True)
+
+    # Backup existing file (JSON comments will be lost — backup preserves original)
+    backup_path = ""
+    if os.path.isfile(expanded):
+        try:
+            backup_path = _backup_file(expanded)
+            log.info("backed up %s (JSONC comments will not be preserved in rewrite)", expanded)
+        except OSError as e:
+            log.error("cannot proceed without backup for %s: %s", expanded, e)
+            return None
+
+    try:
+        _atomic_write_json(expanded, data)
+        log.info("wrote %d provider overrides to %s", len(overrides), expanded)
+    except OSError as e:
+        log.error("could not write %s: %s", expanded, e, exc_info=True)
+        return None
+
+    # Save tracking file
+    _save_opencode_tracking(configured_ids, proxy_url)
+
+    return SetupChange(
+        timestamp=now_iso(),
+        client_id="opencode",
+        method="config_file",
+        file=OPENCODE_CONFIG_PATH,
+        detail="%d provider baseURL overrides" % len(overrides),
+        backup_path=backup_path,
+    )
+
+
+def unconfigure_opencode() -> int:
+    """Remove lumen-argus provider overrides from opencode.json.
+
+    Only removes entries tracked in ``~/.lumen-argus/opencode_providers.json``.
+    Returns the number of providers cleaned up.
+    """
+    from lumen_argus_core.opencode_providers import OPENCODE_CONFIG_PATH
+
+    tracked = _load_opencode_tracking()
+    if not tracked:
+        return 0
+
+    expanded = os.path.expanduser(OPENCODE_CONFIG_PATH)
+    if not os.path.isfile(expanded):
+        _remove_opencode_tracking()
+        return 0
+
+    data = load_jsonc(expanded)
+    if not data:
+        _remove_opencode_tracking()
+        return 0
+
+    providers = data.get("provider", {})
+    if not isinstance(providers, dict):
+        _remove_opencode_tracking()
+        return 0
+
+    cleaned = 0
+    to_remove = []
+    for provider_id in tracked:
+        entry = providers.get(provider_id)
+        if not isinstance(entry, dict):
+            continue
+        # Remove our baseURL override but keep other user settings
+        options = entry.get("options", {})
+        if isinstance(options, dict):
+            options.pop("baseURL", None)
+            if not options:
+                entry.pop("options", None)
+        # If nothing left in the entry, schedule for removal
+        if not entry:
+            to_remove.append(provider_id)
+        cleaned += 1
+
+    for pid in to_remove:
+        del providers[pid]
+
+    if not providers:
+        data.pop("provider", None)
+
+    if cleaned == 0:
+        _remove_opencode_tracking()
+        return 0
+
+    try:
+        _backup_file(expanded)
+        _atomic_write_json(expanded, data)
+        log.info("removed %d lumen-argus provider override(s) from %s", cleaned, expanded)
+    except OSError as e:
+        log.error("could not write %s during undo: %s", expanded, e, exc_info=True)
+        return 0
+
+    _remove_opencode_tracking()
+    return cleaned
+
+
+def _load_opencode_tracking() -> set[str]:
+    """Load the set of provider IDs we configured."""
+    try:
+        with open(_OPENCODE_TRACKING_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return set(data.get("providers", []))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return set()
+
+
+def _save_opencode_tracking(provider_ids: list[str], proxy_url: str) -> None:
+    """Save the set of provider IDs we configured."""
+    os.makedirs(os.path.dirname(_OPENCODE_TRACKING_FILE), exist_ok=True)
+    try:
+        with open(_OPENCODE_TRACKING_FILE, "w", encoding="utf-8") as f:
+            json.dump({"providers": sorted(provider_ids), "proxy_url": proxy_url}, f, indent=2)
+            f.write("\n")
+    except OSError as e:
+        log.warning("could not save OpenCode tracking file: %s", e)
+
+
+def _remove_opencode_tracking() -> None:
+    """Remove the tracking file."""
+    try:
+        os.remove(_OPENCODE_TRACKING_FILE)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log.warning("could not remove OpenCode tracking file: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -657,6 +899,10 @@ def undo_setup() -> int:
         except (json.JSONDecodeError, OSError) as e:
             log.error("could not process manifest for undo: %s", e, exc_info=True)
 
+    # Strategy 4: Remove OpenCode per-provider overrides
+    opencode_cleaned = unconfigure_opencode()
+    reverted += opencode_cleaned
+
     if reverted == 0:
         log.info("nothing to undo — no managed configuration found")
     else:
@@ -743,6 +989,16 @@ def run_setup(
                         print("  Added to %s" % _ENV_FILE)
                 else:
                     print("  Skipped (already set)")
+
+            # OpenCode: also configure per-provider baseURLs in opencode.json
+            if target.client_id == "opencode":
+                oc_change = configure_opencode(proxy_url, dry_run=dry_run)
+                if oc_change:
+                    changes.append(oc_change)
+                    if not dry_run:
+                        from lumen_argus_core.opencode_providers import OPENCODE_CONFIG_PATH
+
+                        print("  Configured all providers in %s" % OPENCODE_CONFIG_PATH)
 
         elif pc.config_type == ProxyConfigType.IDE_SETTINGS:
             settings_file = _find_ide_settings(target.install_path)

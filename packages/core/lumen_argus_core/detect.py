@@ -497,6 +497,9 @@ def _detect_single_client(
         # Also check alt_config env var (e.g., Aider's ANTHROPIC_BASE_URL)
         if not detected.proxy_configured and pc.alt_config and pc.alt_config.config_type == ProxyConfigType.ENV_VAR:
             _check_env_var_config(pc.alt_config.env_var, client.id, shell_env, proxy_url, detected)
+        # OpenCode: also check per-provider baseURL in opencode.json
+        if not detected.proxy_configured and client.id == "opencode":
+            _check_opencode_config(proxy_url, detected)
 
     elif pc.config_type == ProxyConfigType.IDE_SETTINGS:
         ide_result = _check_ide_proxy_settings(pc.ide_settings_key, proxy_url, settings_cache)
@@ -537,21 +540,72 @@ def _check_env_var_config(
 
 
 def _check_config_file(config_path: str, config_key: str, proxy_url: str) -> tuple[bool, str, str] | None:
-    """Check a tool-specific config file for proxy URL configuration."""
+    """Check a tool-specific config file for proxy URL configuration.
+
+    Supports dot-path keys for nested JSON (e.g. ``provider.openai.options.baseURL``).
+    """
     expanded = os.path.expanduser(config_path)
     if not os.path.isfile(expanded):
         return None
     try:
         with open(expanded, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # Simple top-level key lookup
-        value = data.get(config_key, "")
+        value = _navigate_json_path(data, config_key)
         if isinstance(value, str) and value:
             is_configured = bool(proxy_url and proxy_url in value)
             return is_configured, value, expanded
     except (json.JSONDecodeError, OSError) as e:
         log.debug("could not read config file %s: %s", expanded, e)
     return None
+
+
+def _navigate_json_path(data: Any, key: str) -> Any:
+    """Navigate a dot-separated key path in a JSON object.
+
+    Returns the value at the path, or ``""`` if any segment is missing.
+    Single-segment keys fall back to a simple ``dict.get()`` for backward
+    compatibility.
+    """
+    obj: Any = data
+    for segment in key.split("."):
+        if isinstance(obj, dict):
+            obj = obj.get(segment)
+        else:
+            return ""
+    return obj if obj is not None else ""
+
+
+def _check_opencode_config(proxy_url: str, detected: DetectedClient) -> None:
+    """Check opencode.json for per-provider baseURL overrides pointing to our proxy.
+
+    Considers any provider whose ``options.baseURL`` contains the proxy URL,
+    regardless of whether the ``_lumen_argus`` marker is present.  This
+    recognises both wizard-managed and manually configured setups.
+    """
+    from lumen_argus_core.opencode_providers import OPENCODE_CONFIG_PATH
+
+    expanded = os.path.expanduser(OPENCODE_CONFIG_PATH)
+    if not os.path.isfile(expanded):
+        return
+    try:
+        with open(expanded, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return
+
+    providers = data.get("provider", {})
+    if not isinstance(providers, dict):
+        return
+
+    for entry in providers.values():
+        if not isinstance(entry, dict):
+            continue
+        base_url = _navigate_json_path(entry, "options.baseURL")
+        if isinstance(base_url, str) and proxy_url and proxy_url in base_url:
+            detected.proxy_url = base_url
+            detected.proxy_config_location = expanded
+            detected.proxy_configured = True
+            return
 
 
 # ---------------------------------------------------------------------------

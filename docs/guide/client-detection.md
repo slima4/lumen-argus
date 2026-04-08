@@ -407,7 +407,7 @@ All 27 agents in the built-in registry, with their proxy configuration and detec
 | GitHub Copilot CLI | `COPILOT_PROVIDER_BASE_URL` | env var | binary, brew |
 | Aider | `OPENAI_BASE_URL` | env var | binary, pip, brew |
 | Codex CLI | `OPENAI_BASE_URL` | env var | binary, npm |
-| OpenCode | `OPENAI_BASE_URL` | env var | binary, npm |
+| OpenCode | env vars + `opencode.json` per-provider `baseURL` | env var + config file | binary, npm |
 | Gemini CLI | `GEMINI_BASE_URL` | env var | binary, npm, brew |
 | Cursor | Manual (IDE settings UI) | manual | binary, app bundle |
 | GitHub Copilot | `http.proxy` (forward proxy) | IDE settings | VS Code, JetBrains, Neovim |
