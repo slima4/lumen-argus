@@ -119,10 +119,12 @@ CLIENT_REGISTRY: list[ClientDef] = [
         provider="multi",
         ua_prefixes=("copilot/",),
         proxy_config=ProxyConfig(
-            config_type=ProxyConfigType.ENV_VAR,
-            env_var="COPILOT_PROVIDER_BASE_URL",
-            setup_cmd="COPILOT_PROVIDER_BASE_URL=http://localhost:8080 copilot",
-            setup_instructions="Set COPILOT_PROVIDER_BASE_URL to the proxy URL.",
+            config_type=ProxyConfigType.UNSUPPORTED,
+            setup_instructions=(
+                "Copilot CLI routes through GitHub's servers with GitHub auth. "
+                "Setting COPILOT_PROVIDER_BASE_URL activates BYOK mode and breaks GitHub auth. "
+                "Copilot CLI supports HTTPS_PROXY for forward proxy interception."
+            ),
         ),
         website="https://github.com/features/copilot/cli",
         detect_binary=("copilot",),

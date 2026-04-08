@@ -60,18 +60,18 @@ class TestRegistryIntegrity(unittest.TestCase):
         counts: dict[ProxyConfigType, int] = {}
         for c in CLIENT_REGISTRY:
             counts[c.proxy_config.config_type] = counts.get(c.proxy_config.config_type, 0) + 1
-        self.assertEqual(counts[ProxyConfigType.ENV_VAR], 6)
+        self.assertEqual(counts[ProxyConfigType.ENV_VAR], 5)
         self.assertEqual(counts[ProxyConfigType.IDE_SETTINGS], 2)
         self.assertEqual(counts[ProxyConfigType.CONFIG_FILE], 1)
         self.assertEqual(counts[ProxyConfigType.MANUAL], 7)
-        self.assertEqual(counts[ProxyConfigType.UNSUPPORTED], 11)
+        self.assertEqual(counts[ProxyConfigType.UNSUPPORTED], 12)
 
     def test_proxy_env_vars_derived(self):
         """PROXY_ENV_VARS should be derived from registry, not hardcoded."""
         self.assertIn("ANTHROPIC_BASE_URL", PROXY_ENV_VARS)
         self.assertIn("OPENAI_BASE_URL", PROXY_ENV_VARS)
-        self.assertIn("COPILOT_PROVIDER_BASE_URL", PROXY_ENV_VARS)
         self.assertIn("GEMINI_BASE_URL", PROXY_ENV_VARS)
+        self.assertNotIn("COPILOT_PROVIDER_BASE_URL", PROXY_ENV_VARS)
 
     def test_prefixes_are_lowercase(self):
         for c in CLIENT_REGISTRY:
