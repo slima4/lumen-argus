@@ -55,7 +55,7 @@ The `ProviderRouter` determines which upstream API to forward to:
 
 Auto-detect covers Anthropic, OpenAI, and Gemini. Named upstream routing handles gateway providers (OpenCode Zen/Go, Groq, OpenRouter, etc.) whose API endpoints are not one of the three built-in targets.
 
-Well-known gateway upstreams are built-in from `opencode_providers.py` — no manual `config.yaml` needed. The setup wizard / `enable_protection()` auto-configures `~/.config/opencode/opencode.json` with per-provider `baseURL` overrides pointing to the proxy. Standard providers point directly to the proxy; gateway providers use the `/_upstream/<name>` prefix.
+Well-known gateway upstreams are built-in from `opencode_providers.py` — no manual `config.yaml` needed. The setup wizard / `enable_protection()` auto-configures `opencode.json` with per-provider `baseURL` overrides pointing to the proxy. Standard providers point directly to the proxy; gateway providers use the `/_upstream/<name>` prefix. Supports `managed=True` for enterprise MDM — writes to `/Library/Application Support/opencode/` (macOS) or `/etc/opencode/` (Linux), which has the highest priority in OpenCode's config merge chain and cannot be overridden by user or project configs.
 
 Custom upstreams can also be added via `config.yaml`:
 

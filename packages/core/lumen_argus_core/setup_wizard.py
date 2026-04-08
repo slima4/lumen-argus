@@ -540,9 +540,22 @@ def update_ide_settings(
 _OPENCODE_TRACKING_FILE = os.path.join(os.path.expanduser("~"), ".lumen-argus", "opencode_providers.json")
 
 
+def _resolve_opencode_config_path(managed: bool, user_path: str, managed_paths: dict[str, str]) -> str:
+    """Return the OpenCode config path based on managed flag and platform."""
+    if not managed:
+        return user_path
+    plat = platform.system().lower()
+    path = managed_paths.get(plat)
+    if not path:
+        log.warning("no managed OpenCode config path for platform %s — using user path", plat)
+        return user_path
+    return path
+
+
 def configure_opencode(
     proxy_url: str,
     dry_run: bool = False,
+    managed: bool = False,
 ) -> SetupChange | None:
     """Write per-provider baseURL overrides to opencode.json.
 
@@ -551,11 +564,24 @@ def configure_opencode(
     separate file (``~/.lumen-argus/opencode_providers.json``) so
     undo can identify and remove only our overrides.
 
+    Args:
+        proxy_url: Proxy (or relay) base URL.
+        dry_run: Show what would change without modifying files.
+        managed: Write to the system-level managed config path instead
+            of the user-level path.  Managed configs have the highest
+            priority in OpenCode's merge chain — they cannot be overridden
+            by user or project configs.  Requires elevated privileges.
+
     Returns SetupChange on success, None if nothing changed.
     """
-    from lumen_argus_core.opencode_providers import OPENCODE_CONFIG_PATH, build_provider_overrides
+    from lumen_argus_core.opencode_providers import (
+        OPENCODE_CONFIG_PATH,
+        OPENCODE_MANAGED_PATHS,
+        build_provider_overrides,
+    )
 
-    expanded = os.path.expanduser(OPENCODE_CONFIG_PATH)
+    config_path = _resolve_opencode_config_path(managed, OPENCODE_CONFIG_PATH, OPENCODE_MANAGED_PATHS)
+    expanded = os.path.expanduser(config_path)
 
     # Load existing config (or start fresh).
     # Read directly instead of load_jsonc() to get proper error handling.
@@ -569,7 +595,7 @@ def configure_opencode(
             if not isinstance(data, dict):
                 data = {}
         except (json.JSONDecodeError, OSError) as e:
-            log.error("could not parse %s — skipping OpenCode config: %s", OPENCODE_CONFIG_PATH, e)
+            log.error("could not parse %s — skipping OpenCode config: %s", config_path, e)
             return None
 
     overrides = build_provider_overrides(proxy_url)
@@ -605,17 +631,25 @@ def configure_opencode(
     data["provider"] = existing_providers
 
     if dry_run:
-        log.info("[dry-run] would write %d provider overrides to %s", len(overrides), OPENCODE_CONFIG_PATH)
+        log.info("[dry-run] would write %d provider overrides to %s", len(overrides), config_path)
         return SetupChange(
             timestamp=now_iso(),
             client_id="opencode",
             method="config_file",
-            file=OPENCODE_CONFIG_PATH,
+            file=config_path,
             detail="%d provider baseURL overrides" % len(overrides),
         )
 
-    # Ensure parent directory exists
-    os.makedirs(os.path.dirname(expanded), exist_ok=True)
+    # Ensure parent directory exists (managed path requires elevated privileges)
+    try:
+        os.makedirs(os.path.dirname(expanded), exist_ok=True)
+    except PermissionError as e:
+        log.error(
+            "cannot create %s — elevated privileges required for managed config: %s",
+            os.path.dirname(expanded),
+            e,
+        )
+        return None
 
     # Backup existing file (JSON comments will be lost — backup preserves original)
     backup_path = ""
@@ -634,15 +668,15 @@ def configure_opencode(
         log.error("could not write %s: %s", expanded, e, exc_info=True)
         return None
 
-    # Save tracking file
-    _save_opencode_tracking(configured_ids, proxy_url)
+    # Save tracking file (includes config path so undo knows where to clean)
+    _save_opencode_tracking(configured_ids, proxy_url, config_path)
 
     return SetupChange(
         timestamp=now_iso(),
         client_id="opencode",
         method="config_file",
-        file=OPENCODE_CONFIG_PATH,
-        detail="%d provider baseURL overrides" % len(overrides),
+        file=config_path,
+        detail="%d provider baseURL overrides%s" % (len(overrides), " (managed)" if managed else ""),
         backup_path=backup_path,
     )
 
@@ -650,24 +684,29 @@ def configure_opencode(
 def unconfigure_opencode() -> int:
     """Remove lumen-argus provider overrides from opencode.json.
 
-    Only removes entries tracked in ``~/.lumen-argus/opencode_providers.json``.
+    Reads the config path from the tracking file (supports both user-level
+    and managed paths).  Only removes entries we configured.
     Returns the number of providers cleaned up.
     """
-    from lumen_argus_core.opencode_providers import OPENCODE_CONFIG_PATH
-
-    tracked = _load_opencode_tracking()
+    tracking = _load_opencode_tracking_full()
+    tracked = tracking.providers
     if not tracked:
         return 0
 
-    expanded = os.path.expanduser(OPENCODE_CONFIG_PATH)
+    config_path = tracking.config_path
+    if not config_path:
+        from lumen_argus_core.opencode_providers import OPENCODE_CONFIG_PATH
+
+        config_path = OPENCODE_CONFIG_PATH
+
+    expanded = os.path.expanduser(config_path)
     if not os.path.isfile(expanded):
         _remove_opencode_tracking()
         return 0
 
     data = load_jsonc(expanded)
-    if not data:
-        _remove_opencode_tracking()
-        return 0
+    # load_jsonc returns {} on both error and empty file; file existence
+    # already checked above, so {} here is a valid empty config.
 
     providers = data.get("provider", {})
     if not isinstance(providers, dict):
@@ -713,22 +752,46 @@ def unconfigure_opencode() -> int:
     return cleaned
 
 
+class _OpenCodeTracking:
+    """Parsed tracking file data."""
+
+    __slots__ = ("config_path", "providers", "proxy_url")
+
+    def __init__(self, providers: set[str], proxy_url: str, config_path: str):
+        self.providers = providers
+        self.proxy_url = proxy_url
+        self.config_path = config_path
+
+
 def _load_opencode_tracking() -> set[str]:
     """Load the set of provider IDs we configured."""
+    return _load_opencode_tracking_full().providers
+
+
+def _load_opencode_tracking_full() -> _OpenCodeTracking:
+    """Load the full tracking data (providers, proxy_url, config_path)."""
     try:
         with open(_OPENCODE_TRACKING_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return set(data.get("providers", []))
+        return _OpenCodeTracking(
+            providers=set(data.get("providers", [])),
+            proxy_url=data.get("proxy_url", ""),
+            config_path=data.get("config_path", ""),
+        )
     except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return set()
+        return _OpenCodeTracking(providers=set(), proxy_url="", config_path="")
 
 
-def _save_opencode_tracking(provider_ids: list[str], proxy_url: str) -> None:
+def _save_opencode_tracking(provider_ids: list[str], proxy_url: str, config_path: str = "") -> None:
     """Save the set of provider IDs we configured."""
     os.makedirs(os.path.dirname(_OPENCODE_TRACKING_FILE), exist_ok=True)
     try:
         with open(_OPENCODE_TRACKING_FILE, "w", encoding="utf-8") as f:
-            json.dump({"providers": sorted(provider_ids), "proxy_url": proxy_url}, f, indent=2)
+            json.dump(
+                {"providers": sorted(provider_ids), "proxy_url": proxy_url, "config_path": config_path},
+                f,
+                indent=2,
+            )
             f.write("\n")
     except OSError as e:
         log.warning("could not save OpenCode tracking file: %s", e)

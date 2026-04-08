@@ -75,10 +75,20 @@ OPTIONAL_GATEWAY_PROVIDERS: dict[str, tuple[str, str]] = {
 #   gitlab          — GitLab personal access token + custom UA
 
 # ---------------------------------------------------------------------------
-# Config file path
+# Config file paths
 # ---------------------------------------------------------------------------
 
+# User-level config — writable by any user, overridable by project config.
 OPENCODE_CONFIG_PATH = "~/.config/opencode/opencode.json"
+
+# Managed config paths — highest priority in OpenCode's merge chain.
+# Cannot be overridden by user or project configs.  Requires elevated
+# privileges (sudo/admin) to write.  Used by enterprise MDM deployments
+# and DMG installers to enforce proxy routing.
+OPENCODE_MANAGED_PATHS: dict[str, str] = {
+    "darwin": "/Library/Application Support/opencode/opencode.json",
+    "linux": "/etc/opencode/opencode.json",
+}
 
 
 # ---------------------------------------------------------------------------

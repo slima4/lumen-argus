@@ -292,5 +292,100 @@ class TestConfigureOpenCode(unittest.TestCase):
         self.assertEqual(cleaned, 0)
 
 
+class TestManagedConfigPath(unittest.TestCase):
+    """Test configure_opencode with managed=True for enterprise MDM."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.managed_path = os.path.join(self.tmpdir, "managed", "opencode.json")
+        self.user_path = os.path.join(self.tmpdir, "user", "opencode.json")
+        self.tracking_path = os.path.join(self.tmpdir, "opencode_providers.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def _patches(self):
+        from contextlib import ExitStack
+
+        stack = ExitStack()
+        stack.enter_context(
+            patch(
+                "lumen_argus_core.opencode_providers.OPENCODE_CONFIG_PATH",
+                self.user_path,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "lumen_argus_core.opencode_providers.OPENCODE_MANAGED_PATHS",
+                {"darwin": self.managed_path, "linux": self.managed_path},
+            )
+        )
+        stack.enter_context(
+            patch(
+                "lumen_argus_core.setup_wizard._OPENCODE_TRACKING_FILE",
+                self.tracking_path,
+            )
+        )
+        return stack
+
+    def test_managed_writes_to_system_path(self):
+        from lumen_argus_core.setup_wizard import configure_opencode
+
+        with self._patches():
+            change = configure_opencode("http://localhost:8070", managed=True)
+
+        self.assertIsNotNone(change)
+        self.assertTrue(os.path.exists(self.managed_path))
+        self.assertFalse(os.path.exists(self.user_path))
+        self.assertIn("managed", change.detail)
+
+    def test_managed_config_content(self):
+        from lumen_argus_core.setup_wizard import configure_opencode
+
+        with self._patches():
+            configure_opencode("http://localhost:8070", managed=True)
+
+        with open(self.managed_path) as f:
+            data = json.load(f)
+        self.assertIn("provider", data)
+        self.assertEqual(
+            data["provider"]["anthropic"]["options"]["baseURL"],
+            "http://localhost:8070",
+        )
+
+    def test_managed_unconfigure_cleans_managed_path(self):
+        from lumen_argus_core.setup_wizard import configure_opencode, unconfigure_opencode
+
+        with self._patches():
+            configure_opencode("http://localhost:8070", managed=True)
+            cleaned = unconfigure_opencode()
+
+        self.assertGreater(cleaned, 0)
+        with open(self.managed_path) as f:
+            data = json.load(f)
+        providers = data.get("provider", {})
+        self.assertEqual(len(providers), 0)
+
+    def test_non_managed_writes_to_user_path(self):
+        from lumen_argus_core.setup_wizard import configure_opencode
+
+        with self._patches():
+            change = configure_opencode("http://localhost:8070", managed=False)
+
+        self.assertIsNotNone(change)
+        self.assertTrue(os.path.exists(self.user_path))
+        self.assertFalse(os.path.exists(self.managed_path))
+
+    def test_tracking_file_stores_config_path(self):
+        from lumen_argus_core.setup_wizard import configure_opencode
+
+        with self._patches():
+            configure_opencode("http://localhost:8070", managed=True)
+
+        with open(self.tracking_path) as f:
+            tracking = json.load(f)
+        self.assertEqual(tracking["config_path"], self.managed_path)
+
+
 if __name__ == "__main__":
     unittest.main()
