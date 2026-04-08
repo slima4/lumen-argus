@@ -126,6 +126,7 @@ function showDetail(f){selectedFindingId=f.id;
   if(f.hostname)fields.push(['Machine',f.hostname]);
   if(f.username)fields.push(['User',f.username]);
   if(f.client_name)fields.push(['Agent',f.client_name]);
+  if(f.client_type)fields.push(['Client Type',f.client_type]);
   if(f.sdk_name){let sdk=f.sdk_name;if(f.sdk_version)sdk+=' '+f.sdk_version;fields.push(['SDK',sdk]);}
   if(f.runtime)fields.push(['Runtime',f.runtime]);
   if(f.api_format)fields.push(['API Format',f.api_format]);

@@ -602,10 +602,12 @@ def identify_client(user_agent: str, headers: dict[str, str] | None = None) -> t
 
     # Secondary detection via tool-specific headers.
     # OpenCode's Vercel AI SDK overwrites the User-Agent with ai-sdk/<provider>,
-    # hiding the opencode/ token.  Detect via x-session-affinity header (always
-    # set by OpenCode for non-hosted providers) + ai-sdk/ UA prefix to reduce
-    # false positives from other Vercel AI SDK-based tools.
-    if headers and lower_token.startswith("ai-sdk/") and "x-session-affinity" in headers:
+    # hiding the opencode/ token.  Two header patterns:
+    # - Hosted providers (Zen/Go): x-opencode-session header (unique to OpenCode)
+    # - Non-hosted providers: x-session-affinity + ai-sdk/ UA prefix
+    if headers and (
+        "x-opencode-session" in headers or (lower_token.startswith("ai-sdk/") and "x-session-affinity" in headers)
+    ):
         opencode = get_client_by_id("opencode")
         if opencode:
             return opencode.id, opencode.display_name, "", raw_token

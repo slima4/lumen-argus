@@ -21,7 +21,7 @@ _FINDINGS_COLUMNS = (
     "id, timestamp, detector, finding_type, severity, location, action_taken, "
     "provider, model, value_preview, account_id, session_id, device_id, "
     "source_ip, working_directory, git_branch, os_platform, hostname, username, "
-    "client_name, client_version, "
+    "client_name, client_version, client_type, "
     "raw_user_agent, api_format, sdk_name, sdk_version, runtime, "
     "api_key_hash, content_hash, seen_count, value_hash"
 )
@@ -65,6 +65,7 @@ class FindingsRepository(BaseRepository):
                 s.username,
                 s.client_name,
                 s.client_version,
+                s.client_type,
                 s.raw_user_agent,
                 s.api_format,
                 s.sdk_name,
@@ -73,7 +74,7 @@ class FindingsRepository(BaseRepository):
                 s.api_key_hash,
             )
             if s
-            else ("",) * 17
+            else ("",) * 18
         )
 
         rows = []
@@ -112,10 +113,10 @@ class FindingsRepository(BaseRepository):
                     "action_taken, provider, model, value_preview, "
                     "account_id, session_id, device_id, source_ip, "
                     "working_directory, git_branch, os_platform, hostname, username, "
-                    "client_name, client_version, "
+                    "client_name, client_version, client_type, "
                     "raw_user_agent, api_format, sdk_name, sdk_version, runtime, "
                     "api_key_hash, content_hash, value_hash) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(content_hash, session_id, namespace_id) "
                     "WHERE content_hash != '' "
                     "DO UPDATE SET seen_count = findings.seen_count + 1, "

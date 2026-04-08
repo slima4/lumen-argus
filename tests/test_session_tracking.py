@@ -149,6 +149,45 @@ class TestSessionExtractionPriority(unittest.TestCase):
         ctx = handler._extract_session(data, "openai", {})
         self.assertEqual(ctx.account_id, "openai_org_xyz")
 
+    def test_opencode_zen_session_from_header(self):
+        """OpenCode Zen sends x-opencode-session with sortable session ID."""
+        handler = _make_handler()
+        data = {"messages": [{"role": "user", "content": "hello"}]}
+        ctx = handler._extract_session(data, "openai", {"x-opencode-session": "ses_ff0a1b2c3d4eAbCdEfGhIjKlMn"})
+        self.assertEqual(ctx.session_id, "ses_ff0a1b2c3d4eAbCdEfGhIjKlMn")
+
+    def test_opencode_non_hosted_session_from_affinity(self):
+        """OpenCode non-hosted providers send x-session-affinity."""
+        handler = _make_handler()
+        data = {"messages": [{"role": "user", "content": "hello"}]}
+        ctx = handler._extract_session(data, "anthropic", {"x-session-affinity": "ses_aabbccdd1122XyZaBcDeFgHiJk"})
+        self.assertEqual(ctx.session_id, "ses_aabbccdd1122XyZaBcDeFgHiJk")
+
+    def test_explicit_session_id_beats_opencode_headers(self):
+        """x-session-id header has higher priority than x-opencode-session."""
+        handler = _make_handler()
+        data = {"messages": [{"role": "user", "content": "hello"}]}
+        ctx = handler._extract_session(
+            data,
+            "openai",
+            {
+                "x-session-id": "explicit-123",
+                "x-opencode-session": "ses_ff0a1b2c3d4eAbCdEfGhIjKlMn",
+            },
+        )
+        self.assertEqual(ctx.session_id, "explicit-123")
+
+    def test_opencode_session_beats_fingerprint(self):
+        """x-opencode-session takes priority over derived fingerprint."""
+        handler = _make_handler()
+        data = {
+            "system": "You are helpful.",
+            "messages": [{"role": "user", "content": "What is 2+2?"}],
+        }
+        ctx = handler._extract_session(data, "anthropic", {"x-opencode-session": "ses_realid"})
+        self.assertEqual(ctx.session_id, "ses_realid")
+        self.assertFalse(ctx.session_id.startswith("fp:"))
+
     def test_fingerprint_fallback(self):
         """Without header or metadata, derives fp: fingerprint."""
         handler = _make_handler()
@@ -970,6 +1009,53 @@ class TestParseUserAgentMetadata(unittest.TestCase):
         self.assertEqual(meta["sdk_version"], "")
 
 
+class TestClientTypeResolution(unittest.TestCase):
+    """Test _resolve_client_type — interface type from headers or registry."""
+
+    def test_opencode_explicit_cli(self):
+        """OpenCode sends x-opencode-client: cli."""
+        from lumen_argus.session import _resolve_client_type
+
+        result = _resolve_client_type("opencode", {"x-opencode-client": "cli"})
+        self.assertEqual(result, "cli")
+
+    def test_opencode_explicit_app(self):
+        """OpenCode desktop app sends x-opencode-client: app."""
+        from lumen_argus.session import _resolve_client_type
+
+        result = _resolve_client_type("opencode", {"x-opencode-client": "app"})
+        self.assertEqual(result, "app")
+
+    def test_claude_code_derived_cli(self):
+        """Claude Code has category=cli in registry, derived to cli."""
+        from lumen_argus.session import _resolve_client_type
+
+        result = _resolve_client_type("claude_code", {})
+        self.assertEqual(result, "cli")
+
+    def test_cursor_derived_ide(self):
+        """Cursor has category=ide in registry, derived to ide."""
+        from lumen_argus.session import _resolve_client_type
+
+        result = _resolve_client_type("cursor", {})
+        self.assertEqual(result, "ide")
+
+    def test_unknown_client_empty(self):
+        """Unknown client returns empty string."""
+        from lumen_argus.session import _resolve_client_type
+
+        result = _resolve_client_type("unknown-tool", {})
+        self.assertEqual(result, "")
+
+    def test_explicit_header_beats_registry(self):
+        """x-opencode-client header takes priority over registry category."""
+        from lumen_argus.session import _resolve_client_type
+
+        # opencode is category=cli, but header says "app"
+        result = _resolve_client_type("opencode", {"x-opencode-client": "app"})
+        self.assertEqual(result, "app")
+
+
 class TestOpenCodeEndToEnd(unittest.TestCase):
     """End-to-end tests for OpenCode request metadata through the full pipeline.
 
@@ -1061,6 +1147,7 @@ class TestOpenCodeEndToEnd(unittest.TestCase):
         store, _ = make_store()
         session = SessionContext(
             client_name="opencode",
+            client_type="cli",
             raw_user_agent="ai-sdk/openai/3.0.48 runtime/bun/1.3.11",
             api_format="openai",
             sdk_name="ai-sdk/openai",
@@ -1086,6 +1173,7 @@ class TestOpenCodeEndToEnd(unittest.TestCase):
         self.assertEqual(r["provider"], "opencode")
         self.assertEqual(r["model"], "minimax-m2.5-free")
         self.assertEqual(r["client_name"], "opencode")
+        self.assertEqual(r["client_type"], "cli")
         self.assertEqual(r["raw_user_agent"], "ai-sdk/openai/3.0.48 runtime/bun/1.3.11")
         self.assertEqual(r["api_format"], "openai")
         self.assertEqual(r["sdk_name"], "ai-sdk/openai")

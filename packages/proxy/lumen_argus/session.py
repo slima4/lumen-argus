@@ -91,6 +91,45 @@ def parse_user_agent_metadata(user_agent: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Client type resolution
+# ---------------------------------------------------------------------------
+
+# Client types derived from the client registry category.
+# Values beyond "cli" and "ide" are reserved for future use — currently
+# only provided via explicit tool headers (e.g., x-opencode-client: app).
+_CLIENT_TYPE_BY_CATEGORY: dict[str, str] = {
+    "cli": "cli",  # Terminal tools: Claude Code, Aider, OpenCode CLI
+    "ide": "ide",  # IDE extensions: Copilot, Cline, Continue, Cody
+    "app": "app",  # Standalone desktop apps: Claude Desktop, OpenCode App
+    "web": "web",  # Web interfaces: ChatGPT, Claude.ai
+    "browser_extension": "browser_extension",  # Browser extensions/widgets
+}
+
+
+def _resolve_client_type(client_id: str, headers: dict[str, str]) -> str:
+    """Resolve the client interface type (cli, app, ide, web).
+
+    Priority:
+    1. Explicit header from tool (e.g., OpenCode ``x-opencode-client``)
+    2. Derived from client registry category
+    """
+    # OpenCode sends x-opencode-client: "cli" or "app"
+    opencode_client = headers.get("x-opencode-client", "")
+    if opencode_client:
+        return opencode_client[:64]
+
+    # Derive from client registry category
+    if client_id:
+        from lumen_argus_core.clients import get_client_by_id
+
+        client_def = get_client_by_id(client_id)
+        if client_def:
+            return _CLIENT_TYPE_BY_CATEGORY.get(client_def.category, "")
+
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -271,6 +310,9 @@ def extract_session(
     ctx.client_name = client_id
     ctx.client_version = version
 
+    # Client type — explicit header or derived from client registry
+    ctx.client_type = _resolve_client_type(client_id, headers)
+
     # Request metadata — raw UA and parsed SDK stack
     ctx.raw_user_agent = raw_ua[:512]
     ua_meta = parse_user_agent_metadata(raw_ua)
@@ -282,6 +324,16 @@ def extract_session(
     explicit_session = headers.get("x-session-id", "")
     if explicit_session:
         ctx.session_id = explicit_session[:256]
+
+    # Tool-specific session headers
+    # OpenCode hosted (Zen/Go): x-opencode-session (ses_<sortable-id>)
+    # OpenCode non-hosted: x-session-affinity (same format)
+    if not ctx.session_id:
+        for hdr in ("x-opencode-session", "x-session-affinity"):
+            val = headers.get(hdr, "")
+            if val:
+                ctx.session_id = val[:256]
+                break
 
     # Normalize: only use data if it's a dict
     if not isinstance(req_data, dict):

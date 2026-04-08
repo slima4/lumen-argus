@@ -172,6 +172,15 @@ class TestIdentifyClient(unittest.TestCase):
         self.assertEqual(name, "OpenCode")
         self.assertEqual(raw, "ai-sdk/openai/3.0.48")
 
+    def test_opencode_zen_via_x_opencode_header(self):
+        """OpenCode Zen/Go uses x-opencode-session instead of x-session-affinity."""
+        cid, name, _ver, _raw = identify_client(
+            "ai-sdk/anthropic/3.0.64",
+            headers={"x-opencode-session": "sess-456"},
+        )
+        self.assertEqual(cid, "opencode")
+        self.assertEqual(name, "OpenCode")
+
     def test_ai_sdk_without_affinity_not_opencode(self):
         """ai-sdk User-Agent without x-session-affinity is not identified as OpenCode."""
         cid, name, _, _ = identify_client("ai-sdk/openai/3.0.48", headers={})

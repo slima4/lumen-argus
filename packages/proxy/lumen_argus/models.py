@@ -61,6 +61,7 @@ class SessionContext:
     # Client — HOW
     client_name: str = ""  # Normalized client ID from registry (e.g., "aider")
     client_version: str = ""  # Client version from User-Agent (e.g., "0.50.1")
+    client_type: str = ""  # Interface type: "cli", "app", "ide", "web" (from tool headers)
 
     # Request metadata — SDK stack
     raw_user_agent: str = ""  # Full User-Agent string, unmodified (max 512 chars)
@@ -139,6 +140,7 @@ class AuditEntry:
     username: str = ""
     client_name: str = ""
     client_version: str = ""
+    client_type: str = ""
     raw_user_agent: str = ""
     api_format: str = ""
     sdk_name: str = ""
@@ -185,6 +187,7 @@ class AuditEntry:
             "username",
             "client_name",
             "client_version",
+            "client_type",
             "raw_user_agent",
             "api_format",
             "sdk_name",

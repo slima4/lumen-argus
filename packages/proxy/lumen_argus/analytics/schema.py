@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS findings (
     username TEXT NOT NULL DEFAULT '',
     client_name TEXT NOT NULL DEFAULT '',
     client_version TEXT NOT NULL DEFAULT '',
+    client_type TEXT NOT NULL DEFAULT '',
     raw_user_agent TEXT NOT NULL DEFAULT '',
     api_format TEXT NOT NULL DEFAULT '',
     sdk_name TEXT NOT NULL DEFAULT '',
