@@ -187,6 +187,7 @@ async def _do_forward(
         session = _extract_session(
             req_data, api_provider, headers_dict, source_ip, hmac_key=server.hmac_key, trusted_agent=trusted_agent
         )
+        session.api_format = api_provider
 
         # Scan request body — use upstream provider name (e.g. "opencode") so the
         # correct provider is stored in findings.  The extractor auto-detects the

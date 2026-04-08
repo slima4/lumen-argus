@@ -31,6 +31,8 @@ _FINDING_FILTER_KEYS: list[tuple[str, str]] = [
     ("working_directory", "working_directory"),
     ("hostname", "hostname"),
     ("username", "username"),
+    ("sdk_name", "sdk_name"),
+    ("runtime", "runtime"),
 ]
 
 

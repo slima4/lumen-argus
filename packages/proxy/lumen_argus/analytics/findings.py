@@ -21,7 +21,9 @@ _FINDINGS_COLUMNS = (
     "id, timestamp, detector, finding_type, severity, location, action_taken, "
     "provider, model, value_preview, account_id, session_id, device_id, "
     "source_ip, working_directory, git_branch, os_platform, hostname, username, "
-    "client_name, client_version, api_key_hash, content_hash, seen_count, value_hash"
+    "client_name, client_version, "
+    "raw_user_agent, api_format, sdk_name, sdk_version, runtime, "
+    "api_key_hash, content_hash, seen_count, value_hash"
 )
 
 
@@ -63,10 +65,15 @@ class FindingsRepository(BaseRepository):
                 s.username,
                 s.client_name,
                 s.client_version,
+                s.raw_user_agent,
+                s.api_format,
+                s.sdk_name,
+                s.sdk_version,
+                s.runtime,
                 s.api_key_hash,
             )
             if s
-            else ("",) * 12
+            else ("",) * 17
         )
 
         rows = []
@@ -105,8 +112,10 @@ class FindingsRepository(BaseRepository):
                     "action_taken, provider, model, value_preview, "
                     "account_id, session_id, device_id, source_ip, "
                     "working_directory, git_branch, os_platform, hostname, username, "
-                    "client_name, client_version, api_key_hash, content_hash, value_hash) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "client_name, client_version, "
+                    "raw_user_agent, api_format, sdk_name, sdk_version, runtime, "
+                    "api_key_hash, content_hash, value_hash) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(content_hash, session_id, namespace_id) "
                     "WHERE content_hash != '' "
                     "DO UPDATE SET seen_count = findings.seen_count + 1, "
@@ -145,6 +154,8 @@ class FindingsRepository(BaseRepository):
         working_directory: str | None = None,
         hostname: str | None = None,
         username: str | None = None,
+        sdk_name: str | None = None,
+        runtime: str | None = None,
         days: int | None = None,
         namespace_id: int = 1,
     ) -> tuple[list[dict[str, Any]], Any]:
@@ -186,6 +197,12 @@ class FindingsRepository(BaseRepository):
         if username:
             conditions.append("username = ?")
             params.append(username)
+        if sdk_name:
+            conditions.append("sdk_name = ?")
+            params.append(sdk_name)
+        if runtime:
+            conditions.append("runtime = ?")
+            params.append(runtime)
         if days and days > 0:
             conditions.append(self._adapter.date_diff_sql("timestamp", min(days, 365)))
         where = " WHERE " + " AND ".join(conditions)

@@ -136,6 +136,8 @@ class AnalyticsStore:
         working_directory: str | None = None,
         hostname: str | None = None,
         username: str | None = None,
+        sdk_name: str | None = None,
+        runtime: str | None = None,
         days: int | None = None,
         namespace_id: int = 1,
     ) -> tuple[list[dict[str, Any]], Any]:
@@ -153,6 +155,8 @@ class AnalyticsStore:
             working_directory=working_directory,
             hostname=hostname,
             username=username,
+            sdk_name=sdk_name,
+            runtime=runtime,
             days=days,
             namespace_id=namespace_id,
         )

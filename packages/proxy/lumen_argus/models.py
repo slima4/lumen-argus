@@ -62,6 +62,13 @@ class SessionContext:
     client_name: str = ""  # Normalized client ID from registry (e.g., "aider")
     client_version: str = ""  # Client version from User-Agent (e.g., "0.50.1")
 
+    # Request metadata — SDK stack
+    raw_user_agent: str = ""  # Full User-Agent string, unmodified (max 512 chars)
+    api_format: str = ""  # Wire format: "anthropic", "openai", "gemini", or ""
+    sdk_name: str = ""  # Primary SDK identifier (e.g., "ai-sdk/anthropic", "claude-code")
+    sdk_version: str = ""  # SDK version (e.g., "3.0.64")
+    runtime: str = ""  # Runtime and version (e.g., "bun/1.3.11", "node/22.0.0")
+
 
 @dataclass
 class ScanField:
@@ -132,6 +139,11 @@ class AuditEntry:
     username: str = ""
     client_name: str = ""
     client_version: str = ""
+    raw_user_agent: str = ""
+    api_format: str = ""
+    sdk_name: str = ""
+    sdk_version: str = ""
+    runtime: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for JSONL output. Never includes matched_value."""
@@ -173,6 +185,11 @@ class AuditEntry:
             "username",
             "client_name",
             "client_version",
+            "raw_user_agent",
+            "api_format",
+            "sdk_name",
+            "sdk_version",
+            "runtime",
         ):
             val = getattr(self, key, "")
             if val:

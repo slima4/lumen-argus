@@ -49,5 +49,10 @@ def _log_audit(
         os_platform=session.os_platform if session else "",
         client_name=session.client_name if session else "",
         client_version=session.client_version if session else "",
+        raw_user_agent=session.raw_user_agent if session else "",
+        api_format=session.api_format if session else "",
+        sdk_name=session.sdk_name if session else "",
+        sdk_version=session.sdk_version if session else "",
+        runtime=session.runtime if session else "",
     )
     server.audit.log(entry)

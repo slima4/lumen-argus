@@ -38,6 +38,59 @@ _OS_PLATFORM_PATTERNS = [
 
 
 # ---------------------------------------------------------------------------
+# User-Agent metadata parsing
+# ---------------------------------------------------------------------------
+
+
+def parse_user_agent_metadata(user_agent: str) -> dict[str, str]:
+    """Extract SDK name, version, and runtime from User-Agent.
+
+    Handles known patterns:
+    - Vercel AI SDK: ``ai-sdk/anthropic/3.0.64 ai-sdk/provider-utils/4.0.21 runtime/bun/1.3.11``
+    - Standard tools: ``claude-code/1.0.0``, ``aider/0.50.1``
+    - Generic: ``tool/version``
+
+    Returns dict with ``sdk_name``, ``sdk_version``, ``runtime`` (all default to ``""``).
+    """
+    result = {"sdk_name": "", "sdk_version": "", "runtime": ""}
+    if not user_agent:
+        return result
+
+    tokens = user_agent.split()
+
+    # Extract runtime token (e.g., "runtime/bun/1.3.11")
+    for token in tokens:
+        if token.startswith("runtime/"):
+            result["runtime"] = token[8:][:128]  # strip "runtime/" prefix
+            break
+
+    # Parse first token for SDK name and version
+    first = tokens[0] if tokens else ""
+    if not first:
+        return result
+
+    if first.startswith("ai-sdk/"):
+        # Vercel AI SDK: "ai-sdk/anthropic/3.0.64"
+        # sdk_name = "ai-sdk/anthropic", sdk_version = "3.0.64"
+        parts = first.split("/")
+        if len(parts) >= 3:
+            result["sdk_name"] = ("%s/%s" % (parts[0], parts[1]))[:128]
+            result["sdk_version"] = parts[2][:128]
+        elif len(parts) == 2:
+            result["sdk_name"] = first[:128]
+    else:
+        # Standard: "claude-code/1.0.0" or "aider/0.50.1"
+        slash_idx = first.rfind("/")
+        if slash_idx > 0:
+            result["sdk_name"] = first[:slash_idx][:128]
+            result["sdk_version"] = first[slash_idx + 1 :][:128]
+        else:
+            result["sdk_name"] = first[:128]
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -213,9 +266,17 @@ def extract_session(
         ctx.api_key_hash = hmac.new(hmac_key, api_key.encode(), hashlib.sha256).hexdigest()[:16]
 
     # Client tool identification from User-Agent + secondary header detection
-    client_id, _, version, _ = identify_client(headers.get("user-agent", ""), headers)
+    raw_ua = headers.get("user-agent", "")
+    client_id, _, version, _ = identify_client(raw_ua, headers)
     ctx.client_name = client_id
     ctx.client_version = version
+
+    # Request metadata — raw UA and parsed SDK stack
+    ctx.raw_user_agent = raw_ua[:512]
+    ua_meta = parse_user_agent_metadata(raw_ua)
+    ctx.sdk_name = ua_meta["sdk_name"]
+    ctx.sdk_version = ua_meta["sdk_version"]
+    ctx.runtime = ua_meta["runtime"]
 
     # Explicit session header (highest priority)
     explicit_session = headers.get("x-session-id", "")

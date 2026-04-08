@@ -394,6 +394,11 @@ Session/conversation identity extracted from each request. Populated by the prox
 | `username` | `str` | Agent relay `X-Lumen-Argus-Username` | OS username (WHO) |
 | `client_name` | `str` | Client registry (`identify_client()`) | Normalized client ID (e.g., "cursor", "aider", "opencode") |
 | `client_version` | `str` | Parsed from `User-Agent` token | Client version (e.g., "0.45.1") |
+| `raw_user_agent` | `str` | `User-Agent` header (max 512 chars) | Full UA string for forensics |
+| `api_format` | `str` | Auto-detected from body structure | Wire format: `anthropic`, `openai`, `gemini` |
+| `sdk_name` | `str` | Parsed from UA (`parse_user_agent_metadata()`) | SDK identifier (e.g., `ai-sdk/anthropic`, `claude-code`) |
+| `sdk_version` | `str` | Parsed from UA | SDK version (e.g., `3.0.64`) |
+| `runtime` | `str` | Parsed from UA | Runtime and version (e.g., `bun/1.3.11`) |
 
 !!! tip "Identity priority chain"
     Session fields are populated using a priority chain: (1) **Agent relay headers** (`X-Lumen-Argus-*`) from authenticated agents — OS-level, most reliable. (2) **System prompt extraction** via regex — works for Claude Code, OpenCode, Cursor. (3) **Derived session fingerprint** — hash of first messages (fallback). The proxy only trusts `X-Lumen-Argus-*` headers from authenticated agent relays; unauthenticated requests have these headers stripped.

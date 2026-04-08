@@ -26,6 +26,7 @@ from lumen_argus.session import (
     _extract_system_field,
     _extract_working_directory,
     _get_system_text,
+    parse_user_agent_metadata,
 )
 from lumen_argus.session import (
     extract_session as _extract_session,
@@ -471,6 +472,11 @@ class TestAnalyticsStoreSession(StoreTestCase):
             git_branch="main",
             os_platform="darwin",
             client_name="claude-code/1.0",
+            raw_user_agent="claude-code/1.0.23",
+            api_format="anthropic",
+            sdk_name="claude-code",
+            sdk_version="1.0.23",
+            runtime="",
         )
         self.store.record_findings([self._finding()], provider="anthropic", model="opus", session=session)
         rows, total = self.store.get_findings_page()
@@ -485,6 +491,11 @@ class TestAnalyticsStoreSession(StoreTestCase):
         self.assertEqual(r["os_platform"], "darwin")
         self.assertEqual(r["client_name"], "claude-code/1.0")
         self.assertEqual(r["api_key_hash"], "hash1234")
+        self.assertEqual(r["raw_user_agent"], "claude-code/1.0.23")
+        self.assertEqual(r["api_format"], "anthropic")
+        self.assertEqual(r["sdk_name"], "claude-code")
+        self.assertEqual(r["sdk_version"], "1.0.23")
+        self.assertEqual(r["runtime"], "")
 
     def test_record_without_session(self):
         """None session stores empty strings."""
@@ -904,6 +915,210 @@ class TestAnalyticsStoreHostnameUsername(StoreTestCase):
     def test_get_by_project_empty(self):
         projects = self.store.get_by_project()
         self.assertEqual(projects, [])
+
+
+class TestParseUserAgentMetadata(unittest.TestCase):
+    """Test parse_user_agent_metadata — SDK, version, and runtime extraction."""
+
+    def test_vercel_ai_sdk_anthropic(self):
+        meta = parse_user_agent_metadata("ai-sdk/anthropic/3.0.64 ai-sdk/provider-utils/4.0.21 runtime/bun/1.3.11")
+        self.assertEqual(meta["sdk_name"], "ai-sdk/anthropic")
+        self.assertEqual(meta["sdk_version"], "3.0.64")
+        self.assertEqual(meta["runtime"], "bun/1.3.11")
+
+    def test_vercel_ai_sdk_openai(self):
+        meta = parse_user_agent_metadata("ai-sdk/openai/3.0.48 ai-sdk/provider-utils/4.0.21 runtime/bun/1.3.11")
+        self.assertEqual(meta["sdk_name"], "ai-sdk/openai")
+        self.assertEqual(meta["sdk_version"], "3.0.48")
+        self.assertEqual(meta["runtime"], "bun/1.3.11")
+
+    def test_claude_code(self):
+        meta = parse_user_agent_metadata("claude-code/1.0.23")
+        self.assertEqual(meta["sdk_name"], "claude-code")
+        self.assertEqual(meta["sdk_version"], "1.0.23")
+        self.assertEqual(meta["runtime"], "")
+
+    def test_aider(self):
+        meta = parse_user_agent_metadata("aider/0.50.1")
+        self.assertEqual(meta["sdk_name"], "aider")
+        self.assertEqual(meta["sdk_version"], "0.50.1")
+
+    def test_python_requests(self):
+        meta = parse_user_agent_metadata("python-requests/2.31.0")
+        self.assertEqual(meta["sdk_name"], "python-requests")
+        self.assertEqual(meta["sdk_version"], "2.31.0")
+
+    def test_node_runtime(self):
+        meta = parse_user_agent_metadata("ai-sdk/openai/3.0.48 runtime/node/22.0.0")
+        self.assertEqual(meta["runtime"], "node/22.0.0")
+
+    def test_empty_ua(self):
+        meta = parse_user_agent_metadata("")
+        self.assertEqual(meta["sdk_name"], "")
+        self.assertEqual(meta["sdk_version"], "")
+        self.assertEqual(meta["runtime"], "")
+
+    def test_browser_ua_parses_first_token(self):
+        """Browser UAs are filtered upstream; parser just handles first token."""
+        meta = parse_user_agent_metadata("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")
+        self.assertEqual(meta["sdk_name"], "Mozilla")
+        self.assertEqual(meta["sdk_version"], "5.0")
+
+    def test_no_version(self):
+        meta = parse_user_agent_metadata("opencode")
+        self.assertEqual(meta["sdk_name"], "opencode")
+        self.assertEqual(meta["sdk_version"], "")
+
+
+class TestOpenCodeEndToEnd(unittest.TestCase):
+    """End-to-end tests for OpenCode request metadata through the full pipeline.
+
+    Validates that OpenCode's actual User-Agent strings, system prompt format,
+    and session context are correctly parsed and stored.
+    """
+
+    def test_opencode_anthropic_adapter_metadata(self):
+        """OpenCode using Anthropic SDK adapter (e.g., MiniMax via Zen)."""
+        ua = "ai-sdk/anthropic/3.0.64 ai-sdk/provider-utils/4.0.21 runtime/bun/1.3.11"
+        meta = parse_user_agent_metadata(ua)
+        self.assertEqual(meta["sdk_name"], "ai-sdk/anthropic")
+        self.assertEqual(meta["sdk_version"], "3.0.64")
+        self.assertEqual(meta["runtime"], "bun/1.3.11")
+
+        # Client identification via x-session-affinity
+        from lumen_argus_core.clients import identify_client
+
+        cid, name, _, raw = identify_client(ua, headers={"x-session-affinity": "sess-1"})
+        self.assertEqual(cid, "opencode")
+        self.assertEqual(name, "OpenCode")
+        self.assertEqual(raw, "ai-sdk/anthropic/3.0.64")
+
+    def test_opencode_openai_adapter_metadata(self):
+        """OpenCode using OpenAI SDK adapter (e.g., GPT-5 via Zen)."""
+        ua = "ai-sdk/openai/3.0.48 ai-sdk/provider-utils/4.0.21 runtime/bun/1.3.11"
+        meta = parse_user_agent_metadata(ua)
+        self.assertEqual(meta["sdk_name"], "ai-sdk/openai")
+        self.assertEqual(meta["sdk_version"], "3.0.48")
+        self.assertEqual(meta["runtime"], "bun/1.3.11")
+
+        from lumen_argus_core.clients import identify_client
+
+        cid, _, _, _ = identify_client(ua, headers={"x-session-affinity": "sess-2"})
+        self.assertEqual(cid, "opencode")
+
+    def test_opencode_working_directory_anthropic_format(self):
+        """OpenCode system prompt in Anthropic format extracts working directory."""
+        system = (
+            "You are powered by the model named minimax-m2.5-free.\n"
+            "<env>\n"
+            "  Working directory: /Users/dev/myproject\n"
+            "  Workspace root folder: /Users/dev/myproject\n"
+            "  Is directory a git repo: yes\n"
+            "  Platform: darwin\n"
+            "</env>"
+        )
+        data = {"system": [{"type": "text", "text": system}], "messages": []}
+        wd = _extract_working_directory(data, "anthropic")
+        self.assertEqual(wd, "/Users/dev/myproject")
+
+    def test_opencode_working_directory_openai_format(self):
+        """OpenCode system prompt in OpenAI format extracts working directory."""
+        system = "<env>\n  Working directory: /home/user/project\n  Platform: linux\n</env>"
+        data = {"messages": [{"role": "system", "content": system}]}
+        wd = _extract_working_directory(data, "openai")
+        self.assertEqual(wd, "/home/user/project")
+
+    def test_opencode_platform_extracted(self):
+        """OpenCode's Platform: field in <env> block is extracted."""
+        system = "<env>\n  Working directory: /tmp\n  Platform: darwin\n</env>"
+        data = {"system": system, "messages": []}
+        platform = _extract_system_field(data, "anthropic", _OS_PLATFORM_PATTERNS)
+        self.assertEqual(platform, "darwin")
+
+    def test_opencode_full_session_context(self):
+        """Verify all metadata fields populate correctly for an OpenCode request."""
+        session = SessionContext(
+            client_name="opencode",
+            raw_user_agent="ai-sdk/anthropic/3.0.64 ai-sdk/provider-utils/4.0.21 runtime/bun/1.3.11",
+            api_format="anthropic",
+            sdk_name="ai-sdk/anthropic",
+            sdk_version="3.0.64",
+            runtime="bun/1.3.11",
+            working_directory="/Users/dev/project",
+            os_platform="darwin",
+        )
+        # Verify all fields are set
+        self.assertEqual(session.client_name, "opencode")
+        self.assertEqual(session.sdk_name, "ai-sdk/anthropic")
+        self.assertEqual(session.sdk_version, "3.0.64")
+        self.assertEqual(session.runtime, "bun/1.3.11")
+        self.assertEqual(session.api_format, "anthropic")
+
+    def test_opencode_db_round_trip(self):
+        """OpenCode metadata survives DB storage and retrieval."""
+        from tests.helpers import make_store
+
+        store, _ = make_store()
+        session = SessionContext(
+            client_name="opencode",
+            raw_user_agent="ai-sdk/openai/3.0.48 runtime/bun/1.3.11",
+            api_format="openai",
+            sdk_name="ai-sdk/openai",
+            sdk_version="3.0.48",
+            runtime="bun/1.3.11",
+            working_directory="/Users/dev/zen-test",
+        )
+        from lumen_argus.models import Finding
+
+        f = Finding(
+            detector="secrets",
+            type="aws_access_key",
+            severity="critical",
+            location="messages[0].content",
+            matched_value="AKIAIOSFODNN7EXAMPLE",
+            value_preview="AKIA****",
+            action="alert",
+        )
+        store.record_findings([f], provider="opencode", model="minimax-m2.5-free", session=session)
+        rows, total = store.get_findings_page()
+        self.assertEqual(total, 1)
+        r = rows[0]
+        self.assertEqual(r["provider"], "opencode")
+        self.assertEqual(r["model"], "minimax-m2.5-free")
+        self.assertEqual(r["client_name"], "opencode")
+        self.assertEqual(r["raw_user_agent"], "ai-sdk/openai/3.0.48 runtime/bun/1.3.11")
+        self.assertEqual(r["api_format"], "openai")
+        self.assertEqual(r["sdk_name"], "ai-sdk/openai")
+        self.assertEqual(r["sdk_version"], "3.0.48")
+        self.assertEqual(r["runtime"], "bun/1.3.11")
+        self.assertEqual(r["working_directory"], "/Users/dev/zen-test")
+
+    def test_opencode_audit_entry(self):
+        """OpenCode metadata appears in audit JSONL output."""
+        from lumen_argus.models import AuditEntry
+
+        entry = AuditEntry(
+            timestamp="2026-04-08T07:41:35Z",
+            request_id=1,
+            provider="opencode",
+            model="minimax-m2.5-free",
+            endpoint="/zen/v1/messages",
+            action="alert",
+            raw_user_agent="ai-sdk/anthropic/3.0.64 runtime/bun/1.3.11",
+            api_format="anthropic",
+            sdk_name="ai-sdk/anthropic",
+            sdk_version="3.0.64",
+            runtime="bun/1.3.11",
+            client_name="opencode",
+        )
+        d = entry.to_dict()
+        self.assertEqual(d["provider"], "opencode")
+        self.assertEqual(d["raw_user_agent"], "ai-sdk/anthropic/3.0.64 runtime/bun/1.3.11")
+        self.assertEqual(d["sdk_name"], "ai-sdk/anthropic")
+        self.assertEqual(d["sdk_version"], "3.0.64")
+        self.assertEqual(d["runtime"], "bun/1.3.11")
+        self.assertEqual(d["api_format"], "anthropic")
+        self.assertEqual(d["client_name"], "opencode")
 
 
 if __name__ == "__main__":

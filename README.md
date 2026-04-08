@@ -298,6 +298,10 @@ Every proxied request is enriched with session context — no configuration need
 | `git_branch` | System prompt | WHICH branch? |
 | `client_name` | Client registry (User-Agent matching) | WHICH tool? (normalized ID, e.g., "cursor") |
 | `client_version` | User-Agent header | WHICH version? (e.g., "0.45.1") |
+| `sdk_name` | Parsed from User-Agent | WHICH SDK? (e.g., "ai-sdk/anthropic") |
+| `sdk_version` | Parsed from User-Agent | WHICH SDK version? |
+| `runtime` | Parsed from User-Agent | WHICH runtime? (e.g., "bun/1.3.11") |
+| `api_format` | Auto-detected from body | WHICH wire format? (anthropic/openai/gemini) |
 
 27 AI CLI agents auto-detected via client registry (`lumen-argus clients` to list). Dashboard findings filterable by client, session, and account.
 
