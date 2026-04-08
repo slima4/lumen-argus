@@ -63,8 +63,8 @@ class TestRegistryIntegrity(unittest.TestCase):
         self.assertEqual(counts[ProxyConfigType.ENV_VAR], 5)
         self.assertEqual(counts[ProxyConfigType.IDE_SETTINGS], 2)
         self.assertEqual(counts[ProxyConfigType.CONFIG_FILE], 1)
-        self.assertEqual(counts[ProxyConfigType.MANUAL], 7)
-        self.assertEqual(counts[ProxyConfigType.UNSUPPORTED], 12)
+        self.assertEqual(counts[ProxyConfigType.MANUAL], 8)
+        self.assertEqual(counts[ProxyConfigType.UNSUPPORTED], 11)
 
     def test_proxy_env_vars_derived(self):
         """PROXY_ENV_VARS should be derived from registry, not hardcoded."""

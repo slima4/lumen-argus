@@ -119,11 +119,13 @@ CLIENT_REGISTRY: list[ClientDef] = [
         provider="multi",
         ua_prefixes=("copilot/",),
         proxy_config=ProxyConfig(
-            config_type=ProxyConfigType.UNSUPPORTED,
+            config_type=ProxyConfigType.MANUAL,
             setup_instructions=(
-                "Copilot CLI routes through GitHub's servers with GitHub auth. "
-                "Setting COPILOT_PROVIDER_BASE_URL activates BYOK mode and breaks GitHub auth. "
-                "Copilot CLI supports HTTPS_PROXY for forward proxy interception."
+                "BYOK mode: set COPILOT_PROVIDER_BASE_URL to the proxy URL + "
+                "COPILOT_PROVIDER_API_KEY with your own API key. "
+                "Note: this disables GitHub auth and requires your own provider key. "
+                "GitHub license mode: use HTTPS_PROXY for forward proxy interception "
+                "(not yet supported by lumen-argus)."
             ),
         ),
         website="https://github.com/features/copilot/cli",
