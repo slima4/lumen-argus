@@ -42,11 +42,12 @@ _OS_PLATFORM_PATTERNS = [
 # ---------------------------------------------------------------------------
 
 
-def parse_user_agent_metadata(user_agent: str) -> dict[str, str]:
-    """Extract SDK name, version, and runtime from User-Agent.
+def parse_user_agent_metadata(user_agent: str, headers: dict[str, str] | None = None) -> dict[str, str]:
+    """Extract SDK name, version, and runtime from User-Agent and headers.
 
     Handles known patterns:
     - Vercel AI SDK: ``ai-sdk/anthropic/3.0.64 ai-sdk/provider-utils/4.0.21 runtime/bun/1.3.11``
+    - Stainless OpenAI SDK: ``O$t/JS 5.20.1`` + ``X-Stainless-*`` headers
     - Standard tools: ``claude-code/1.0.0``, ``aider/0.50.1``
     - Generic: ``tool/version``
 
@@ -86,6 +87,20 @@ def parse_user_agent_metadata(user_agent: str) -> dict[str, str]:
             result["sdk_version"] = first[slash_idx + 1 :][:128]
         else:
             result["sdk_name"] = first[:128]
+
+    # Stainless SDK headers (OpenAI JS/Python SDK) — enrich when UA is
+    # obfuscated (e.g., "O$t/JS 5.20.1" instead of "openai-node/5.20.1").
+    if headers:
+        stainless_lang = headers.get("x-stainless-lang", "")
+        stainless_pkg_ver = headers.get("x-stainless-package-version", "")
+        stainless_runtime = headers.get("x-stainless-runtime", "")
+        stainless_runtime_ver = headers.get("x-stainless-runtime-version", "")
+
+        if stainless_lang and stainless_pkg_ver:
+            result["sdk_name"] = ("openai-%s" % stainless_lang)[:128]
+            result["sdk_version"] = stainless_pkg_ver[:128]
+        if stainless_runtime and stainless_runtime_ver and not result["runtime"]:
+            result["runtime"] = ("%s/%s" % (stainless_runtime, stainless_runtime_ver))[:128]
 
     return result
 
@@ -315,7 +330,7 @@ def extract_session(
 
     # Request metadata — raw UA and parsed SDK stack
     ctx.raw_user_agent = raw_ua[:512]
-    ua_meta = parse_user_agent_metadata(raw_ua)
+    ua_meta = parse_user_agent_metadata(raw_ua, headers)
     ctx.sdk_name = ua_meta["sdk_name"]
     ctx.sdk_version = ua_meta["sdk_version"]
     ctx.runtime = ua_meta["runtime"]

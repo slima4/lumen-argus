@@ -1008,6 +1008,63 @@ class TestParseUserAgentMetadata(unittest.TestCase):
         self.assertEqual(meta["sdk_name"], "opencode")
         self.assertEqual(meta["sdk_version"], "")
 
+    def test_stainless_openai_sdk_headers(self):
+        """Copilot CLI sends obfuscated UA but X-Stainless-* headers reveal the SDK."""
+        meta = parse_user_agent_metadata(
+            "O$t/JS 5.20.1",
+            headers={
+                "x-stainless-lang": "js",
+                "x-stainless-package-version": "5.20.1",
+                "x-stainless-runtime": "node",
+                "x-stainless-runtime-version": "v24.11.1",
+            },
+        )
+        self.assertEqual(meta["sdk_name"], "openai-js")
+        self.assertEqual(meta["sdk_version"], "5.20.1")
+        self.assertEqual(meta["runtime"], "node/v24.11.1")
+
+    def test_stainless_python_sdk(self):
+        """OpenAI Python SDK sends X-Stainless-Lang: python."""
+        meta = parse_user_agent_metadata(
+            "OpenAI/Python 1.50.0",
+            headers={
+                "x-stainless-lang": "python",
+                "x-stainless-package-version": "1.50.0",
+                "x-stainless-runtime": "CPython",
+                "x-stainless-runtime-version": "3.12.0",
+            },
+        )
+        self.assertEqual(meta["sdk_name"], "openai-python")
+        self.assertEqual(meta["sdk_version"], "1.50.0")
+        self.assertEqual(meta["runtime"], "CPython/3.12.0")
+
+    def test_stainless_headers_without_ua(self):
+        """Stainless headers enrich even when UA is empty."""
+        meta = parse_user_agent_metadata(
+            "unknown/1.0",
+            headers={
+                "x-stainless-lang": "js",
+                "x-stainless-package-version": "5.20.1",
+                "x-stainless-runtime": "node",
+                "x-stainless-runtime-version": "v22.0.0",
+            },
+        )
+        self.assertEqual(meta["sdk_name"], "openai-js")
+        self.assertEqual(meta["sdk_version"], "5.20.1")
+        self.assertEqual(meta["runtime"], "node/v22.0.0")
+
+    def test_runtime_from_ua_not_overridden_by_stainless(self):
+        """UA runtime token takes priority over X-Stainless-Runtime."""
+        meta = parse_user_agent_metadata(
+            "ai-sdk/openai/3.0.48 runtime/bun/1.3.11",
+            headers={
+                "x-stainless-runtime": "node",
+                "x-stainless-runtime-version": "v22.0.0",
+            },
+        )
+        # runtime/ token from UA wins
+        self.assertEqual(meta["runtime"], "bun/1.3.11")
+
 
 class TestClientTypeResolution(unittest.TestCase):
     """Test _resolve_client_type — interface type from headers or registry."""
