@@ -117,6 +117,13 @@ async def _do_forward(
             # Keep the upstream name in provider for routing/audit, but use
             # the API format provider for session context extraction.
             api_provider = server.router.detect_api_provider(path)
+        elif inbound_path.startswith("/_upstream/"):
+            # Named upstream requested but not configured — reject
+            log.warning("#%d unknown named upstream: %s", request_id, inbound_path)
+            return web.json_response(
+                {"error": {"type": "proxy_error", "message": "Unknown upstream provider"}},
+                status=502,
+            )
         else:
             host, port, use_ssl, provider = server.router.route(path, headers_dict)
             api_provider = provider
