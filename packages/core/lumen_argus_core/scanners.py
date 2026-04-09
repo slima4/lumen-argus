@@ -356,12 +356,33 @@ def scan_neovim_plugin(client: ClientDef) -> DetectedClient | None:
 
 
 def detect_version(client: ClientDef, detected: DetectedClient) -> str:
-    """Run --version command to get precise version. Returns version string or empty."""
-    if not client.version_command or detected.version:
+    """Detect version via --version command or macOS app bundle plist.
+
+    Priority: existing version > command > app bundle plist.
+    """
+    if detected.version:
         return detected.version
+
+    # Try --version command first
+    if client.version_command:
+        version = _version_from_command(client.version_command)
+        if version:
+            return version
+
+    # Fallback: macOS app bundle plist (for GUI apps like Cursor, Windsurf)
+    if platform.system() == "Darwin" and client.detect_app_name:
+        version = _version_from_app_bundle(client.detect_app_name)
+        if version:
+            return version
+
+    return ""
+
+
+def _version_from_command(command: tuple[str, ...]) -> str:
+    """Run a --version command and extract version string."""
     try:
         result = subprocess.run(
-            list(client.version_command),
+            list(command),
             capture_output=True,
             text=True,
             timeout=5,
@@ -370,13 +391,35 @@ def detect_version(client: ClientDef, detected: DetectedClient) -> str:
         match = VERSION_RE.search(output)
         if match:
             version = match.group(1)
-            log.debug("version detected via command: %s → %s", client.version_command[0], version)
+            log.debug("version detected via command: %s → %s", command[0], version)
             return version
-        log.debug("version command produced no match: %s → %r", client.version_command[0], output[:100])
+        log.debug("version command produced no match: %s → %r", command[0], output[:100])
     except FileNotFoundError:
-        log.debug("version command not found: %s", client.version_command[0])
+        log.debug("version command not found: %s", command[0])
     except subprocess.TimeoutExpired:
-        log.warning("version command timed out: %s", client.version_command[0])
+        log.warning("version command timed out: %s", command[0])
     except OSError as e:
-        log.warning("version command failed: %s — %s", client.version_command[0], e)
+        log.warning("version command failed: %s — %s", command[0], e)
+    return ""
+
+
+def _version_from_app_bundle(app_name: str) -> str:
+    """Read version from macOS app bundle Info.plist."""
+    app_path = "/Applications/%s" % app_name
+    if not os.path.isdir(app_path):
+        return ""
+    try:
+        result = subprocess.run(
+            ["defaults", "read", "%s/Contents/Info.plist" % app_path, "CFBundleShortVersionString"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            if version:
+                log.debug("version detected via plist: %s → %s", app_name, version)
+                return version
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log.debug("plist version failed for %s: %s", app_name, e)
     return ""
