@@ -333,6 +333,9 @@ lumen-argus setup
 # Configure specific tool
 lumen-argus setup aider
 
+# Forward proxy setup for Copilot CLI (step-by-step: CA, alias, shell profile)
+lumen-argus setup copilot_cli
+
 # Preview changes
 lumen-argus setup --dry-run
 

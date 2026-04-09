@@ -89,11 +89,14 @@ lumen-argus detect
 # Detect MCP servers from AI tool configs
 lumen-argus detect --mcp
 
-# Auto-configure all detected tools
+# Auto-configure all detected tools (env vars, IDE settings, forward proxy)
 lumen-argus setup
 
 # Wrap MCP servers through scanning proxy (stdio + HTTP/WS)
 lumen-argus setup --mcp
+
+# Setup includes forward proxy for tools like Copilot CLI (step-by-step):
+lumen-argus setup copilot_cli
 
 # Or configure manually:
 ANTHROPIC_BASE_URL=http://localhost:8080 claude

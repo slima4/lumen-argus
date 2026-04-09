@@ -54,6 +54,8 @@ module = [
     "ahocorasick.*",
     "crossfire",
     "crossfire.*",
+    "lumen_argus_agent",
+    "lumen_argus_agent.*",
 ]
 ignore_missing_imports = true
 

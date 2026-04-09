@@ -265,7 +265,32 @@ To revert everything:
 lumen-argus setup --undo
 ```
 
-This removes source blocks and managed lines from shell profiles, truncates the env file, and restores IDE settings from backups.
+This removes source blocks and managed lines from shell profiles, truncates the env file, restores IDE settings from backups, and clears forward proxy aliases.
+
+### Forward proxy tools
+
+Some tools (e.g., Copilot CLI with GitHub auth) can't use custom base URLs.
+The setup wizard detects these (`forward_proxy: true` in the client registry) and
+offers step-by-step forward proxy configuration:
+
+```
+-- GitHub Copilot CLI ----------------------
+  This tool requires forward proxy mode (TLS interception via mitmproxy).
+
+  Step 1/4: Set up forward proxy for GitHub Copilot CLI? [Y/n]: y
+  CA certificate generated: ~/.lumen-argus/ca/ca-cert.pem
+  Step 2/4: Create shell alias for 'copilot'? [Y/n]: y
+  Aliases written to ~/.lumen-argus/forward-proxy-aliases.sh
+  Step 3/4: Add source line to ~/.zshrc? [Y/n]: y
+  Added source line to ~/.zshrc
+  Step 4/4: Install CA cert to system trust store? (requires admin) [Y/n]: n
+  Skipped. For Node.js tools, the alias already sets NODE_EXTRA_CA_CERTS.
+
+  To start the forward proxy:
+    lumen-argus-agent relay --forward-proxy-port 9090
+```
+
+The alias wraps only the specific tool — other terminal commands are unaffected:
 
 ---
 
