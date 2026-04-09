@@ -22,7 +22,7 @@ _FINDINGS_COLUMNS = (
     "provider, model, value_preview, account_id, session_id, device_id, "
     "source_ip, working_directory, git_branch, os_platform, hostname, username, "
     "client_name, client_version, client_type, "
-    "raw_user_agent, api_format, sdk_name, sdk_version, runtime, intercept_mode, "
+    "raw_user_agent, api_format, sdk_name, sdk_version, runtime, intercept_mode, original_host, "
     "api_key_hash, content_hash, seen_count, value_hash"
 )
 
@@ -72,10 +72,11 @@ class FindingsRepository(BaseRepository):
                 s.sdk_version,
                 s.runtime,
                 s.intercept_mode,
+                s.original_host,
                 s.api_key_hash,
             )
             if s
-            else ("",) * 19
+            else ("",) * 20
         )
 
         rows = []
@@ -115,12 +116,13 @@ class FindingsRepository(BaseRepository):
                     "account_id, session_id, device_id, source_ip, "
                     "working_directory, git_branch, os_platform, hostname, username, "
                     "client_name, client_version, client_type, "
-                    "raw_user_agent, api_format, sdk_name, sdk_version, runtime, intercept_mode, "
+                    "raw_user_agent, api_format, sdk_name, sdk_version, runtime, "
+                    "intercept_mode, original_host, "
                     "api_key_hash, content_hash, value_hash) "
                     "VALUES ("
                     "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
                     "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(content_hash, session_id, namespace_id) "
                     "WHERE content_hash != '' "
                     "DO UPDATE SET seen_count = findings.seen_count + 1, "
@@ -161,6 +163,8 @@ class FindingsRepository(BaseRepository):
         username: str | None = None,
         sdk_name: str | None = None,
         runtime: str | None = None,
+        intercept_mode: str | None = None,
+        original_host: str | None = None,
         days: int | None = None,
         namespace_id: int = 1,
     ) -> tuple[list[dict[str, Any]], Any]:
@@ -208,6 +212,12 @@ class FindingsRepository(BaseRepository):
         if runtime:
             conditions.append("runtime = ?")
             params.append(runtime)
+        if intercept_mode:
+            conditions.append("intercept_mode = ?")
+            params.append(intercept_mode)
+        if original_host:
+            conditions.append("original_host = ?")
+            params.append(original_host)
         if days and days > 0:
             conditions.append(self._adapter.date_diff_sql("timestamp", min(days, 365)))
         where = " WHERE " + " AND ".join(conditions)

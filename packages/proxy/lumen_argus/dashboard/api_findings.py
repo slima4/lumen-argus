@@ -33,6 +33,8 @@ _FINDING_FILTER_KEYS: list[tuple[str, str]] = [
     ("username", "username"),
     ("sdk_name", "sdk_name"),
     ("runtime", "runtime"),
+    ("intercept_mode", "intercept_mode"),
+    ("original_host", "original_host"),
 ]
 
 

@@ -261,6 +261,7 @@ async def _do_forward(
         session.api_format = api_provider
         if is_forward_proxy:
             session.intercept_mode = "forward"
+            session.original_host = forward_host
             # Security: only authenticated agents may use /_forward.
             # Without this check, any local process could use the proxy as
             # an SSRF relay to arbitrary hosts via X-Lumen-Forward-Host.

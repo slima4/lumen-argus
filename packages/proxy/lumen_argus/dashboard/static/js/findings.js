@@ -48,6 +48,7 @@ function loadFindings(){
   const actF=document.getElementById('f-action').value;
   const typeF=document.getElementById('f-type').value;
   const clientF=document.getElementById('f-client').value;
+  const modeF=document.getElementById('f-mode').value;
   const daysF=document.getElementById('f-days').value;
   if(sevF)url+='&severity='+encodeURIComponent(sevF);
   if(detF)url+='&detector='+encodeURIComponent(detF);
@@ -56,6 +57,7 @@ function loadFindings(){
   if(actF)url+='&action='+encodeURIComponent(actF);
   if(typeF)url+='&finding_type='+encodeURIComponent(typeF);
   if(clientF)url+='&client='+encodeURIComponent(clientF);
+  if(modeF)url+='&intercept_mode='+encodeURIComponent(modeF);
   if(daysF)url+='&days='+encodeURIComponent(daysF);
   fetch(url).then(function(r){return r.json()}).then(function(fd){
     allFindings=fd.findings||[];findTotal=fd.total;
@@ -130,6 +132,8 @@ function showDetail(f){selectedFindingId=f.id;
   if(f.sdk_name){let sdk=f.sdk_name;if(f.sdk_version)sdk+=' '+f.sdk_version;fields.push(['SDK',sdk]);}
   if(f.runtime)fields.push(['Runtime',f.runtime]);
   if(f.api_format)fields.push(['API Format',f.api_format]);
+  if(f.intercept_mode&&f.intercept_mode!=='reverse')fields.push(['Intercept Mode',f.intercept_mode]);
+  if(f.original_host)fields.push(['Original Host',f.original_host]);
   if(f.raw_user_agent)fields.push(['User-Agent',f.raw_user_agent]);
   fields.forEach(function(pair){const item=document.createElement('div');item.className='detail-item';
     const lbl=document.createElement('label');lbl.textContent=pair[0];

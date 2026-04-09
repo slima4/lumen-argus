@@ -138,6 +138,8 @@ class AnalyticsStore:
         username: str | None = None,
         sdk_name: str | None = None,
         runtime: str | None = None,
+        intercept_mode: str | None = None,
+        original_host: str | None = None,
         days: int | None = None,
         namespace_id: int = 1,
     ) -> tuple[list[dict[str, Any]], Any]:
@@ -157,6 +159,8 @@ class AnalyticsStore:
             username=username,
             sdk_name=sdk_name,
             runtime=runtime,
+            intercept_mode=intercept_mode,
+            original_host=original_host,
             days=days,
             namespace_id=namespace_id,
         )

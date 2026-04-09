@@ -58,5 +58,6 @@ def _log_audit(
         sdk_version=session.sdk_version if session else "",
         runtime=session.runtime if session else "",
         intercept_mode=session.intercept_mode if session else "reverse",
+        original_host=session.original_host if session else "",
     )
     server.audit.log(entry)

@@ -72,6 +72,7 @@ class SessionContext:
 
     # Intercept mode — HOW CAPTURED
     intercept_mode: str = "reverse"  # "reverse" (base URL) or "forward" (HTTPS_PROXY + TLS)
+    original_host: str = ""  # Forward proxy: original destination host (e.g., "api.individual.githubcopilot.com")
 
 
 @dataclass
@@ -150,6 +151,7 @@ class AuditEntry:
     sdk_version: str = ""
     runtime: str = ""
     intercept_mode: str = "reverse"
+    original_host: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for JSONL output. Never includes matched_value."""
@@ -201,7 +203,9 @@ class AuditEntry:
             val = getattr(self, key, "")
             if val:
                 d[key] = val
-        # intercept_mode: only include when not the default "reverse"
+        # intercept_mode + original_host: only include when non-default
         if self.intercept_mode and self.intercept_mode != "reverse":
             d["intercept_mode"] = self.intercept_mode
+        if self.original_host:
+            d["original_host"] = self.original_host
         return d
