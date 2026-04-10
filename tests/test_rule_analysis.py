@@ -433,5 +433,386 @@ class TestQualityToDict(unittest.TestCase):
         self.assertEqual(result["fully_redundant"], [])
 
 
+class _RuleAnalysisStateTest(unittest.TestCase):
+    """Base class that resets the module-level analysis state between tests.
+
+    The rule_analysis module uses module globals (_analysis_status, _analysis_log_lines)
+    so two tests touching them without cleanup would race against each other in the
+    same process. We snapshot+restore in setUp/tearDown.
+    """
+
+    def setUp(self):
+        from lumen_argus import rule_analysis as ra
+
+        self._ra = ra
+        with ra._analysis_lock:
+            self._saved_status = dict(ra._analysis_status)
+            self._saved_log = list(ra._analysis_log_lines)
+            ra._analysis_status.update(
+                running=False,
+                phase="",
+                progress="",
+                started_at="",
+                last_phase_change_at=0.0,
+                error=None,
+            )
+            ra._analysis_log_lines.clear()
+
+    def tearDown(self):
+        with self._ra._analysis_lock:
+            self._ra._analysis_status.clear()
+            self._ra._analysis_status.update(self._saved_status)
+            self._ra._analysis_log_lines.clear()
+            self._ra._analysis_log_lines.extend(self._saved_log)
+
+
+class TestPhaseContext(_RuleAnalysisStateTest):
+    """The _Phase context manager handles success and failure paths."""
+
+    def test_phase_success_updates_status_and_clears(self):
+        from lumen_argus.rule_analysis import (
+            PHASE_GENERATING,
+            _Phase,
+            get_analysis_status,
+        )
+
+        with _Phase(PHASE_GENERATING, "test progress") as phase:
+            mid = get_analysis_status()
+            self.assertTrue(mid["running"])
+            self.assertEqual(mid["phase"], PHASE_GENERATING)
+            self.assertEqual(mid["progress"], "test progress")
+            self.assertGreater(phase.start_monotonic, 0.0)
+
+        # After exit, status still reflects the phase but no error.
+        post = get_analysis_status()
+        self.assertIsNone(post["error"])
+
+    def test_phase_failure_records_structured_error(self):
+        from lumen_argus.rule_analysis import (
+            PHASE_EVALUATING,
+            _Phase,
+            get_analysis_status,
+        )
+
+        with self.assertRaises(ValueError):
+            with _Phase(PHASE_EVALUATING, "evaluating..."):
+                raise ValueError("simulated boom")
+
+        status = get_analysis_status()
+        self.assertFalse(status["running"])
+        self.assertIsNotNone(status["error"])
+        self.assertEqual(status["error"]["type"], "ValueError")
+        self.assertEqual(status["error"]["message"], "simulated boom")
+        self.assertEqual(status["error"]["phase"], PHASE_EVALUATING)
+
+    def test_phase_does_not_swallow_keyboard_interrupt(self):
+        from lumen_argus.rule_analysis import PHASE_CLASSIFYING, _Phase, get_analysis_status
+
+        with self.assertRaises(KeyboardInterrupt):
+            with _Phase(PHASE_CLASSIFYING):
+                raise KeyboardInterrupt()
+
+        status = get_analysis_status()
+        # KeyboardInterrupt is not captured into the error field.
+        self.assertIsNone(status["error"])
+
+    def test_phase_emits_grepable_log_markers(self):
+        import logging
+
+        from lumen_argus.rule_analysis import PHASE_GENERATING, _Phase
+
+        captured: list[str] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                captured.append(record.getMessage())
+
+        handler = _Capture()
+        handler.setLevel(logging.DEBUG)
+        logger = logging.getLogger("argus.rule_analysis")
+        prior_level = logger.level
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        try:
+            with _Phase(PHASE_GENERATING):
+                pass
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(prior_level)
+
+        markers = [m for m in captured if m.startswith("phase=")]
+        self.assertTrue(
+            any(m == "phase=generating start" for m in markers),
+            f"missing start marker; captured={captured}",
+        )
+        self.assertTrue(
+            any(m.startswith("phase=generating end duration=") for m in markers),
+            f"missing end marker; captured={captured}",
+        )
+
+
+class TestStatusErrorReporting(_RuleAnalysisStateTest):
+    """Structured error field on the status dict."""
+
+    def test_set_error_clears_running_and_populates_error(self):
+        from lumen_argus.rule_analysis import _set_error, get_analysis_status
+
+        _set_error("RuntimeError", "kapow", "evaluating")
+        status = get_analysis_status()
+        self.assertFalse(status["running"])
+        self.assertEqual(status["phase"], "failed")
+        self.assertEqual(status["error"]["type"], "RuntimeError")
+        self.assertEqual(status["error"]["message"], "kapow")
+        self.assertEqual(status["error"]["phase"], "evaluating")
+
+    def test_status_dict_does_not_leak_internal_heartbeat(self):
+        from lumen_argus.rule_analysis import _set_status, get_analysis_status
+
+        _set_status(True, "generating", "go")
+        status = get_analysis_status()
+        # last_phase_change_at is internal — never serialized to clients.
+        self.assertNotIn("last_phase_change_at", status)
+
+
+class TestWatchdog(_RuleAnalysisStateTest):
+    """The watchdog thread enforces total and per-phase deadlines."""
+
+    def test_watchdog_total_deadline_fires(self):
+        import threading
+
+        from lumen_argus.rule_analysis import (
+            PHASE_GENERATING,
+            _set_status,
+            _watchdog,
+            get_analysis_status,
+        )
+
+        # Make the worker look like it's in 'generating' phase.
+        _set_status(True, PHASE_GENERATING, "stuck")
+
+        worker_done = threading.Event()
+        # Total deadline very short, phase deadline disabled. Note: the
+        # watchdog's poll_interval is floored at 1.0s, so the first deadline
+        # check fires ~1s after start regardless of how small total_s is —
+        # the sub-second value just guarantees the check trips on its first
+        # pass. Don't expect a sub-second fire.
+        watchdog = threading.Thread(
+            target=_watchdog,
+            args=(threading.current_thread(), worker_done, 0.3, 0.0),
+            daemon=True,
+        )
+        watchdog.start()
+        watchdog.join(timeout=5.0)
+        self.assertFalse(watchdog.is_alive(), "watchdog thread should have exited")
+
+        status = get_analysis_status()
+        self.assertFalse(status["running"])
+        self.assertEqual(status["phase"], "failed")
+        self.assertIsNotNone(status["error"])
+        self.assertEqual(status["error"]["type"], "WatchdogTotalTimeout")
+        self.assertIn("total deadline", status["error"]["message"])
+
+    def test_watchdog_phase_deadline_fires(self):
+        import threading
+        import time as _time
+
+        from lumen_argus import rule_analysis as ra
+
+        # Manually advance the heartbeat backwards so per-phase elapsed
+        # exceeds the threshold immediately.
+        ra._set_status(True, ra.PHASE_EVALUATING, "stuck in eval")
+        with ra._analysis_lock:
+            ra._analysis_status["last_phase_change_at"] = _time.monotonic() - 100.0
+
+        worker_done = threading.Event()
+        # Same poll-interval-floor caveat as test_watchdog_total_deadline_fires:
+        # the first check fires ~1s after start regardless of phase_s=0.5.
+        watchdog = threading.Thread(
+            target=ra._watchdog,
+            args=(threading.current_thread(), worker_done, 0.0, 0.5),
+            daemon=True,
+        )
+        watchdog.start()
+        watchdog.join(timeout=5.0)
+        self.assertFalse(watchdog.is_alive())
+
+        status = ra.get_analysis_status()
+        self.assertEqual(status["error"]["type"], "WatchdogPhaseTimeout")
+        self.assertEqual(status["error"]["phase"], ra.PHASE_EVALUATING)
+        self.assertIn("evaluating", status["error"]["message"])
+
+    def test_watchdog_exits_cleanly_when_worker_finishes(self):
+        import threading
+
+        from lumen_argus.rule_analysis import _watchdog, get_analysis_status
+
+        worker_done = threading.Event()
+        worker_done.set()  # already finished
+        watchdog = threading.Thread(
+            target=_watchdog,
+            args=(threading.current_thread(), worker_done, 60.0, 60.0),
+            daemon=True,
+        )
+        watchdog.start()
+        watchdog.join(timeout=2.0)
+        self.assertFalse(watchdog.is_alive())
+
+        status = get_analysis_status()
+        # Watchdog must not falsely report an error when the worker finished.
+        self.assertIsNone(status["error"])
+
+    def test_watchdog_with_both_deadlines_disabled_never_fires(self):
+        """Both total_s=0 and phase_s=0 → watchdog polls but never flags an error."""
+        import threading
+
+        from lumen_argus.rule_analysis import (
+            PHASE_GENERATING,
+            _set_status,
+            _watchdog,
+            get_analysis_status,
+        )
+
+        # Put the worker in a phase that would normally trip a phase deadline
+        # (heartbeat pushed 100s into the past). With phase_s=0 the check is
+        # suppressed and the watchdog must exit cleanly once worker_done fires.
+        _set_status(True, PHASE_GENERATING, "stuck but not timed")
+        with self._ra._analysis_lock:
+            import time as _time
+
+            self._ra._analysis_status["last_phase_change_at"] = _time.monotonic() - 100.0
+
+        worker_done = threading.Event()
+        watchdog = threading.Thread(
+            target=_watchdog,
+            args=(threading.current_thread(), worker_done, 0.0, 0.0),
+            daemon=True,
+        )
+        watchdog.start()
+        # Give the watchdog a couple of poll cycles to prove it doesn't fire
+        # anything, then signal the worker finished.
+        import time as _time
+
+        _time.sleep(2.2)
+        self.assertTrue(watchdog.is_alive(), "watchdog should still be polling")
+        worker_done.set()
+        watchdog.join(timeout=3.0)
+        self.assertFalse(watchdog.is_alive())
+
+        status = get_analysis_status()
+        self.assertIsNone(status["error"], "no error should be recorded when both deadlines are disabled")
+
+    def test_run_analysis_does_not_spawn_watchdog_when_both_disabled(self):
+        """The call-site guard skips the watchdog thread entirely for total=phase=0."""
+        import threading
+        from dataclasses import dataclass
+
+        from lumen_argus.rule_analysis import run_analysis_in_background
+
+        @dataclass
+        class _RA:
+            samples: int = 5
+            threshold: float = 0.8
+            seed: int = 1
+            watchdog_total_s: float = 0.0
+            watchdog_phase_s: float = 0.0
+
+        @dataclass
+        class _Config:
+            rule_analysis: _RA
+
+        class _NoopRules:
+            @staticmethod
+            def get_active():
+                return []
+
+        class _NoopRuleAnalysis:
+            @staticmethod
+            def save_analysis(**kwargs):
+                pass
+
+            @staticmethod
+            def get_dismissed_findings():
+                return []
+
+        class _NoopStore:
+            rules = _NoopRules()
+            rule_analysis = _NoopRuleAnalysis()
+
+        config = _Config(rule_analysis=_RA())
+        before = {t.name for t in threading.enumerate()}
+        started = run_analysis_in_background(
+            _NoopStore(),
+            config=config,
+            thread_name="rule-analysis-test-guard",
+        )
+        # Without crossfire installed, run_analysis_in_background short-circuits
+        # to False — skip the thread assertion in that case.
+        if not started:
+            self.skipTest("crossfire not installed — background analysis disabled")
+
+        # Wait for the worker to settle (it has no rules, so it exits fast),
+        # then snapshot the new threads. The -watchdog companion must not be
+        # in there.
+        import time as _time
+
+        for _ in range(20):
+            _time.sleep(0.05)
+            new = {t.name for t in threading.enumerate()} - before
+            if "rule-analysis-test-guard" not in new:
+                break
+        new = {t.name for t in threading.enumerate()} - before
+        self.assertNotIn(
+            "rule-analysis-test-guard-watchdog",
+            new,
+            "watchdog thread should not be spawned when both deadlines are 0",
+        )
+
+
+class TestDoAnalysisSequential(StoreTestCase):
+    """End-to-end sanity check that _do_analysis runs in sequential mode.
+
+    Pins the regression: no subprocesses are spawned even when crossfire-rules
+    is installed and there are >= 8 rules. This is the call-site fix for the
+    fork-from-thread hang in crossfire 0.2.0.
+    """
+
+    @unittest.skipUnless(
+        __import__("importlib").util.find_spec("crossfire"),
+        "crossfire not installed",
+    )
+    def test_no_subprocesses_spawned_during_analysis(self):
+        import multiprocessing
+
+        from lumen_argus.rule_analysis import _do_analysis
+
+        # Seed enough rules to trigger the >= 8 parallel auto-threshold
+        # without our parallel=False override at the call site.
+        for i in range(12):
+            self.store.rules.create(
+                {
+                    "name": f"test_rule_{i}",
+                    "pattern": rf"[a-z]{{{i + 3}}}",
+                    "detector": "secrets",
+                    "severity": "high",
+                    "action": "alert",
+                    "enabled": True,
+                    "tier": "custom",
+                    "description": "",
+                    "tags": [],
+                }
+            )
+
+        before = set(multiprocessing.active_children())
+        result = _do_analysis(self.store, samples=20, threshold=0.8, seed=42)
+        after = set(multiprocessing.active_children())
+
+        self.assertIsNotNone(result, "analysis should have produced a result")
+        self.assertEqual(
+            after,
+            before,
+            "rule analysis must run sequentially — no subprocesses allowed from inside a multi-threaded host process",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

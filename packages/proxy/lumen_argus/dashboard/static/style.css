@@ -459,3 +459,9 @@ input:disabled+.pipeline-slider{opacity:.4;cursor:not-allowed}
   margin-top:10px;padding:12px 14px;max-height:300px;overflow-y:auto;font-family:var(--font-data);
   font-size:.72rem;line-height:1.6;color:#8b949e}
 .ra-terminal-line{white-space:pre-wrap;word-break:break-all}
+.ra-error-banner{background:rgba(239,68,68,.08);border:1px solid var(--critical);
+  border-radius:var(--radius);padding:14px 16px;margin-top:8px}
+.ra-error-title{color:var(--critical);font-weight:600;font-size:.85rem;margin-bottom:6px}
+.ra-error-message{color:var(--text-primary);font-family:var(--font-data);font-size:.78rem;
+  white-space:pre-wrap;word-break:break-word;margin-bottom:8px}
+.ra-error-hint{color:var(--text-secondary);font-size:.75rem}

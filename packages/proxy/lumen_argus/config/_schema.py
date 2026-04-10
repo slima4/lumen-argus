@@ -73,6 +73,17 @@ class RuleAnalysisConfig:
     threshold: float = 0.8  # overlap fraction to classify as duplicate/subset
     seed: int = 42  # reproducible corpus generation
     auto_on_import: bool = True  # re-run analysis after rule import
+    # Watchdog: total wall-clock budget for one full analysis run. After this
+    # many seconds the watchdog flips status to failed and stops waiting on the
+    # worker thread. The worker thread is left running (Python cannot safely
+    # cancel a thread blocked in C extensions) but the dashboard stops
+    # reporting running:true forever. Set to 0 to disable.
+    watchdog_total_s: float = 300.0
+    # Per-phase deadline. If any single phase (generating, evaluating,
+    # classifying, quality) runs longer than this without a phase-change
+    # heartbeat, the watchdog flips to failed early. Catches "hung in one
+    # phase" cases before the total deadline expires. Set to 0 to disable.
+    watchdog_phase_s: float = 120.0
 
 
 @dataclass

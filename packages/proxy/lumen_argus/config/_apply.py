@@ -138,6 +138,10 @@ def _apply_config(config: Config, data: dict[str, Any]) -> None:
             config.rule_analysis.seed = int(ra["seed"])
         if "auto_on_import" in ra:
             config.rule_analysis.auto_on_import = bool(ra["auto_on_import"])
+        if "watchdog_total_s" in ra:
+            config.rule_analysis.watchdog_total_s = max(0.0, float(ra["watchdog_total_s"]))
+        if "watchdog_phase_s" in ra:
+            config.rule_analysis.watchdog_phase_s = max(0.0, float(ra["watchdog_phase_s"]))
 
     # Dedup
     dedup = data.get("dedup", {})

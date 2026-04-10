@@ -1,10 +1,10 @@
-"""Rule overlap analysis via Crossfire (optional dependency).
+"""Rule overlap analysis via crossfire-rules (optional dependency).
 
-When crossfire is installed, provides corpus-based overlap detection
+When crossfire-rules is installed, provides corpus-based overlap detection
 for rules: duplicates, subsets, and partial overlaps. Results cached
 in the analytics DB for the dashboard Rule Analysis page.
 
-Install: pip install lumen-argus[rules-analysis]
+Install: pip install lumen-argus-proxy[rules-analysis]
 """
 
 from __future__ import annotations
@@ -36,7 +36,10 @@ try:
     log.info("crossfire available — rule overlap analysis enabled")
 except ImportError:
     HAS_CROSSFIRE = False
-    log.info("crossfire not installed — rule overlap analysis disabled. Install with: pip install crossfire")
+    log.info(
+        "crossfire-rules not installed — rule overlap analysis disabled. "
+        "Install with: pip install lumen-argus-proxy[rules-analysis]"
+    )
 
 
 def _rules_to_crossfire(db_rules: list[dict[str, Any]]) -> tuple[list[Any], dict[str, dict[str, Any]]]:
@@ -139,6 +142,22 @@ def _quality_to_dict(report: Any) -> dict[str, Any]:
     }
 
 
+def _empty_result(total_rules: int, *, duration_s: float = 0.0) -> dict[str, Any]:
+    """Build a complete-but-empty result dict for the trivial-input cases."""
+    return {
+        "status": "complete",
+        "timestamp": now_iso(),
+        "duration_s": duration_s,
+        "total_rules": total_rules,
+        "summary": {"duplicates": 0, "subsets": 0, "overlaps": 0, "clusters": 0},
+        "duplicates": [],
+        "subsets": [],
+        "overlaps": [],
+        "clusters": [],
+        "quality": {},
+    }
+
+
 def run_analysis(
     store: AnalyticsStore, *, samples: int = 50, threshold: float = 0.8, seed: int = 42
 ) -> dict[str, Any] | None:
@@ -208,11 +227,32 @@ def filter_dismissed(result: dict[str, Any], dismissed_pairs: list[list[str]]) -
 _analysis_lock = threading.Lock()
 _analysis_log_lines: list[str] = []  # log lines for UI streaming
 _MAX_LOG_LINES = 5000
-_analysis_status = {
+
+# Phase names that appear in status["phase"], log markers, and the watchdog
+# diagnostics. Keep them stable — clients (dashboard, integration tests, future
+# Pro extensions) match on these strings.
+PHASE_STARTING = "starting"
+PHASE_GENERATING = "generating"
+PHASE_EVALUATING = "evaluating"
+PHASE_CLASSIFYING = "classifying"
+PHASE_QUALITY = "quality"
+PHASE_SAVING = "saving"
+PHASE_COMPLETE = "complete"
+PHASE_FAILED = "failed"
+
+_analysis_status: dict[str, Any] = {
     "running": False,
-    "phase": "",  # "generating", "evaluating", "classifying", "saving"
-    "progress": "",  # human-readable progress text
+    "phase": "",
+    "progress": "",
     "started_at": "",
+    # last_phase_change_at: monotonic timestamp (float) of the most recent phase
+    # transition. Used by the watchdog to detect "stuck in one phase" hangs.
+    # Internal — not serialized to clients.
+    "last_phase_change_at": 0.0,
+    # error: populated when analysis fails (exception, watchdog timeout, etc.).
+    # Format: {"type": "ExceptionClass", "message": "...", "phase": "evaluating"}
+    # Cleared at the start of each new run. Dashboard renders a banner when set.
+    "error": None,
 }
 
 
@@ -223,22 +263,63 @@ def get_analysis_status(since: int = 0) -> dict[str, Any]:
         since: return only log lines from this index onward (0 = all).
     """
     with _analysis_lock:
-        result = dict(_analysis_status)
+        # Drop the internal `last_phase_change_at` from the client view — it's
+        # only meaningful inside this module for watchdog scheduling.
+        result = {k: v for k, v in _analysis_status.items() if k != "last_phase_change_at"}
         result["log"] = _analysis_log_lines[since:]
         result["log_offset"] = len(_analysis_log_lines)
     return result
 
 
-def _set_status(running: bool, phase: str = "", progress: str = "") -> None:
+def _set_status(
+    running: bool,
+    phase: str = "",
+    progress: str = "",
+    *,
+    reset_started_at: bool = False,
+    clear_error: bool = False,
+) -> None:
+    """Update analysis status atomically.
+
+    Args:
+        running: Whether analysis is currently in flight.
+        phase: Phase name (one of the PHASE_* constants, or empty).
+        progress: Human-readable progress text shown to the dashboard.
+        reset_started_at: When True, reinitialize started_at and clear the
+            log buffer. Use only at the start of a new analysis run.
+        clear_error: When True, clear the error field. Use at the start of a
+            new run so old errors don't persist into a successful re-run.
+    """
     with _analysis_lock:
+        prev_phase = _analysis_status["phase"]
         _analysis_status["running"] = running
         _analysis_status["phase"] = phase
         _analysis_status["progress"] = progress
-        if running and not _analysis_status["started_at"]:
+        if running and reset_started_at:
             _analysis_status["started_at"] = now_iso()
             _analysis_log_lines.clear()
         if not running:
             _analysis_status["started_at"] = ""
+        if clear_error:
+            _analysis_status["error"] = None
+        # Bump phase-change heartbeat whenever the phase actually changes (or
+        # at the very first transition to running). Used by the watchdog.
+        if phase != prev_phase or (running and _analysis_status["last_phase_change_at"] == 0.0):
+            _analysis_status["last_phase_change_at"] = time.monotonic()
+
+
+def _set_error(exc_type: str, message: str, phase: str) -> None:
+    """Record a structured error and flip status to not-running atomically."""
+    with _analysis_lock:
+        _analysis_status["running"] = False
+        _analysis_status["phase"] = PHASE_FAILED
+        _analysis_status["progress"] = f"{exc_type}: {message}"
+        _analysis_status["started_at"] = ""
+        _analysis_status["error"] = {
+            "type": exc_type,
+            "message": message,
+            "phase": phase,
+        }
 
 
 def _append_log(line: str) -> None:
@@ -250,42 +331,35 @@ def _append_log(line: str) -> None:
 
 
 class _AnalysisLogHandler(logging.Handler):
-    """Captures log output from crossfire and argus.rule_analysis into the UI buffer.
+    """Captures log output from crossfire and argus.rule_analysis into the UI log buffer.
 
-    Also tracks per-rule progress during corpus generation and evaluation
-    to update the status bar dynamically (e.g., "Generating corpus: 10 of 1736 rules").
+    Per-phase progress is no longer driven from log records — it's pushed
+    explicitly by the `_phase` context manager in _do_analysis. This handler
+    is now a pure log forwarder: every formatted record reaches the dashboard's
+    log stream regardless of which logger emitted it (parent process, worker
+    process, evaluator, classifier, etc.). The previous "match log message
+    text and increment counter" approach was fragile and broke whenever
+    crossfire emitted records from a worker process whose logging state was
+    independent of the parent.
+
+    Thread scoping: the handler is attached to the process-wide `crossfire`
+    logger tree, which is a singleton. If any other code path in the process
+    happens to emit records on a `crossfire.*` logger during an analysis run
+    (e.g. rule import calling crossfire validators from the event loop), those
+    records would leak into the UI log buffer. We filter by the owning thread
+    ident so only records emitted from the analysis worker reach the buffer.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, owner_thread_ident: int) -> None:
         super().__init__()
-        self._gen_count = 0
-        self._gen_total = 0
-        self._eval_chunks_done = 0
-
-    def set_total_rules(self, total: int) -> None:
-        self._gen_count = 0
-        self._gen_total = total
+        self._owner_thread_ident = owner_thread_ident
 
     def emit(self, record: logging.LogRecord) -> None:
+        if record.thread != self._owner_thread_ident:
+            return
         try:
             msg = self.format(record)
             _append_log(msg)
-            # Track per-rule corpus generation progress
-            if self._gen_total and record.name == "crossfire.generator":
-                if ": generated " in msg or "generation failed" in msg:
-                    self._gen_count += 1
-                    _set_status(
-                        True, "generating", "Generating corpus: %d of %d rules..." % (self._gen_count, self._gen_total)
-                    )
-                elif "Corpus generation complete" in msg:
-                    _set_status(True, "evaluating", "Corpus ready. Starting evaluation...")
-            # Track evaluation partition progress
-            if record.name == "crossfire.evaluator":
-                if "Evaluating partition" in msg:
-                    self._eval_chunks_done += 1
-                    _set_status(True, "evaluating", msg)
-                elif "Progress:" in msg:
-                    _set_status(True, "evaluating", msg)
         except Exception:
             self.handleError(record)
 
@@ -294,6 +368,66 @@ def is_analysis_running() -> bool:
     """Check if analysis is currently running (thread-safe)."""
     with _analysis_lock:
         return bool(_analysis_status["running"])
+
+
+def _last_phase_change_at() -> float:
+    """Return the monotonic timestamp of the most recent phase transition."""
+    with _analysis_lock:
+        return float(_analysis_status["last_phase_change_at"])
+
+
+class _Phase:
+    """Context manager that emits structured phase markers and updates status.
+
+    Yields the start time so the caller can compute per-phase metrics. Wraps the
+    body in try/except so any exception is captured into the structured error
+    field with the active phase name attached, then re-raised so the caller's
+    own try/except can decide how to react.
+
+    Log format:
+        phase=<name> start
+        phase=<name> end duration=<s>s [extra=...]
+        phase=<name> failed duration=<s>s exception=<ClassName>: <message>
+
+    The "phase=" prefix is the single grep key for diagnosing where an
+    analysis got stuck. If you don't see "phase=evaluating end" after
+    "phase=evaluating start", the evaluator hung.
+    """
+
+    def __init__(self, name: str, progress: str = "") -> None:
+        self.name = name
+        self.progress = progress or name.capitalize() + "..."
+        self.start_monotonic: float = 0.0
+
+    def __enter__(self) -> _Phase:
+        self.start_monotonic = time.monotonic()
+        _set_status(True, self.name, self.progress)
+        log.info("phase=%s start", self.name)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        duration = time.monotonic() - self.start_monotonic
+        if exc_type is None or exc_val is None:
+            log.info("phase=%s end duration=%.2fs", self.name, duration)
+            return
+        # Don't capture KeyboardInterrupt / SystemExit into error field —
+        # those mean the host wants to shut down.
+        if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+            return
+        log.error(
+            "phase=%s failed duration=%.2fs exception=%s: %s",
+            self.name,
+            duration,
+            exc_type.__name__,
+            exc_val,
+            exc_info=(exc_type, exc_val, exc_tb),
+        )
+        _set_error(exc_type.__name__, str(exc_val), self.name)
 
 
 def run_analysis_in_background(
@@ -309,34 +443,58 @@ def run_analysis_in_background(
     """Run overlap analysis in a background thread with SSE broadcast on completion.
 
     Shared by both the API trigger endpoint and CLI auto-analysis after import.
-    When config is provided, samples/threshold/seed are read from it (overriding defaults).
-    Returns False if analysis is already running or crossfire not installed.
+    When `config` is provided, samples/threshold/seed and watchdog timeouts are
+    read from it (overriding defaults). Returns False if analysis is already
+    running or crossfire is not installed.
     """
     if not HAS_CROSSFIRE:
         return False
 
+    watchdog_total_s = 300.0
+    watchdog_phase_s = 120.0
     if config:
         samples = config.rule_analysis.samples
         threshold = config.rule_analysis.threshold
         seed = config.rule_analysis.seed
+        watchdog_total_s = config.rule_analysis.watchdog_total_s
+        watchdog_phase_s = config.rule_analysis.watchdog_phase_s
 
-    # Atomic check-and-set to prevent concurrent analysis threads
+    # Concurrent-run check in its own tiny critical section. The full
+    # initialization happens in _set_status below, which is the single source
+    # of truth for all status transitions (running flag, phase, started_at,
+    # last_phase_change_at, error clearing). Rule analysis is user-triggered
+    # and infrequent, so the microsecond window between this check and
+    # _set_status is not worth a reentrant-lock solution.
     with _analysis_lock:
         if _analysis_status["running"]:
             log.warning("analysis already running — skipping duplicate request")
             return False
-        _analysis_status["running"] = True
-        _analysis_status["started_at"] = now_iso()
-        _analysis_log_lines.clear()
 
-    _set_status(True, "starting", "Loading rules...")
+    _set_status(
+        True,
+        PHASE_STARTING,
+        "Loading rules...",
+        reset_started_at=True,
+        clear_error=True,
+    )
+
+    worker_done = threading.Event()
 
     def _run() -> None:
+        thread = threading.current_thread()
+        log.info(
+            "phase=run start thread=%s ident=%s samples=%d threshold=%.2f seed=%d",
+            thread.name,
+            thread.ident,
+            samples,
+            threshold,
+            seed,
+        )
         try:
             result = _run_analysis_with_status(store, samples=samples, threshold=threshold, seed=seed)
             if result:
-                _set_status(True, "saving", "Saving results...")
-                save_and_return(store, result)
+                with _Phase(PHASE_SAVING, "Saving results..."):
+                    save_and_return(store, result)
                 if extensions:
                     broadcaster = extensions.get_sse_broadcaster()
                     if broadcaster:
@@ -347,25 +505,133 @@ def run_analysis_in_background(
                                 "timestamp": result.get("timestamp", ""),
                             },
                         )
-                log.info("background analysis complete (%s)", thread_name)
+                _set_status(False, PHASE_COMPLETE, "Analysis complete")
+                log.info(
+                    "phase=run end thread=%s status=success duration=%.2fs",
+                    thread.name,
+                    result.get("duration_s", 0.0),
+                )
             else:
-                log.warning("analysis returned no result — check logs for errors (%s)", thread_name)
+                # _run_analysis_with_status already populated status.error in
+                # the failing _Phase context, so we just confirm here.
+                log.warning("phase=run end thread=%s status=no_result", thread.name)
         except Exception as exc:
-            log.error("background analysis failed (%s): %s", thread_name, exc, exc_info=True)
+            # Last-resort capture for anything _Phase didn't catch (errors
+            # outside any phase context, e.g. store.rules.get_active itself).
+            log.exception("phase=run end thread=%s status=error", thread.name)
+            _set_error(type(exc).__name__, str(exc), "outside_phase")
         finally:
-            _set_status(False)
+            worker_done.set()
 
-    t = threading.Thread(target=_run, daemon=True, name=thread_name)
-    t.start()
+    worker_thread = threading.Thread(target=_run, daemon=True, name=thread_name)
+    worker_thread.start()
     log.info("analysis started in background thread: %s", thread_name)
+
+    # Watchdog: separate daemon thread polls the heartbeat and the worker's
+    # liveness. It only enforces deadlines; it doesn't try to kill the worker
+    # (Python can't safely cancel a thread that's blocked in C). On timeout it
+    # flips status to failed so the dashboard stops reporting running:true and
+    # the operator gets a structured error.
+    if watchdog_total_s > 0 or watchdog_phase_s > 0:
+        watchdog_thread = threading.Thread(
+            target=_watchdog,
+            args=(worker_thread, worker_done, watchdog_total_s, watchdog_phase_s),
+            daemon=True,
+            name=f"{thread_name}-watchdog",
+        )
+        watchdog_thread.start()
+
     return True
+
+
+def _watchdog(
+    worker: threading.Thread,
+    worker_done: threading.Event,
+    total_s: float,
+    phase_s: float,
+) -> None:
+    """Enforce a wall-clock deadline on the analysis worker.
+
+    Polls every 5 seconds (or sooner if the deadline is short). Two checks:
+
+    1. Total deadline: how long since the worker started, regardless of phase.
+       Catches anything that runs longer than the operator is willing to wait.
+    2. Per-phase deadline: how long since the last phase transition. Catches
+       a single phase that hangs (e.g. evaluator stuck on a pathological rule)
+       earlier than the total deadline.
+
+    On timeout the watchdog logs a structured error and flips status to failed.
+    The worker thread is left running — Python cannot safely cancel a thread
+    blocked in C extensions, but the dashboard no longer hangs on running:true.
+    """
+    started = time.monotonic()
+    poll_interval = max(1.0, min(5.0, (total_s or phase_s) / 10.0))
+    log.info(
+        "phase=watchdog start total_s=%.0f phase_s=%.0f poll_s=%.1f",
+        total_s,
+        phase_s,
+        poll_interval,
+    )
+
+    while not worker_done.is_set():
+        if worker_done.wait(timeout=poll_interval):
+            break
+        now = time.monotonic()
+        elapsed_total = now - started
+        elapsed_phase = now - _last_phase_change_at()
+
+        if total_s > 0 and elapsed_total > total_s:
+            # TOCTOU guard: the worker may have finished between our wait()
+            # returning and this check, already writing a more specific error
+            # via _set_error. Read phase + running under the lock and skip the
+            # overwrite if the worker has flipped running to False on its own.
+            with _analysis_lock:
+                if not _analysis_status["running"]:
+                    log.info("phase=watchdog end status=worker_finished_during_check reason=total")
+                    return
+                current_phase = str(_analysis_status["phase"])
+            msg = (
+                f"analysis exceeded total deadline of {total_s:.0f}s "
+                f"(elapsed={elapsed_total:.0f}s, phase={current_phase})"
+            )
+            log.error("phase=watchdog timeout reason=total %s", msg)
+            _set_error("WatchdogTotalTimeout", msg, current_phase)
+            return
+
+        if phase_s > 0 and elapsed_phase > phase_s:
+            # Same TOCTOU guard as the total-deadline branch above.
+            with _analysis_lock:
+                if not _analysis_status["running"]:
+                    log.info("phase=watchdog end status=worker_finished_during_check reason=phase")
+                    return
+                current_phase = str(_analysis_status["phase"])
+            msg = (
+                f"analysis stuck in phase '{current_phase}' for {elapsed_phase:.0f}s "
+                f"(per-phase deadline={phase_s:.0f}s)"
+            )
+            log.error("phase=watchdog timeout reason=phase %s", msg)
+            _set_error("WatchdogPhaseTimeout", msg, current_phase)
+            return
+
+    log.info(
+        "phase=watchdog end status=worker_finished thread=%s alive=%s",
+        worker.name,
+        worker.is_alive(),
+    )
 
 
 def _run_analysis_with_status(
     store: AnalyticsStore, *, samples: int = 50, threshold: float = 0.8, seed: int = 42
 ) -> dict[str, Any] | None:
-    """Run analysis with status updates and log capture for UI streaming."""
-    handler = _AnalysisLogHandler()
+    """Run analysis with log capture for UI streaming.
+
+    Wires up an _AnalysisLogHandler to forward records from `argus.rule_analysis`
+    and the `crossfire` logger tree into the dashboard's log buffer. The handler
+    is removed in finally so it never accumulates across runs. The handler is
+    bound to the current thread's ident so crossfire records emitted from other
+    threads (unrelated to this run) are ignored.
+    """
+    handler = _AnalysisLogHandler(owner_thread_ident=threading.get_ident())
     handler.setFormatter(logging.Formatter("%(message)s"))
     handler.setLevel(logging.DEBUG)
     captured_loggers = [
@@ -375,13 +641,12 @@ def _run_analysis_with_status(
     saved_levels: dict[str, int] = {}
     for lg in captured_loggers:
         lg.addHandler(handler)
-        # Ensure DEBUG messages reach our handler regardless of root logger level
         saved_levels[lg.name] = lg.level
-        if lg.level > logging.DEBUG:
+        if lg.level == logging.NOTSET or lg.level > logging.DEBUG:
             lg.setLevel(logging.DEBUG)
 
     try:
-        return _do_analysis(store, handler=handler, samples=samples, threshold=threshold, seed=seed)
+        return _do_analysis(store, samples=samples, threshold=threshold, seed=seed)
     finally:
         for lg in captured_loggers:
             lg.removeHandler(handler)
@@ -392,82 +657,80 @@ def _run_analysis_with_status(
 def _do_analysis(
     store: AnalyticsStore,
     *,
-    handler: _AnalysisLogHandler | None = None,
     samples: int = 50,
     threshold: float = 0.8,
     seed: int = 42,
 ) -> dict[str, Any] | None:
-    """Core analysis logic with status updates."""
-    log.info("starting rule overlap analysis (samples=%d, threshold=%.2f, seed=%d)", samples, threshold, seed)
+    """Core analysis logic. Phase markers and timing live here.
+
+    Each phase is wrapped in a `_Phase` context manager that logs structured
+    `phase=<name> start` / `phase=<name> end duration=...` markers and captures
+    any exception into the structured `error` field with the active phase name.
+    On any phase failure we return None — the caller (run_analysis_in_background)
+    sees the populated error and broadcasts accordingly.
+    """
+    log.info(
+        "starting rule overlap analysis samples=%d threshold=%.2f seed=%d",
+        samples,
+        threshold,
+        seed,
+    )
     start = time.monotonic()
 
     db_rules = store.rules.get_active()
     if not db_rules:
         log.info("no active rules to analyze")
-        return {
-            "status": "complete",
-            "timestamp": now_iso(),
-            "duration_s": 0.0,
-            "total_rules": 0,
-            "summary": {"duplicates": 0, "subsets": 0, "overlaps": 0, "clusters": 0},
-            "duplicates": [],
-            "subsets": [],
-            "overlaps": [],
-            "clusters": [],
-        }
+        _set_status(False, PHASE_COMPLETE, "No rules to analyze")
+        return _empty_result(0)
 
     cf_rules, lookup = _rules_to_crossfire(db_rules)
     log.info("converted %d/%d rules to crossfire format", len(cf_rules), len(db_rules))
 
     if len(cf_rules) < 2:
         log.info("fewer than 2 valid rules — nothing to compare")
-        return {
-            "status": "complete",
-            "timestamp": now_iso(),
-            "duration_s": round(time.monotonic() - start, 2),
-            "total_rules": len(cf_rules),
-            "summary": {"duplicates": 0, "subsets": 0, "overlaps": 0, "clusters": 0},
-            "duplicates": [],
-            "subsets": [],
-            "overlaps": [],
-            "clusters": [],
-        }
+        _set_status(False, PHASE_COMPLETE, "Not enough valid rules")
+        return _empty_result(len(cf_rules), duration_s=round(time.monotonic() - start, 2))
 
     from collections import Counter
 
-    _set_status(True, "generating", "Generating corpus: 0 of %d rules..." % len(cf_rules))
-    if handler:
-        handler.set_total_rules(len(cf_rules))
-    gen = CorpusGenerator(samples_per_rule=samples, seed=seed)
+    # Phase 1: corpus generation. Sequential mode (parallel=False) is the
+    # call-site fix for the fork-from-thread hang — we are running inside a
+    # background thread, and ProcessPoolExecutor (even with mp_context=spawn)
+    # adds startup latency from per-worker re-imports that isn't worth it for
+    # community-scale rule sets (< 200 rules). Crossfire 0.2.1+ honors this.
     try:
-        corpus = gen.generate(cf_rules, skip_invalid=True)
-    except Exception as exc:
-        log.error("corpus generation failed: %s", exc, exc_info=True)
+        with _Phase(PHASE_GENERATING, f"Generating corpus for {len(cf_rules)} rules..."):
+            gen = CorpusGenerator(samples_per_rule=samples, seed=seed, parallel=False)
+            corpus = gen.generate(cf_rules, skip_invalid=True)
+            log.info(
+                "phase=generating result strings=%d skipped=%d",
+                len(corpus),
+                len(cf_rules) - len({e.source_rule for e in corpus}),
+            )
+    except Exception:
         return None
-    log.info("generated %d corpus strings for %d rules", len(corpus), len(cf_rules))
 
     corpus_sizes = Counter(e.source_rule for e in corpus if not e.is_negative)
 
-    _set_status(True, "evaluating", "Cross-evaluating %d rules..." % len(cf_rules))
-    evaluator = Evaluator(workers=0, partition_by="detector")
+    # Phase 2: cross-evaluation.
     try:
-        matrix = evaluator.evaluate(cf_rules, corpus)
-    except Exception as exc:
-        log.error("evaluation failed: %s", exc, exc_info=True)
-        return None
-    log.info("evaluation complete — %d rules cross-compared", len(cf_rules))
-
-    _set_status(True, "classifying", "Classifying overlaps...")
-    classifier = Classifier(threshold=threshold)
-    try:
-        results, clusters = classifier.classify(matrix, cf_rules, corpus_sizes)
-    except Exception as exc:
-        log.error("classification failed: %s", exc, exc_info=True)
+        with _Phase(PHASE_EVALUATING, f"Cross-evaluating {len(cf_rules)} rules..."):
+            evaluator = Evaluator(workers=0, partition_by="detector")
+            matrix = evaluator.evaluate(cf_rules, corpus)
+    except Exception:
         return None
 
-    duplicates = []
-    subsets = []
-    overlaps = []
+    # Phase 3: classification.
+    try:
+        with _Phase(PHASE_CLASSIFYING, "Classifying overlaps..."):
+            classifier = Classifier(threshold=threshold)
+            results, clusters = classifier.classify(matrix, cf_rules, corpus_sizes)
+    except Exception:
+        return None
+
+    duplicates: list[dict[str, Any]] = []
+    subsets: list[dict[str, Any]] = []
+    overlaps: list[dict[str, Any]] = []
     for r in results:
         entry = _overlap_to_dict(r, lookup)
         rel = r.relationship
@@ -479,19 +742,38 @@ def _do_analysis(
             overlaps.append(entry)
 
     cluster_list = [_cluster_to_dict(c) for c in clusters]
+    log.info(
+        "phase=classifying result dups=%d subsets=%d overlaps=%d clusters=%d",
+        len(duplicates),
+        len(subsets),
+        len(overlaps),
+        len(cluster_list),
+    )
 
-    _set_status(True, "quality", "Assessing rule quality...")
+    # Phase 4: quality assessment (non-fatal — empty dict on failure).
+    quality: dict[str, Any] = {}
     try:
-        quality_report = assess_quality(cf_rules, corpus, matrix, corpus_sizes, seed=seed)
-        quality = _quality_to_dict(quality_report)
-    except Exception as exc:
-        log.warning("quality assessment failed (non-fatal): %s", exc, exc_info=True)
-        quality = {}
+        with _Phase(PHASE_QUALITY, "Assessing rule quality..."):
+            quality_report = assess_quality(cf_rules, corpus, matrix, corpus_sizes, seed=seed)
+            quality = _quality_to_dict(quality_report)
+    except Exception:
+        # _Phase already captured the error, but we want quality to be
+        # non-fatal for the run as a whole. Go through _set_status so the
+        # phase-change heartbeat bumps and error clears atomically — a bare
+        # lock write would leave last_phase_change_at stale and could trip
+        # the watchdog with a misleading WatchdogPhaseTimeout for a phase
+        # that actually completed (non-fatally).
+        log.warning("phase=quality non-fatal failure — continuing with empty quality report")
+        _set_status(
+            True,
+            PHASE_QUALITY,
+            "Quality assessment skipped (non-fatal)",
+            clear_error=True,
+        )
 
     duration = round(time.monotonic() - start, 2)
-
     log.info(
-        "analysis complete in %.1fs: %d duplicates, %d subsets, %d overlaps, %d clusters",
+        "phase=complete duration=%.2fs dups=%d subsets=%d overlaps=%d clusters=%d",
         duration,
         len(duplicates),
         len(subsets),

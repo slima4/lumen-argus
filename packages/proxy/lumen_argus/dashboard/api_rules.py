@@ -236,7 +236,8 @@ def handle_rule_analysis_get(store: AnalyticsStore | None) -> tuple[int, bytes]:
             {
                 "available": False,
                 "message": (
-                    "Rule overlap analysis requires the crossfire package. Install with: pip install crossfire"
+                    "Rule overlap analysis requires the crossfire-rules package. "
+                    "Install with: pip install lumen-argus-proxy[rules-analysis]"
                 ),
             },
         )
@@ -273,7 +274,8 @@ def handle_rule_analysis_trigger(
             {
                 "error": "crossfire_not_installed",
                 "message": (
-                    "Rule overlap analysis requires the crossfire package. Install with: pip install crossfire"
+                    "Rule overlap analysis requires the crossfire-rules package. "
+                    "Install with: pip install lumen-argus-proxy[rules-analysis]"
                 ),
             },
         )

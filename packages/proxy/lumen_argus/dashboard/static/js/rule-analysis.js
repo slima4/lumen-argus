@@ -70,14 +70,14 @@ function _renderRaPage(data) {
     const cmds = document.createElement('div');
     cmds.className = 'ra-install-cmds';
     const c1 = document.createElement('code');
-    c1.textContent = 'pip install crossfire';
+    c1.textContent = 'pip install lumen-argus-proxy[rules-analysis]';
     cmds.appendChild(c1);
     const sep = document.createElement('span');
     sep.className = 'ra-install-or';
     sep.textContent = ' or ';
     cmds.appendChild(sep);
     const c2 = document.createElement('code');
-    c2.textContent = 'pip install lumen-argus[rules-analysis]';
+    c2.textContent = 'pip install crossfire-rules[re2]';
     cmds.appendChild(c2);
     unavail.appendChild(cmds);
     contentEl.appendChild(unavail);
@@ -403,10 +403,55 @@ function _raStartPolling() {
 
         if (!s.running) {
           _raStopPolling();
+          // Structured error set by a failing phase or the watchdog —
+          // surface it to the user instead of silently reloading results.
+          if (s.error) {
+            _raShowError(s.error);
+            return;
+          }
           loadRuleAnalysis();
         }
       }).catch(function() { _raStopPolling(); });
   }, 250);
+}
+
+function _raShowError(err) {
+  const contentEl = document.getElementById('ra-content');
+  if (!contentEl) return;
+
+  const banner = document.createElement('div');
+  banner.className = 'ra-error-banner';
+
+  const title = document.createElement('div');
+  title.className = 'ra-error-title';
+  const phaseLabel = err.phase ? ' (phase: ' + err.phase + ')' : '';
+  title.textContent = 'Analysis failed: ' + (err.type || 'Error') + phaseLabel;
+  banner.appendChild(title);
+
+  if (err.message) {
+    const msg = document.createElement('div');
+    msg.className = 'ra-error-message';
+    msg.textContent = err.message;
+    banner.appendChild(msg);
+  }
+
+  const hint = document.createElement('div');
+  hint.className = 'ra-error-hint';
+  hint.textContent = 'Review the log output above for phase=... markers to locate the failure. Click Analyze to retry.';
+  banner.appendChild(hint);
+
+  // Insert the banner above the terminal (which still holds the captured logs
+  // from the failed run) so the user sees both the summary and the detail.
+  const terminal = document.getElementById('ra-terminal');
+  if (terminal && terminal.parentNode === contentEl) {
+    contentEl.insertBefore(banner, terminal);
+  } else {
+    contentEl.appendChild(banner);
+  }
+
+  // Hide the spinner strip once we've captured the error.
+  const progressBar = document.getElementById('ra-progress-bar');
+  if (progressBar) progressBar.style.display = 'none';
 }
 
 function _raStopPolling() {
