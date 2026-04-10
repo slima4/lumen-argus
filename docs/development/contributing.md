@@ -30,6 +30,18 @@ python3 -m unittest tests.test_secrets_detector.TestSecretsDetector.test_aws_acc
 
 All tests must pass before submitting a pull request.
 
+### Troubleshooting: stale bytecode
+
+If the code you just edited does not seem to run — for example, `inspect.getsource` shows the new source but a trace clearly follows the old control flow, or a test that should fail keeps passing — you may be hitting a stale `.pyc` cache. Python invalidates cached bytecode by file mtime, and if two edits land in the same filesystem second (or a tool touches the source without bumping mtime) the interpreter can keep running the old compiled bytecode.
+
+When in doubt, clear the cache:
+
+```bash
+find . -name __pycache__ -type d -exec rm -rf {} +
+```
+
+Then re-run the failing command. This is safe — Python will recompile on the next import.
+
 ## Code Style
 
 ### Python Version
