@@ -119,10 +119,25 @@ All observability hooks are fully guarded — exceptions never break requests.
 |------|-----------|-------------|
 | `register_channel_types(types)` | `types: dict` | Register channel type definitions (label + fields) for the dashboard dropdown |
 | `set_notifier_builder(builder)` | `builder(channel_dict) -> notifier` | Factory that builds notifier instances from DB channel rows |
-| `set_dispatcher(dispatcher)` | `dispatcher.dispatch(findings, provider)` | Set the notification dispatcher (Pro adds circuit breakers, async, dedup) |
+| `set_dispatcher(dispatcher)` | `dispatcher.dispatch(findings, provider, model, session_id, session, **kwargs)` | Set the notification dispatcher (Pro adds circuit breakers, async, dedup) |
 | `set_channel_limit(limit)` | `limit: int or None` | Set max channels (`None` = unlimited, `1` = freemium default) |
 
 Community provides the DB schema (`notification_channels` table), CRUD API, and dashboard UI. Pro registers channel types, notifier builder, dispatcher, and channel limit. Without Pro, the Notifications page shows YAML-configured channels as read-only with a dispatch warning.
+
+**Notifier signature contract.** Any custom notifier returned by `set_notifier_builder(...)` must accept a forward-compatible `notify()` signature. The pipeline dispatches through `_safe_notify` which calls `notifier.notify(findings, provider=..., model=..., session=...)`. The `session` keyword argument is the full `SessionContext` dataclass and will gain new fields over time (new identity columns, new SDK metadata, etc.). Use either of:
+
+```python
+# Option A — accept everything via **kwargs (recommended for third-party notifiers)
+def notify(self, findings, provider="", model="", **kwargs):
+    session = kwargs.get("session")
+    ...
+
+# Option B — declare session explicitly (recommended if you use it)
+def notify(self, findings, provider="", model="", session=None, **kwargs):
+    ...
+```
+
+A notifier whose signature is strict (e.g. `def notify(self, findings, provider, model)` with no `**kwargs`) will raise `TypeError` on every dispatch starting with community `da5ea71`. The error is caught by `BasicDispatcher._safe_notify` and logged; `get_last_status()` reports the failure, but the customer-facing channel goes silent. Always include `**kwargs` or an explicit `session=None` parameter. `session` should be treated as read-only inside the notifier — the same instance is still reachable on the calling thread via the SSE broadcast and post-scan hook, and mutation would race with those readers.
 
 **YAML reconciliation:** Channels defined in `config.yaml` are reconciled to SQLite on startup and SIGHUP (Kubernetes-style). YAML is fully authoritative — all fields including `enabled` overwrite DB values. Dashboard-managed channels are never touched by the reconciler.
 
