@@ -712,10 +712,18 @@ def _do_analysis(
 
     corpus_sizes = Counter(e.source_rule for e in corpus if not e.is_negative)
 
-    # Phase 2: cross-evaluation.
+    # Phase 2: cross-evaluation. workers=1 forces crossfire's single-thread
+    # path (`_evaluate_single_thread`) — workers=0 means "auto" which spawns
+    # one ProcessPoolExecutor worker per CPU. Spawn mode is fatal in the
+    # PyInstaller tray-app bundle: child processes try to re-exec the
+    # bundled binary as a Python interpreter, fail without freeze_support()
+    # at the entry point, and the whole pool dies with BrokenProcessPool.
+    # Running inside a background thread would also deadlock on fork().
+    # Single-thread mode is safe everywhere and fast enough for our
+    # community rule sets (54 rules x 2.5k strings, sub-second).
     try:
         with _Phase(PHASE_EVALUATING, f"Cross-evaluating {len(cf_rules)} rules..."):
-            evaluator = Evaluator(workers=0, partition_by="detector")
+            evaluator = Evaluator(workers=1, partition_by="detector")
             matrix = evaluator.evaluate(cf_rules, corpus)
     except Exception:
         return None

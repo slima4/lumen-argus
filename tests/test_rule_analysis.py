@@ -781,12 +781,30 @@ class TestDoAnalysisSequential(StoreTestCase):
         "crossfire not installed",
     )
     def test_no_subprocesses_spawned_during_analysis(self):
+        """Guard rail against re-introducing multiprocessing at any phase.
+
+        The previous version of this test compared
+        `multiprocessing.active_children()` before and after `_do_analysis`,
+        which is racy: workers that spawn and finish before the "after"
+        snapshot are invisible. That's exactly how we shipped a bug where
+        `Evaluator(workers=0)` was spawning ProcessPoolExecutor children on
+        dev machines (tests passed) but crashing the PyInstaller tray-app
+        bundle with BrokenProcessPool (no freeze_support at the entry point).
+
+        This version monkey-patches `ProcessPoolExecutor.__init__` and the
+        `multiprocessing.Process` constructor to fail loudly the moment
+        anything tries to instantiate them, so even transient spawns fail
+        the test.
+        """
+        import concurrent.futures
         import multiprocessing
+        from unittest.mock import patch
 
         from lumen_argus.rule_analysis import _do_analysis
 
-        # Seed enough rules to trigger the >= 8 parallel auto-threshold
-        # without our parallel=False override at the call site.
+        # Seed enough rules to trip any heuristic that auto-parallelizes
+        # above a threshold (crossfire uses >= 2 rules and >= 50 corpus
+        # strings as its gate).
         for i in range(12):
             self.store.rules.create(
                 {
@@ -802,16 +820,40 @@ class TestDoAnalysisSequential(StoreTestCase):
                 }
             )
 
-        before = set(multiprocessing.active_children())
-        result = _do_analysis(self.store, samples=20, threshold=0.8, seed=42)
-        after = set(multiprocessing.active_children())
+        spawn_attempts: list[str] = []
+        real_ppe_init = concurrent.futures.ProcessPoolExecutor.__init__
+        real_process_init = multiprocessing.Process.__init__
 
-        self.assertIsNotNone(result, "analysis should have produced a result")
+        def _blocked_ppe(self, *args, **kwargs):
+            spawn_attempts.append("ProcessPoolExecutor")
+            raise AssertionError(
+                "rule analysis tried to instantiate a ProcessPoolExecutor — "
+                "must stay single-threaded (PyInstaller tray-app compatibility)"
+            )
+
+        def _blocked_process(self, *args, **kwargs):
+            spawn_attempts.append("multiprocessing.Process")
+            raise AssertionError(
+                "rule analysis tried to start a multiprocessing.Process — "
+                "must stay single-threaded (PyInstaller tray-app compatibility)"
+            )
+
+        with (
+            patch.object(concurrent.futures.ProcessPoolExecutor, "__init__", _blocked_ppe),
+            patch.object(multiprocessing.Process, "__init__", _blocked_process),
+        ):
+            try:
+                result = _do_analysis(self.store, samples=20, threshold=0.8, seed=42)
+            finally:
+                concurrent.futures.ProcessPoolExecutor.__init__ = real_ppe_init
+                multiprocessing.Process.__init__ = real_process_init
+
         self.assertEqual(
-            after,
-            before,
-            "rule analysis must run sequentially — no subprocesses allowed from inside a multi-threaded host process",
+            spawn_attempts,
+            [],
+            f"rule analysis spawned workers: {spawn_attempts}",
         )
+        self.assertIsNotNone(result, "analysis should have produced a result")
 
 
 if __name__ == "__main__":
