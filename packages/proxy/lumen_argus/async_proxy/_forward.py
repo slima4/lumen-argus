@@ -29,6 +29,24 @@ from lumen_argus.session import extract_session as _extract_session
 
 log = logging.getLogger("argus.proxy")
 
+# Addresses that count as loopback for the community-mode /_forward gate.
+# Matches the pre-existing check in async_proxy/_server.py that warns on
+# non-loopback binds. If you add more loopback aliases (e.g. IPv6 "::1")
+# keep both sites in sync.
+_LOOPBACK_BINDS = frozenset({"127.0.0.1", "localhost"})
+
+
+def _is_loopback_bind(bind: str) -> bool:
+    return bind in _LOOPBACK_BINDS
+
+
+# One-shot INFO notice: the first time a /_forward request passes the
+# relaxed community-mode gate (no auth provider registered AND loopback
+# bind), log once so operators see that the security posture is
+# "loopback-trusted" rather than "authenticated agent". Subsequent
+# requests log at DEBUG.
+_community_forward_notice_emitted = False
+
 # Host → provider mapping for forward proxy requests.
 _HOST_PROVIDER_MAP: dict[str, str] = {
     "api.individual.githubcopilot.com": "copilot",
@@ -262,15 +280,72 @@ async def _do_forward(
         if is_forward_proxy:
             session.intercept_mode = "forward"
             session.original_host = forward_host
-            # Security: only authenticated agents may use /_forward.
-            # Without this check, any local process could use the proxy as
-            # an SSRF relay to arbitrary hosts via X-Lumen-Forward-Host.
+            # /_forward access control.
+            #
+            # Three gate states, checked in order:
+            #
+            # 1. Pro mode (auth provider registered) + unauthenticated →
+            #    403. Without this check, any local process could use the
+            #    proxy as an SSRF relay via X-Lumen-Forward-Host — a real
+            #    escalation in multi-tenant Pro deployments where the
+            #    proxy may hold agent-scoped credentials or enforce
+            #    per-agent egress policy.
+            #
+            # 2. Community mode (no auth provider) + non-loopback bind →
+            #    403. Binding to 0.0.0.0 (Docker) is supported but logs a
+            #    warning in _server.__init__; it is NOT hard-enforced. In
+            #    a network-exposed deployment we cannot claim "every
+            #    caller is a local process", so the relaxed gate would
+            #    turn the proxy into an open SSRF relay. Reject instead.
+            #
+            # 3. Community mode + loopback bind → pass. Every caller is
+            #    already a local process that can reach the same upstream
+            #    host directly; the proxy does not inject credentials on
+            #    the caller's behalf (fwd_headers below is built purely
+            #    from the incoming request with X-Lumen-* stripped), so
+            #    SSRF via /_forward grants no capability the caller does
+            #    not already have. Log once at INFO so the operator sees
+            #    the loosened posture.
             if not trusted_agent:
-                log.warning("#%d /_forward from unauthenticated client — rejected", request_id)
-                return web.json_response(
-                    {"error": {"type": "authentication_error", "message": "/_forward requires authenticated agent"}},
-                    status=403,
-                )
+                if auth_provider is not None:
+                    log.warning("#%d /_forward from unauthenticated client — rejected", request_id)
+                    return web.json_response(
+                        {
+                            "error": {
+                                "type": "authentication_error",
+                                "message": "/_forward requires authenticated agent",
+                            }
+                        },
+                        status=403,
+                    )
+                if not _is_loopback_bind(server.bind):
+                    log.warning(
+                        "#%d /_forward on non-loopback bind (%s) without auth provider — rejected. "
+                        "Network-exposed community deployments must register an auth provider "
+                        "or use reverse-proxy mode (ANTHROPIC_BASE_URL) instead of forward proxy.",
+                        request_id,
+                        server.bind,
+                    )
+                    return web.json_response(
+                        {
+                            "error": {
+                                "type": "authentication_error",
+                                "message": "/_forward requires authenticated agent or loopback bind in community mode",
+                            }
+                        },
+                        status=403,
+                    )
+                global _community_forward_notice_emitted
+                if not _community_forward_notice_emitted:
+                    _community_forward_notice_emitted = True
+                    log.info(
+                        "#%d /_forward: community mode (no auth provider registered, loopback bind) — "
+                        "trusting local callers. Pro deployments register an auth provider "
+                        "and re-enable the agent authentication gate.",
+                        request_id,
+                    )
+                else:
+                    log.debug("#%d /_forward community-mode pass-through", request_id)
 
         # Scan request body — use upstream provider name (e.g. "opencode") so the
         # correct provider is stored in findings.  The extractor auto-detects the

@@ -499,15 +499,53 @@ so you can distinguish traffic by its pre-interception destination. All
 identity fields (hostname, username, working directory) are populated
 via PID resolution, same as reverse proxy.
 
+### `/_forward` access control
+
+The proxy's `/_forward` route has a three-state authentication gate,
+checked in order:
+
+- **Pro mode — auth provider registered.** Only authenticated agents
+  pass the gate. Unauthenticated callers are rejected with HTTP 403 and
+  a `authentication_error` body. Providers that raise
+  `AuthenticationError` (explicit token rejection) surface as HTTP 401.
+  This protects multi-tenant deployments where the proxy may hold
+  agent-scoped credentials or enforce per-agent egress policy.
+- **Community mode — no auth provider, non-loopback bind.** Rejected
+  with HTTP 403 for the same reason as Pro. On a network-exposed bind
+  (e.g. Docker `--host 0.0.0.0`) the proxy cannot rely on
+  "every caller is local", so the relaxed gate would turn the proxy
+  into an open SSRF relay to arbitrary hosts via `X-Lumen-Forward-Host`.
+- **Community mode — no auth provider, loopback bind.** The gate is
+  skipped. Loopback callers are already local processes that could
+  reach the same upstream host directly; the proxy builds forwarding
+  headers purely from the incoming request (with `X-Lumen-*` stripped)
+  and does not inject credentials on the caller's behalf, so
+  `/_forward` grants no capability the caller does not already have.
+  The first such request emits a one-shot `INFO` log line
+  (`#N /_forward: community mode ... — trusting local callers`).
+
+This means the community forward-proxy path works out of the box for
+workstation deployments (`lumen-argus-agent forward-proxy start` +
+shell aliases), and the security posture automatically upgrades the
+moment a Pro extension registers an auth provider via
+`extensions.set_agent_auth_provider()` or the operator rebinds the
+proxy to a non-loopback address.
+
 ---
 
 ## Security Model
 
-!!! info "Localhost only"
-    The proxy binds exclusively to `127.0.0.1`. Attempting to set `bind` to
-    `0.0.0.0` or any non-loopback address raises a `ValueError` at startup.
-    This is enforced by a runtime assertion in the server constructor.
+!!! info "Loopback by default"
+    The proxy binds to `127.0.0.1` by default. Non-loopback binds
+    (e.g. `--host 0.0.0.0` for Docker deployments) are supported but log
+    a warning at startup (`async_proxy/_server.py:50`), because a
+    network-exposed proxy changes the threat model. Specifically, the
+    community-mode `/_forward` gate relaxation only applies when the
+    bind is loopback — on non-loopback binds, `/_forward` requires an
+    authenticated agent even in community mode. If you run the proxy on
+    `0.0.0.0`, either register an auth provider (Pro) or use reverse-proxy
+    mode (`ANTHROPIC_BASE_URL=http://proxy:8080`) instead of forward proxy.
 
-The proxy receives plain HTTP on localhost and upgrades to HTTPS for upstream
-connections. Since the proxy only listens on loopback, the unencrypted local
-hop never leaves the machine.
+When bound to loopback, the proxy receives plain HTTP on localhost and
+upgrades to HTTPS for upstream connections. The unencrypted local hop
+never leaves the machine.

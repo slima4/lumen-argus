@@ -556,6 +556,295 @@ class TestAsyncProxy(unittest.TestCase):
         proxy.update_timeout(60)
         self.assertEqual(proxy.timeout, 60)
 
+    async def _post_forward(self, port, body_dict, forward_host, forward_scheme, forward_port):
+        """Send a POST to /_forward/v1/messages simulating a mitm rewrite."""
+        TestAsyncProxy._session_counter += 1
+        session_id = "test-forward-%d" % TestAsyncProxy._session_counter
+        body = json.dumps(body_dict).encode()
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "http://127.0.0.1:%d/_forward/v1/messages" % port,
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": "test-key",
+                    "anthropic-version": "2024-01-01",
+                    "x-session-id": session_id,
+                    "X-Lumen-Forward-Host": forward_host,
+                    "X-Lumen-Forward-Scheme": forward_scheme,
+                    "X-Lumen-Forward-Port": str(forward_port),
+                },
+            ) as resp:
+                try:
+                    data = await resp.json()
+                except Exception:
+                    data = None
+                return resp.status, data
+
+    def _reset_forward_notice(self):
+        """Clear the module-level one-shot INFO flag before AND after each
+        test that touches it, so test ordering can't leak state."""
+        from lumen_argus.async_proxy import _forward as forward_module
+
+        forward_module._community_forward_notice_emitted = False
+        self.addCleanup(setattr, forward_module, "_community_forward_notice_emitted", False)
+
+    def test_forward_proxy_community_mode_allows_request(self):
+        """In community mode (no auth provider registered, loopback bind),
+        /_forward must accept the request rather than 403. Loopback callers
+        are implicitly trusted in community deployments because they could
+        reach the upstream host directly and the proxy does not inject
+        credentials on their behalf.
+        """
+        from lumen_argus.async_proxy import _forward as forward_module
+        from lumen_argus.extensions import ExtensionRegistry
+
+        self._reset_forward_notice()
+
+        proxy, port = self._create_proxy()
+        proxy.extensions = ExtensionRegistry()
+        # Sanity: no auth provider registered — community mode.
+        self.assertIsNone(proxy.extensions.get_agent_auth_provider())
+        # Sanity: the harness binds to 127.0.0.1 — loopback. The relaxed
+        # gate requires both conditions.
+        self.assertEqual(proxy.bind, "127.0.0.1")
+
+        async def _test():
+            async def _inner():
+                status, data = await self._post_forward(
+                    port,
+                    {
+                        "model": "claude-opus-4-6",
+                        "messages": [{"role": "user", "content": "What is 2+2?"}],
+                    },
+                    forward_host="127.0.0.1",
+                    forward_scheme="http",
+                    forward_port=self.upstream_port,
+                )
+                self.assertEqual(status, 200, msg="expected 200 in community mode, got %s" % (data,))
+                self.assertEqual(data["type"], "message")
+
+            return await self._run_with_proxy(proxy, _inner)
+
+        asyncio.run(_test())
+        # One-shot notice should have fired exactly because the gate was
+        # bypassed on this request.
+        self.assertTrue(forward_module._community_forward_notice_emitted)
+
+    def test_forward_proxy_rejects_unauthenticated_when_auth_provider_registered(self):
+        """When an auth provider is registered (Pro), /_forward must 403 an
+        unauthenticated caller. This is the pre-existing Pro security model
+        and must not regress when community mode relaxes the gate.
+        """
+        from lumen_argus.auth import AgentAuthProvider
+        from lumen_argus.extensions import ExtensionRegistry
+
+        class _DenyingAuthProvider(AgentAuthProvider):
+            async def authenticate(self, headers):
+                return None  # not handled / unauthenticated
+
+        proxy, port = self._create_proxy()
+        proxy.extensions = ExtensionRegistry()
+        proxy.extensions.set_agent_auth_provider(_DenyingAuthProvider())
+
+        async def _test():
+            async def _inner():
+                status, data = await self._post_forward(
+                    port,
+                    {
+                        "model": "claude-opus-4-6",
+                        "messages": [{"role": "user", "content": "hi"}],
+                    },
+                    forward_host="127.0.0.1",
+                    forward_scheme="http",
+                    forward_port=self.upstream_port,
+                )
+                self.assertEqual(status, 403)
+                self.assertEqual(data["error"]["type"], "authentication_error")
+
+            return await self._run_with_proxy(proxy, _inner)
+
+        asyncio.run(_test())
+
+    def test_forward_proxy_allows_authenticated_agent(self):
+        """When an auth provider is registered AND authenticates the caller,
+        /_forward proceeds normally and returns 200.
+        """
+        from lumen_argus.auth import AgentAuthProvider
+        from lumen_argus.extensions import ExtensionRegistry
+        from lumen_argus.models import AgentIdentity
+
+        class _AllowingAuthProvider(AgentAuthProvider):
+            async def authenticate(self, headers):
+                return AgentIdentity(agent_id="test-agent", namespace_id=1)
+
+        proxy, port = self._create_proxy()
+        proxy.extensions = ExtensionRegistry()
+        proxy.extensions.set_agent_auth_provider(_AllowingAuthProvider())
+
+        async def _test():
+            async def _inner():
+                status, data = await self._post_forward(
+                    port,
+                    {
+                        "model": "claude-opus-4-6",
+                        "messages": [{"role": "user", "content": "hi"}],
+                    },
+                    forward_host="127.0.0.1",
+                    forward_scheme="http",
+                    forward_port=self.upstream_port,
+                )
+                self.assertEqual(status, 200, msg="expected 200 with valid agent identity, got %s" % (data,))
+                self.assertEqual(data["type"], "message")
+
+            return await self._run_with_proxy(proxy, _inner)
+
+        asyncio.run(_test())
+
+    def test_forward_proxy_rejects_non_loopback_bind_without_auth_provider(self):
+        """Community mode + non-loopback bind (e.g. Docker --host 0.0.0.0)
+        must NOT grant the relaxed gate. The security argument for relaxing
+        depends on loopback-only reachability; a 0.0.0.0 deployment is
+        network-exposed and would become an open SSRF relay without the
+        gate.
+        """
+        from lumen_argus.async_proxy import _forward as forward_module
+        from lumen_argus.extensions import ExtensionRegistry
+
+        self._reset_forward_notice()
+
+        proxy, port = self._create_proxy()
+        # Pretend the proxy was launched with --host 0.0.0.0. We don't
+        # actually rebind the socket — the gate reads `server.bind`, and
+        # this is what would drive the check in a real Docker deployment.
+        proxy.bind = "0.0.0.0"
+        proxy.extensions = ExtensionRegistry()
+
+        async def _test():
+            async def _inner():
+                status, data = await self._post_forward(
+                    port,
+                    {
+                        "model": "claude-opus-4-6",
+                        "messages": [{"role": "user", "content": "hi"}],
+                    },
+                    forward_host="127.0.0.1",
+                    forward_scheme="http",
+                    forward_port=self.upstream_port,
+                )
+                self.assertEqual(status, 403, msg="non-loopback community bind must reject /_forward, got %s" % (data,))
+                self.assertEqual(data["error"]["type"], "authentication_error")
+
+            return await self._run_with_proxy(proxy, _inner)
+
+        asyncio.run(_test())
+        # The one-shot community notice must NOT have fired — the gate
+        # rejected the request before reaching the pass-through branch.
+        self.assertFalse(forward_module._community_forward_notice_emitted)
+
+    def test_forward_proxy_returns_401_when_auth_provider_raises(self):
+        """An AgentAuthProvider that raises AuthenticationError (distinct
+        from returning None) must surface as HTTP 401, not 403. This is
+        the pre-existing Pro contract in auth.py and must not regress.
+        """
+        from lumen_argus.auth import AgentAuthProvider, AuthenticationError
+        from lumen_argus.extensions import ExtensionRegistry
+
+        class _RaisingAuthProvider(AgentAuthProvider):
+            async def authenticate(self, headers):
+                raise AuthenticationError("invalid token")
+
+        proxy, port = self._create_proxy()
+        proxy.extensions = ExtensionRegistry()
+        proxy.extensions.set_agent_auth_provider(_RaisingAuthProvider())
+
+        async def _test():
+            async def _inner():
+                status, data = await self._post_forward(
+                    port,
+                    {
+                        "model": "claude-opus-4-6",
+                        "messages": [{"role": "user", "content": "hi"}],
+                    },
+                    forward_host="127.0.0.1",
+                    forward_scheme="http",
+                    forward_port=self.upstream_port,
+                )
+                self.assertEqual(status, 401)
+                self.assertEqual(data["error"]["type"], "authentication_error")
+
+            return await self._run_with_proxy(proxy, _inner)
+
+        asyncio.run(_test())
+
+    def test_forward_proxy_community_mode_strips_x_lumen_headers_before_session_extraction(self):
+        """In community mode, a caller must not be able to spoof identity
+        by attaching X-Lumen-Argus-Hostname: evil to a /_forward request.
+        The defense-in-depth strip at _forward.py line 252-253 is the
+        guarantee that session extraction never sees these headers from an
+        unauthenticated caller. Verify it directly by intercepting
+        _extract_session and inspecting the headers_dict it received.
+        """
+        from unittest.mock import patch
+
+        from lumen_argus.async_proxy import _forward as forward_module
+        from lumen_argus.extensions import ExtensionRegistry
+
+        self._reset_forward_notice()
+
+        captured_header_dicts: list[dict[str, str]] = []
+        original_extract = forward_module._extract_session
+
+        def _capturing_extract(req_data, api_provider, headers_dict, source_ip, **kwargs):
+            captured_header_dicts.append(dict(headers_dict))
+            return original_extract(req_data, api_provider, headers_dict, source_ip, **kwargs)
+
+        proxy, port = self._create_proxy()
+        proxy.extensions = ExtensionRegistry()
+
+        async def _test():
+            async def _inner():
+                TestAsyncProxy._session_counter += 1
+                session_id = "test-forward-strip-%d" % TestAsyncProxy._session_counter
+                body = json.dumps(
+                    {
+                        "model": "claude-opus-4-6",
+                        "messages": [{"role": "user", "content": "hi"}],
+                    }
+                ).encode()
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        "http://127.0.0.1:%d/_forward/v1/messages" % port,
+                        data=body,
+                        headers={
+                            "Content-Type": "application/json",
+                            "x-api-key": "test-key",
+                            "anthropic-version": "2024-01-01",
+                            "x-session-id": session_id,
+                            "X-Lumen-Forward-Host": "127.0.0.1",
+                            "X-Lumen-Forward-Scheme": "http",
+                            "X-Lumen-Forward-Port": str(self.upstream_port),
+                            # Spoofing attempt — should be stripped before session extraction.
+                            "X-Lumen-Argus-Hostname": "evil.attacker.example",
+                            "X-Lumen-Argus-Username": "root",
+                            "X-Lumen-Argus-Working-Dir": "/etc",
+                        },
+                    ) as resp:
+                        self.assertEqual(resp.status, 200)
+
+            with patch.object(forward_module, "_extract_session", side_effect=_capturing_extract):
+                return await self._run_with_proxy(proxy, _inner)
+
+        asyncio.run(_test())
+
+        self.assertTrue(captured_header_dicts, "expected _extract_session to be called at least once")
+        for headers in captured_header_dicts:
+            for key in headers:
+                self.assertFalse(
+                    key.startswith("x-lumen-argus-"),
+                    "X-Lumen-Argus-* header leaked into session extraction: %r" % key,
+                )
+
     def test_upstream_connection_refused(self):
         """Upstream connection refused should return 502, not crash."""
         # Point at a port that's not listening
