@@ -156,6 +156,127 @@ class TestEnvFile(unittest.TestCase):
         self.assertIn("client=aider", content)
         self.assertIn("client=claude_code", content)
 
+    # ------------------------------------------------------------------
+    # Orphan handling — lines written by non-conformant external writers
+    # (e.g. an older tray app build) must still be parsed so that
+    # protection_status() reports the truth and add_env_to_env_file()
+    # can evict them on the next canonical write.
+    # ------------------------------------------------------------------
+
+    def _write_raw(self, content: str) -> None:
+        with open(self.env_file, "w") as f:
+            f.write(content)
+
+    def test_read_env_file_parses_orphan_without_client_tag(self):
+        """Lines with `# lumen-argus:managed` but no `client=<id>` are parsed as orphans."""
+        self._write_raw("export OPENAI_BASE_URL=http://127.0.0.1:8070  # lumen-argus:managed\n")
+        with patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file):
+            result = read_env_file()
+        self.assertEqual(result, [("OPENAI_BASE_URL", "http://127.0.0.1:8070", "")])
+
+    def test_read_env_file_strips_single_quotes(self):
+        """Orphans often come with surrounding single quotes; value must be unquoted."""
+        self._write_raw("export ANTHROPIC_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n")
+        with patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file):
+            result = read_env_file()
+        self.assertEqual(result, [("ANTHROPIC_BASE_URL", "http://127.0.0.1:8070", "")])
+
+    def test_read_env_file_strips_double_quotes(self):
+        self._write_raw('export GEMINI_BASE_URL="http://127.0.0.1:8070"  # lumen-argus:managed\n')
+        with patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file):
+            result = read_env_file()
+        self.assertEqual(result, [("GEMINI_BASE_URL", "http://127.0.0.1:8070", "")])
+
+    def test_read_env_file_mixes_canonical_and_orphan(self):
+        """Canonical + orphan lines in the same file both surface."""
+        self._write_raw(
+            "export OPENAI_BASE_URL=http://localhost:8080  # lumen-argus:managed client=aider\n"
+            "export COPILOT_PROVIDER_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n"
+        )
+        with patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file):
+            result = read_env_file()
+        self.assertEqual(len(result), 2)
+        self.assertIn(("OPENAI_BASE_URL", "http://localhost:8080", "aider"), result)
+        self.assertIn(("COPILOT_PROVIDER_BASE_URL", "http://127.0.0.1:8070", ""), result)
+
+    def test_read_env_file_ignores_unmanaged_lines(self):
+        """Lines without the managed tag are ignored (not misclassified as orphans)."""
+        self._write_raw(
+            "export FOO=bar\n"
+            "export BAZ=qux  # some other comment\n"
+            "export OPENAI_BASE_URL=http://localhost:8080  # lumen-argus:managed client=aider\n"
+        )
+        with patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file):
+            result = read_env_file()
+        self.assertEqual(result, [("OPENAI_BASE_URL", "http://localhost:8080", "aider")])
+
+    def test_write_env_file_preserves_orphan_format_round_trip(self):
+        """Round-trip of an orphan must not gain a bogus empty `client=` suffix."""
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+        ):
+            write_env_file([("CUSTOM_VAR", "http://example.com", "")])
+            with open(self.env_file) as f:
+                content = f.read()
+            self.assertIn("export CUSTOM_VAR=http://example.com  # lumen-argus:managed\n", content)
+            self.assertNotIn("client=", content)
+            # And the round-tripped line still parses as an orphan.
+            result = read_env_file()
+        self.assertEqual(result, [("CUSTOM_VAR", "http://example.com", "")])
+
+    def test_add_env_evicts_orphan_for_same_var(self):
+        """Writing a canonical entry must remove any orphan for the same var."""
+        self._write_raw("export ANTHROPIC_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n")
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+        ):
+            change = add_env_to_env_file("ANTHROPIC_BASE_URL", "http://localhost:8080", "claude_code")
+            result = read_env_file()
+            with open(self.env_file) as f:
+                content = f.read()
+        self.assertIsNotNone(change)
+        # Only the canonical entry remains — orphan evicted.
+        self.assertEqual(result, [("ANTHROPIC_BASE_URL", "http://localhost:8080", "claude_code")])
+        self.assertNotIn("'http://127.0.0.1:8070'", content)
+        self.assertIn("client=claude_code", content)
+
+    def test_add_env_preserves_orphan_for_different_var(self):
+        """Orphans for unrelated vars must not be touched by a canonical write."""
+        self._write_raw("export COPILOT_PROVIDER_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n")
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+        ):
+            add_env_to_env_file("ANTHROPIC_BASE_URL", "http://localhost:8080", "claude_code")
+            result = read_env_file()
+        self.assertEqual(len(result), 2)
+        self.assertIn(("COPILOT_PROVIDER_BASE_URL", "http://127.0.0.1:8070", ""), result)
+        self.assertIn(("ANTHROPIC_BASE_URL", "http://localhost:8080", "claude_code"), result)
+
+    def test_add_env_evicts_orphan_but_preserves_different_client_same_var(self):
+        """Orphan eviction must not harm canonical entries from other clients.
+
+        This is the structural boundary of the filter: cid == "" (evicted)
+        vs cid == other_client (preserved). A regression that flipped the
+        filter to `cid != ""` would silently drop other clients' entries
+        for the same variable, and only this test would notice.
+        """
+        self._write_raw(
+            "export ANTHROPIC_BASE_URL=http://localhost:8080  # lumen-argus:managed client=claude_code\n"
+            "export ANTHROPIC_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n"
+        )
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+        ):
+            add_env_to_env_file("ANTHROPIC_BASE_URL", "http://localhost:8080", "aider")
+            result = read_env_file()
+        self.assertEqual(len(result), 2)
+        self.assertIn(("ANTHROPIC_BASE_URL", "http://localhost:8080", "claude_code"), result)
+        self.assertIn(("ANTHROPIC_BASE_URL", "http://localhost:8080", "aider"), result)
+
 
 class TestAddEnvToShellProfile(unittest.TestCase):
     """Test the combined add_env_to_shell_profile (source block + env file)."""
@@ -277,6 +398,28 @@ class TestProtection(unittest.TestCase):
             self.assertFalse(protection_status()["enabled"])
             enable_protection()
             self.assertTrue(protection_status()["enabled"])
+
+    def test_status_counts_orphan_lines(self):
+        """A file with only orphans must still report enabled=True.
+
+        Before the read_env_file regex loosening, an env file containing
+        lines written by a non-conformant external writer (no client=<id>
+        suffix) would be invisible to protection_status() — reporting
+        env_vars_set=0 while the shell actively sourced the exports. This
+        pins the corrected behavior.
+        """
+        with open(self.env_file, "w") as f:
+            f.write(
+                "export ANTHROPIC_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n"
+                "export OPENAI_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n"
+            )
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+        ):
+            result = protection_status()
+        self.assertTrue(result["enabled"])
+        self.assertEqual(result["env_vars_set"], 2)
 
 
 class TestUpdateIdeSettings(unittest.TestCase):

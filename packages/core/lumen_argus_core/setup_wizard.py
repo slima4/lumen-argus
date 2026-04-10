@@ -273,28 +273,51 @@ class _env_file_lock:
             self._fd = None
 
 
+# Parser for managed env file lines. Accepts two shapes:
+#   export VAR=value  # lumen-argus:managed client=<id>   (canonical)
+#   export VAR='value'  # lumen-argus:managed             (orphan — no client tag)
+#
+# Orphans surface here because third-party writers (e.g. an older tray app
+# build) can append to ~/.lumen-argus/env directly without going through
+# add_env_to_env_file(). We still need to see them so protection_status()
+# reports the truth and add_env_to_env_file() can evict them when a
+# canonical write targets the same variable.
+_MANAGED_LINE_RE = re.compile(r"^export\s+(\w+)=(\S+)\s+#\s+lumen-argus:managed(?:\s+client=(\S+))?\s*$")
+
+
 def read_env_file() -> list[tuple[str, str, str]]:
-    """Read the env file and return list of (var_name, value, client_id) tuples."""
+    """Read the env file and return list of (var_name, value, client_id) tuples.
+
+    Values with surrounding single or double quotes are unquoted. Lines
+    written without a ``client=<id>`` suffix surface with an empty client_id,
+    marking them as orphans that no known client owns.
+    """
     if not os.path.isfile(_ENV_FILE):
         return []
-    entries = []
+    entries: list[tuple[str, str, str]] = []
     try:
         with open(_ENV_FILE, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                # Parse our own format: export VAR=value  # lumen-argus:managed client=<id>
-                # (no quoted values — we control the write format via write_env_file)
-                m = re.match(
-                    r"export\s+(\w+)=(\S+)\s+#\s+\S+\s+client=(\S+)",
-                    line,
-                )
-                if m:
-                    entries.append((m.group(1), m.group(2), m.group(3)))
+                m = _MANAGED_LINE_RE.match(line)
+                if not m:
+                    continue
+                var_name = m.group(1)
+                value = _strip_quotes(m.group(2))
+                client_id = m.group(3) or ""
+                entries.append((var_name, value, client_id))
     except OSError as e:
         log.warning("could not read env file: %s", e)
     return entries
+
+
+def _strip_quotes(value: str) -> str:
+    """Strip a single matching pair of surrounding single or double quotes."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
 
 
 def write_env_file(entries: list[tuple[str, str, str]]) -> None:
@@ -313,7 +336,12 @@ def write_env_file(entries: list[tuple[str, str, str]]) -> None:
     os.makedirs(_ARGUS_DIR, mode=0o700, exist_ok=True)
     lines = []
     for var_name, value, client_id in entries:
-        lines.append("export %s=%s  %s client=%s" % (var_name, value, MANAGED_TAG, client_id))
+        if client_id:
+            lines.append("export %s=%s  %s client=%s" % (var_name, value, MANAGED_TAG, client_id))
+        else:
+            # Orphan (no known client owner) — preserve round-trip without a
+            # bogus empty client= suffix that would mis-parse on re-read.
+            lines.append("export %s=%s  %s" % (var_name, value, MANAGED_TAG))
     try:
         # Write to temp file in same directory, then atomic rename
         fd, tmp_path = tempfile.mkstemp(dir=_ARGUS_DIR, prefix=".env.", suffix=".tmp")
@@ -374,8 +402,24 @@ def add_env_to_env_file(
                 log.info("already in env file: %s=%s (client=%s)", var_name, value, client_id)
                 return None
 
-        # Remove any existing entry for this var+client before adding
-        filtered = [(ev, val, cid) for ev, val, cid in existing if not (ev == var_name and cid == client_id)]
+        # Remove any existing entry for this var+client before adding.
+        # Also evict orphan entries (cid == "") for the same var — those are
+        # unattributable lines left behind by a non-conformant writer. Letting
+        # them coexist produces duplicate `export VAR=...` lines where only
+        # the last one wins in the shell, masking whichever value we just
+        # set. For the COPILOT_PROVIDER_BASE_URL incident, this is what would
+        # have auto-healed the orphan on the next setup.
+        filtered = [
+            (ev, val, cid) for ev, val, cid in existing if not (ev == var_name and (cid == client_id or cid == ""))
+        ]
+        evicted_orphans = sum(1 for ev, _, cid in existing if ev == var_name and cid == "")
+        if evicted_orphans:
+            log.info(
+                "evicted %d orphan env file entr%s for %s (unowned, non-conformant writer)",
+                evicted_orphans,
+                "y" if evicted_orphans == 1 else "ies",
+                var_name,
+            )
         filtered.append((var_name, value, client_id))
         write_env_file(filtered)
 
