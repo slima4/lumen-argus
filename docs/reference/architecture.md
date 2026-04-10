@@ -399,7 +399,8 @@ Session/conversation identity extracted from each request. Populated by the prox
 | `sdk_name` | `str` | Parsed from UA (`parse_user_agent_metadata()`) | SDK identifier (e.g., `ai-sdk/anthropic`, `claude-code`) |
 | `sdk_version` | `str` | Parsed from UA | SDK version (e.g., `3.0.64`) |
 | `runtime` | `str` | Parsed from UA | Runtime and version (e.g., `bun/1.3.11`) |
-| `intercept_mode` | `str` | Set by `/_forward` handler | `reverse` (default) or `forward` (TLS interception) |
+| `intercept_mode` | `str` | Set by `/_forward` handler | `reverse` (default) or `forward` (TLS interception). Always emitted in audit JSONL. |
+| `original_host` | `str` | Forward proxy only; read from `X-Lumen-Forward-Host` header on `/_forward` requests | Original destination host before TLS interception (e.g., `api.individual.githubcopilot.com`). Empty in reverse mode. |
 
 !!! tip "Identity priority chain"
     Session fields are populated using a priority chain: (1) **Agent relay headers** (`X-Lumen-Argus-*`) from authenticated agents — OS-level, most reliable. (2) **System prompt extraction** via regex — works for Claude Code, OpenCode, Cursor. (3) **Derived session fingerprint** — hash of first messages (fallback). The proxy only trusts `X-Lumen-Argus-*` headers from authenticated agent relays; unauthenticated requests have these headers stripped.
@@ -426,7 +427,7 @@ A single audit log record. Serialized to JSONL via `to_dict()`, which explicitly
 | `scan_duration_ms` | `float` | Scan time |
 | `request_size_bytes` | `int` | Request body size |
 | `passed` | `bool` | Whether the request was forwarded to upstream |
-| Session fields | `str` | All `SessionContext` fields except `api_key_hash` (omitted when empty) |
+| Session fields | `str` | All `SessionContext` fields except `api_key_hash`. Omitted when empty, with one exception: `intercept_mode` is always emitted (defaults to `reverse`) to match the REST `/api/v1/findings` shape so downstream consumers see a consistent field across audit JSONL and API responses. `original_host` is emitted only when populated (forward mode only). |
 
 ---
 

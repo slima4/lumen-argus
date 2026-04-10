@@ -493,8 +493,11 @@ by the tool's runtime:
 ### Findings
 
 Forward proxy findings appear in the same findings table with
-`intercept_mode: forward`. All identity fields (hostname, username,
-working directory) are populated via PID resolution, same as reverse proxy.
+`intercept_mode: forward` and `original_host` populated from the
+`X-Lumen-Forward-Host` header (e.g., `api.individual.githubcopilot.com`)
+so you can distinguish traffic by its pre-interception destination. All
+identity fields (hostname, username, working directory) are populated
+via PID resolution, same as reverse proxy.
 
 ---
 
