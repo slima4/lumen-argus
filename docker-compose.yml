@@ -9,7 +9,11 @@
 # Open the dashboard:
 #   http://localhost:8081
 #
-# Custom config:
+# Custom ports / config / password:
+#   1. Copy .env.example to .env and edit values
+#   2. docker compose up -d
+#
+# Custom config file:
 #   1. Create config.yaml in this directory
 #   2. Uncomment the config volume mount below
 #   3. docker compose up -d
@@ -30,8 +34,8 @@ services:
   lumen-argus:
     build: .
     ports:
-      - "8080:8080"   # proxy
-      - "8081:8081"   # dashboard
+      - "${LUMEN_ARGUS_PROXY_PORT:-8080}:8080"   # proxy
+      - "${LUMEN_ARGUS_DASH_PORT:-8081}:8081"    # dashboard
     volumes:
       # Persist audit logs and analytics DB across upgrades
       - argus-data:/home/argus/.lumen-argus
@@ -39,7 +43,7 @@ services:
       # - ./config.yaml:/home/argus/.lumen-argus/config.yaml:ro
     environment:
       # Set a dashboard password (optional, empty = open access)
-      - LUMEN_ARGUS_DASHBOARD_PASSWORD=
+      - LUMEN_ARGUS_DASHBOARD_PASSWORD=${LUMEN_ARGUS_DASHBOARD_PASSWORD:-}
     restart: unless-stopped
 
 volumes:

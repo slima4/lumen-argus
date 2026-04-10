@@ -1,0 +1,74 @@
+# syntax=docker/dockerfile:1.4
+#
+# Dockerfile.dev — local development image with crossfire-rules installed editable
+# from a sibling repository checkout (default: ../crossfire/).
+#
+# Use this image when you need to troubleshoot rule analysis behavior with live
+# edits to the crossfire-rules source. Production builds should use the regular
+# Dockerfile, which installs crossfire-rules[re2] from PyPI via the
+# [rules-analysis] extra (single source of truth, pinned version).
+#
+# Build (from the lumen-argus repo root, with crossfire as a sibling directory):
+#
+#   docker build -f Dockerfile.dev --build-context crossfire=../crossfire -t lumen-argus:dev .
+#
+# Or via docker-compose (recommended — also bind-mounts source for live reload):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# After build, edits to ~/dev/crossfire/crossfire/*.py are picked up on container
+# restart (no rebuild needed) thanks to the editable install + the bind mount in
+# docker-compose.dev.yml.
+#
+# ---- build stage ----
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+COPY packages/core/pyproject.toml packages/core/pyproject.toml
+COPY packages/proxy/pyproject.toml packages/proxy/pyproject.toml
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev libre2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pull the sibling crossfire checkout in via a named build context.
+# Without --build-context crossfire=../crossfire, this layer fails fast with a
+# clear error pointing the developer at the right invocation.
+COPY --from=crossfire . /build/crossfire
+
+COPY packages/core/lumen_argus_core/ packages/core/lumen_argus_core/
+COPY packages/proxy/lumen_argus/ packages/proxy/lumen_argus/
+
+# Install lumen-argus packages (no rules-analysis extra — we install crossfire
+# editable from the sibling checkout instead, so local edits take effect).
+RUN pip install --no-cache-dir --prefix=/install packages/core/ packages/proxy/ \
+    && pip install --no-cache-dir --prefix=/install -e "/build/crossfire[re2]"
+
+# ---- runtime stage ----
+FROM python:3.12-slim
+
+LABEL org.opencontainers.image.title="lumen-argus-dev" \
+      org.opencontainers.image.description="Local dev image with editable crossfire-rules" \
+      org.opencontainers.image.licenses="MIT"
+
+# RE2 shared library needed at runtime by google-re2
+RUN apt-get update && apt-get install -y --no-install-recommends libre2-11 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /install /usr/local
+# Editable install needs the source tree to remain reachable at the same path
+COPY --from=crossfire . /build/crossfire
+
+RUN groupadd -r argus && useradd -r -g argus -m argus \
+    && mkdir -p /home/argus/.lumen-argus \
+    && chown -R argus:argus /home/argus/.lumen-argus
+
+USER argus
+WORKDIR /home/argus
+
+EXPOSE 8080 8081
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')" || exit 1
+
+ENTRYPOINT ["lumen-argus"]
+CMD ["serve", "--host", "0.0.0.0", "--log-level", "debug"]

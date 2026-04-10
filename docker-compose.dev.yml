@@ -1,14 +1,32 @@
 # Dev overlay — bind-mounts source code so changes take effect on container restart
-# without rebuilding the image. First build once, then:
+# without rebuilding the image.
 #
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Builds Dockerfile.dev (editable crossfire-rules from ../crossfire/) and bind-mounts
+# both the lumen-argus and crossfire source trees so edits in either repo take effect
+# on container restart, no rebuild needed.
 #
-# After code changes, just restart (no --build needed, ~2s):
+# Requires a sibling crossfire checkout at ../crossfire (relative to this repo).
+#
+# First time:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# After code changes (~2s, no --build):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml restart
+#
+# To mount a local config.yaml into the container, create ./config.yaml at the
+# repo root and uncomment the last volume line. (Without that file, Docker
+# would create an empty directory at the mount path and argus would fail to
+# parse it as a file — so the mount is commented out by default.)
 #
 services:
   lumen-argus:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      additional_contexts:
+        crossfire: ../crossfire
     command: ["serve", "--host", "0.0.0.0", "--log-level", "debug"]
     volumes:
-      - ./lumen_argus:/usr/local/lib/python3.12/site-packages/lumen_argus:ro
-      - ./config.yaml:/home/argus/.lumen-argus/config.yaml:ro
+      - ./packages/proxy/lumen_argus:/usr/local/lib/python3.12/site-packages/lumen_argus:ro
+      - ../crossfire/crossfire:/build/crossfire/crossfire:ro
+      # - ./config.yaml:/home/argus/.lumen-argus/config.yaml:ro

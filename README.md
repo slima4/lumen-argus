@@ -171,6 +171,8 @@ ANTHROPIC_BASE_URL=http://localhost:8080 claude
 open http://localhost:8081   # dashboard
 ```
 
+If `8080`/`8081` are already in use on your machine, copy `.env.example` to `.env` and edit `LUMEN_ARGUS_PROXY_PORT` / `LUMEN_ARGUS_DASH_PORT` before running `docker compose up -d`.
+
 Multiple sessions (including mixed providers) can share the same proxy instance. Each session is automatically tracked — the proxy extracts account, device, project, and conversation identifiers from every request.
 
 The proxy uses an async architecture (aiohttp) for high concurrency and low memory usage. Thread-safe for Python 3.13+ free-threaded mode (no-GIL).
