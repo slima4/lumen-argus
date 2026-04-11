@@ -47,7 +47,7 @@ class AsyncArgusProxy:
         ssl_context: ssl.SSLContext | None = None,
         max_connections: int = 10,
     ):
-        if bind not in ("127.0.0.1", "localhost"):
+        if bind not in ("127.0.0.1", "localhost", "::1"):
             log.warning("binding to %s — proxy is accessible on the network", bind)
 
         self.bind = bind
@@ -181,7 +181,7 @@ class AsyncArgusProxy:
         try:
             self._site = web.TCPSite(self._runner, self.bind, self.port)
             await self._site.start()
-            if self.bind not in ("127.0.0.1", "localhost"):
+            if self.bind not in ("127.0.0.1", "localhost", "::1"):
                 log.warning("binding to %s — proxy is accessible on the network", self.bind)
             log.info("rebind complete: listening on http://%s:%d", self.bind, self.port)
         except OSError:

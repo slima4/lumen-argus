@@ -30,10 +30,9 @@ from lumen_argus.session import extract_session as _extract_session
 log = logging.getLogger("argus.proxy")
 
 # Addresses that count as loopback for the community-mode /_forward gate.
-# Matches the pre-existing check in async_proxy/_server.py that warns on
-# non-loopback binds. If you add more loopback aliases (e.g. IPv6 "::1")
-# keep both sites in sync.
-_LOOPBACK_BINDS = frozenset({"127.0.0.1", "localhost"})
+# Matches the non-loopback-bind warning set in async_proxy/_server.py.
+# Keep both sites in sync if you add more loopback aliases.
+_LOOPBACK_BINDS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def _is_loopback_bind(bind: str) -> bool:
