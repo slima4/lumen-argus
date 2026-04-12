@@ -20,6 +20,7 @@ write custom detectors using the same mechanism.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -92,6 +93,12 @@ class ExtensionRegistry:
         self._database_adapter: Any | None = None
         # Agent auth hook
         self._agent_auth_provider: Any | None = None
+        # Plugin instance registry — shared state between installed plugins
+        self._plugin_instances: dict[str, Any] = {}
+        # Schema extension DDL registered by plugins
+        self._schema_extensions: list[str] = []
+        # Additional static file directories provided by plugins
+        self._static_dirs: list[str] = []
 
     def add_detector(self, detector: BaseDetector, priority: bool = False) -> None:
         """Register an additional detector.
@@ -208,15 +215,30 @@ class ExtensionRegistry:
         return list(self._dashboard_pages)
 
     def clear_dashboard_pages(self) -> None:
-        """Clear all plugin-registered dashboard pages, CSS, and API handler.
+        """Clear all plugin-registered dashboard pages, CSS, API handler, and static dirs.
 
         Called by Pro on SIGHUP when license state changes — allows Pro to
         re-register (license renewed) or leave empty (license expired,
-        so community shows locked placeholders on next page load).
+        so community shows locked placeholders on next page load). Also
+        invalidates the dashboard server's cached plugin-static bundle so
+        the next page load picks up any new ``register_static_dir`` calls.
         """
         self._dashboard_pages = []
         self._dashboard_css = []
         self._dashboard_api_handler = None
+        self._static_dirs = []
+        # Bust the dashboard server's cached static-file bundle. Imported
+        # lazily to avoid a circular import at module load time. If the
+        # import fails (packaging fault, test environment where server.py
+        # couldn't load), log a warning — the reload is non-fatal, but a
+        # stale cache after a license change would serve outdated plugin
+        # files with no diagnostic trace.
+        try:
+            from lumen_argus.dashboard.server import clear_static_cache
+
+            clear_static_cache()
+        except ImportError as e:
+            log.warning("clear_dashboard_pages: could not bust static cache: %s", e)
 
     def register_dashboard_css(self, css: str) -> None:
         """Register additional CSS from a plugin (injected after community CSS)."""
@@ -545,6 +567,82 @@ class ExtensionRegistry:
 
     def get_agent_auth_provider(self) -> Any | None:
         return self._agent_auth_provider
+
+    # --- Plugin instance registry ---
+
+    def set_plugin(self, name: str, instance: Any) -> None:
+        """Register a plugin instance under a stable name.
+
+        Enables plugins to share state without reaching into each other's
+        private module attributes. A late-loading plugin can call
+        ``registry.get_plugin("<name>")`` from its ``register()`` entry
+        point to access handles the early-loading plugin chose to expose
+        on its own instance, without importing the other plugin's
+        internal modules directly.
+
+        Idempotent (last write wins). No type constraint on ``instance`` —
+        the caller knows the shape. Convention for ``name``: the package
+        name without the ``lumen_argus_`` prefix.
+        """
+        self._plugin_instances[name] = instance
+        log.info("plugin instance registered: %s (%s)", name, type(instance).__name__)
+
+    def get_plugin(self, name: str) -> Any | None:
+        """Return the plugin instance registered under ``name``, or ``None``."""
+        return self._plugin_instances.get(name)
+
+    # --- Schema extension registration ---
+
+    def register_schema_extension(self, ddl: str) -> None:
+        """Register additional DDL to run during analytics store initialization.
+
+        Lets plugins own their own database tables instead of having the
+        community store (or another plugin) carry their schema. Extensions
+        run after the community schema in registration order. Each DDL
+        string must be idempotent — use ``CREATE TABLE IF NOT EXISTS`` /
+        ``CREATE INDEX IF NOT EXISTS``.
+
+        The DDL may reference adapter dialect placeholders; the store
+        resolves them via ``str.format`` before executing:
+
+        - ``{auto_id}`` → ``adapter.auto_id_type()``
+        - ``{ts}``      → ``adapter.timestamp_type()``
+
+        Registration must happen before ``AnalyticsStore`` is constructed
+        (i.e. from a plugin's ``register()`` entry point), otherwise the
+        extension will not be applied until the next restart.
+        """
+        self._schema_extensions.append(ddl)
+        log.info("schema extension registered (%d chars)", len(ddl))
+
+    def get_schema_extensions(self) -> list[str]:
+        """Return the list of registered schema-extension DDL strings."""
+        return list(self._schema_extensions)
+
+    # --- Static file directory registration ---
+
+    def register_static_dir(self, path: str) -> None:
+        """Register an additional directory to scan for dashboard static files.
+
+        The dashboard HTML assembler reads ``js/*.js``, ``css/*.css``, and
+        ``html/*.html`` from each registered directory in registration
+        order (community first, then plugins in entry-point order). File
+        name collisions resolve last-write-wins, so a plugin can override
+        a community file by registering a directory containing a file of
+        the same name — this should be rare.
+
+        If ``path`` does not exist at registration time, a warning is
+        logged and the directory is skipped.
+        """
+        if not os.path.isdir(path):
+            log.warning("register_static_dir: path does not exist, skipping: %s", path)
+            return
+        self._static_dirs.append(path)
+        log.info("plugin static dir registered: %s", path)
+
+    def get_static_dirs(self) -> list[str]:
+        """Return the list of registered plugin static directories."""
+        return list(self._static_dirs)
 
     def loaded_plugins(self) -> list[tuple[str, str]]:
         """Return list of (name, version) for loaded plugins."""

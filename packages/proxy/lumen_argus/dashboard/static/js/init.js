@@ -70,6 +70,12 @@ async function loadData(){try{
   const r=await Promise.all(fetches);
   const st=r[0],stats=r[1],fd=r[2],sess=r[3];
   if(r[4])_pipelineStages=r[4].stages||[];
+  /* Expose status to plugin modules. Set BEFORE any page loadFn runs so
+     modules can read window._statusData / window._licenseTier synchronously
+     instead of doing their own /api/v1/status fetch. Refreshed on every
+     loadData() call (initial load + SSE/polling refresh). */
+  window._statusData=st;
+  window._licenseTier=(st&&st.tier)||'community';
   document.getElementById('hdr-status').textContent='operational';
   document.getElementById('hdr-version').textContent='v'+st.version;
   document.getElementById('hdr-uptime').textContent=fmtUptime(st.uptime_seconds);

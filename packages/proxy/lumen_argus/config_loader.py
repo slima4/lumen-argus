@@ -138,6 +138,15 @@ def _create_or_get_store(
         store.start_cleanup_scheduler(config.analytics.retention_days)
     elif store is not None and hmac_key:
         store._hmac_key = hmac_key
+    # Apply plugin-registered schema extensions regardless of which store
+    # we ended up with. A plugin may inject its own AnalyticsStore subclass
+    # via set_analytics_store; that path must still get other plugins'
+    # DDL applied, and DDL is idempotent so this is safe to call even on
+    # a freshly constructed community store.
+    if store is not None:
+        ddls = extensions.get_schema_extensions()
+        if ddls:
+            store.apply_schema_extensions(ddls)
     return store
 
 

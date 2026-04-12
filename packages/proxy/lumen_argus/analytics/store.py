@@ -12,7 +12,9 @@ via extensions.set_database_adapter().
 import logging
 import threading
 import time
-from typing import Any, Callable
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Any, Callable, Iterator, Sequence
 
 from lumen_argus.analytics.adapter import DatabaseAdapter, DBConnection, SQLiteAdapter
 from lumen_argus.analytics.allowlists import AllowlistRepository
@@ -32,6 +34,14 @@ from lumen_argus.models import Finding, SessionContext
 log = logging.getLogger("argus.analytics")
 
 
+@dataclass(frozen=True)
+class WriteResult:
+    """Result of a single-statement write via AnalyticsStore.execute_write."""
+
+    rowcount: int
+    lastrowid: int | None
+
+
 class AnalyticsStore:
     """Database-agnostic analytics store for finding history and trend queries.
 
@@ -45,6 +55,7 @@ class AnalyticsStore:
         db_path: str = "~/.lumen-argus/analytics.db",
         hmac_key: bytes | None = None,
         adapter: DatabaseAdapter | None = None,
+        schema_extensions: list[str] | None = None,
     ) -> None:
         if adapter:
             self._adapter = adapter
@@ -53,6 +64,14 @@ class AnalyticsStore:
         self._hmac_key = hmac_key
         self._rules_change_callback: Callable[..., Any] | None = None
         self._ensure_db()
+        # Plugin-registered DDL runs after the community schema. Accepted as
+        # a constructor arg (rather than reaching into the ExtensionRegistry
+        # from here) to keep analytics/ free of upward dependencies. Callers
+        # that adopt an already-constructed store (e.g. a Pro subclass
+        # returned via ExtensionRegistry.set_analytics_store) must call
+        # ``apply_schema_extensions`` themselves after load_plugins().
+        if schema_extensions:
+            self.apply_schema_extensions(schema_extensions)
         # Repositories receive adapter directly (DDD repository pattern)
         self.findings = FindingsRepository(self._adapter, hmac_key=hmac_key)
         self.rules = RulesRepository(self._adapter, on_rules_changed=self._notify_rules_changed)
@@ -67,8 +86,71 @@ class AnalyticsStore:
         self.mcp_policies = MCPPoliciesRepository(self._adapter)
 
     def _ensure_db(self) -> None:
-        """Create the database and schema if they don't exist."""
+        """Create the database and community schema if they don't exist."""
         self._adapter.ensure_schema(build_all_schemas(self._adapter))
+
+    def apply_schema_extensions(self, ddls: list[str]) -> None:
+        """Apply plugin-registered DDL against this store's database.
+
+        Each DDL string must be idempotent (``CREATE TABLE IF NOT EXISTS``
+        / ``CREATE INDEX IF NOT EXISTS``) and may use the ``{auto_id}`` /
+        ``{ts}`` dialect placeholders, which we resolve via the adapter
+        before executing.
+
+        Extensions are applied one at a time: a failure in one does not
+        prevent the others from running. Both placeholder-resolution
+        errors (``KeyError`` / ``IndexError``) and DDL execution errors
+        are logged at ``ERROR`` level with ``exc_info`` but never raised —
+        a broken plugin schema should degrade that plugin's features, not
+        bring the proxy down. Log messages include only the extension
+        index, never the raw DDL, to avoid leaking plugin internals.
+
+        Called from ``__init__`` when ``schema_extensions=`` is passed,
+        and from ``config_loader._create_or_get_store`` for stores
+        adopted via ``ExtensionRegistry.set_analytics_store`` (e.g. a Pro
+        subclass). Safe to call multiple times: every DDL is idempotent.
+        """
+        if not ddls:
+            return
+        auto_id = self._adapter.auto_id_type()
+        ts = self._adapter.timestamp_type()
+        applied = 0
+        for idx, ddl in enumerate(ddls):
+            try:
+                resolved = ddl.format(auto_id=auto_id, ts=ts)
+            except (KeyError, IndexError) as e:
+                log.error(
+                    "schema extension #%d: placeholder resolution failed: %s",
+                    idx,
+                    e,
+                )
+                continue
+            try:
+                self._adapter.ensure_schema(resolved)
+                applied += 1
+            except Exception as e:
+                # Log without DDL body to avoid leaking plugin internals;
+                # the adapter exception itself carries the SQL error text.
+                log.error(
+                    "schema extension #%d: DDL failed: %s",
+                    idx,
+                    e,
+                    exc_info=True,
+                )
+        # Summary log level reflects outcome so operators scanning for
+        # failures don't mistake "applied 0 of N" for a successful no-op.
+        total = len(ddls)
+        if applied == total:
+            log.info("applied %d plugin schema extension(s)", applied)
+        elif applied > 0:
+            log.warning(
+                "applied %d of %d plugin schema extension(s) — %d failed",
+                applied,
+                total,
+                total - applied,
+            )
+        else:
+            log.warning("all %d plugin schema extension(s) failed", total)
 
     def _connect(self) -> DBConnection:
         """Return a database connection via the adapter.
@@ -77,6 +159,96 @@ class AnalyticsStore:
         Repositories use BaseRepository._connect() directly.
         """
         return self._adapter.connect()
+
+    # --- Public SQL execution API (for plugin-owned tables) ---
+
+    def execute(self, sql: str, params: Sequence[Any] | None = None) -> list[dict[str, Any]]:
+        """Run a read-only SQL statement and return rows as dicts.
+
+        Plugins that own their own tables (registered via
+        ``ExtensionRegistry.register_schema_extension``) use this as a
+        stable, public alternative to reaching into ``store._connect()``
+        and ``store._adapter`` directly. Reads run on the thread-local
+        connection — no locking needed for SELECTs.
+
+        Use ``?`` placeholders; the adapter will translate to ``%s`` for
+        PostgreSQL if/when a Pro PostgresAdapter is wired up.
+
+        Returns a list of ``dict[str, Any]`` — one per row — so callers do
+        not depend on the underlying cursor's row type (``sqlite3.Row`` vs
+        ``psycopg`` tuples).
+        """
+        conn = self._adapter.connect()
+        cur = conn.execute(sql, tuple(params or ()))
+        rows = cur.fetchall()
+        if not rows:
+            return []
+        # sqlite3.Row exposes .keys(); psycopg rows use cursor.description.
+        if hasattr(rows[0], "keys"):
+            return [{k: row[k] for k in row.keys()} for row in rows]
+        columns = [d[0] for d in cur.description or []]
+        return [dict(zip(columns, row)) for row in rows]
+
+    def execute_write(self, sql: str, params: Sequence[Any] | None = None) -> WriteResult:
+        """Run a single-statement write under the adapter write lock.
+
+        Writes are serialized by the adapter's ``write_lock()`` — a real
+        ``threading.Lock`` for SQLite (single-writer), a no-op for
+        PostgreSQL (MVCC). Commits before returning.
+
+        Returns the ``rowcount`` and ``lastrowid`` from the cursor so
+        callers can distinguish insert/update/delete semantics without
+        re-querying.
+
+        .. warning::
+            Not reentrant on SQLite. Do **not** call ``execute_write`` or
+            ``write_transaction`` from a thread that already holds the
+            adapter write lock — that would self-deadlock on the
+            non-reentrant ``threading.Lock``. If you need multiple
+            statements under one lock, use ``write_transaction`` as the
+            outermost call.
+        """
+        with self._adapter.write_lock():
+            conn = self._adapter.connect()
+            cur = conn.execute(sql, tuple(params or ()))
+            conn.commit()
+            return WriteResult(rowcount=cur.rowcount, lastrowid=cur.lastrowid)
+
+    @contextmanager
+    def write_transaction(self) -> Iterator[DBConnection]:
+        """Yield a connection under the write lock for multi-statement writes.
+
+        Example::
+
+            with store.write_transaction() as conn:
+                conn.execute("DELETE FROM my_table WHERE expired = 1")
+                conn.execute("INSERT INTO my_table (name) VALUES (?)", ("x",))
+
+        The block executes atomically — either all statements commit or
+        (on exception) none do. Commit happens on successful exit;
+        exceptions propagate and the connection rolls back.
+
+        .. warning::
+            Not reentrant on SQLite. Do **not** call ``execute_write`` or
+            a nested ``write_transaction`` from inside the ``with`` block
+            — the adapter write lock is a plain ``threading.Lock`` and
+            the nested call will self-deadlock. Put all your writes
+            inside this one block instead.
+        """
+        with self._adapter.write_lock():
+            conn = self._adapter.connect()
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                # Attempt rollback; log (don't swallow) any rollback failure
+                # so a broken connection is still diagnosable. Never log
+                # SQL parameters — callers may pass sensitive values.
+                try:
+                    conn.rollback()
+                except Exception as rollback_exc:
+                    log.warning("write_transaction rollback failed: %s", rollback_exc)
+                raise
 
     def set_rules_change_callback(self, callback: Callable[..., Any] | None) -> None:
         """Register callback for rule changes.

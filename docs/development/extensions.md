@@ -215,6 +215,177 @@ registry.register_auth_provider(my_oauth_provider)
 # provider.authenticate(headers) -> {"user_id": "...", "roles": [...]} or None
 ```
 
+### Multi-Plugin Coordination
+
+When more than one plugin is installed, plugins frequently need to share
+state — the late-loading plugin wants the early-loading plugin's store
+handle, dispatcher, or metrics collector. The following hooks let plugins
+do this without reaching into each other's private module attributes.
+
+#### Plugin Instance Registry
+
+Publish and look up plugin instances by name. Convention: use the package
+name without the `lumen_argus_` prefix.
+
+```python
+# Plugin A — registers itself during its register() entry point
+def register(registry):
+    instance = MyPlugin(...)
+    registry.set_plugin("my_plugin", instance)
+
+# Plugin B — looks up plugin A by name
+def register(registry):
+    upstream = registry.get_plugin("my_plugin")  # None if not installed
+    if upstream is not None:
+        # Use whatever public attributes plugin A exposes
+        collector = MyCollector(sink=upstream.public_handle)
+```
+
+- `set_plugin(name, instance)` — idempotent, last write wins. No type
+  constraint — the caller knows the shape.
+- `get_plugin(name)` — returns the instance or `None`.
+- Plugin A owns the contract for what attributes it exposes on its own
+  instance. Plugin B reads at its own risk if the shape changes.
+
+#### Schema Extension Registration
+
+Plugins that own their own database tables register DDL that runs after the
+community schema. Must be idempotent (`CREATE TABLE IF NOT EXISTS`).
+
+```python
+def register(registry):
+    registry.register_schema_extension("""
+        CREATE TABLE IF NOT EXISTS my_plugin_events (
+            id {auto_id},
+            created_at {ts} NOT NULL,
+            payload TEXT NOT NULL
+        );
+    """)
+```
+
+The placeholders `{auto_id}` and `{ts}` resolve to the adapter's dialect
+(`INTEGER PRIMARY KEY AUTOINCREMENT` / `TEXT` for SQLite, `SERIAL PRIMARY
+KEY` / `TIMESTAMPTZ` for PostgreSQL). Extensions run in registration
+order, each applied independently: a failure in one is logged at `ERROR`
+and skipped without blocking the others. Broken plugin schemas degrade
+that plugin's features — they don't crash the store.
+
+Registration must happen during the plugin's `register()` entry point.
+The proxy collects all registered extensions after `load_plugins()` runs
+and applies them against the active analytics store, so plugin authors
+do not need to worry about startup ordering.
+
+If you need to apply DDL against an already-constructed store (e.g. in
+a test), call the public method directly:
+
+```python
+store.apply_schema_extensions([
+    "CREATE TABLE IF NOT EXISTS my_table (id {auto_id}, name TEXT)",
+])
+```
+
+#### Public Store Execute API
+
+Plugins with their own tables run queries against the shared database via
+three stable methods on `AnalyticsStore`:
+
+```python
+# Read — returns list[dict], uses thread-local connection
+rows = store.execute(
+    "SELECT payload FROM my_plugin_events WHERE id = ?",
+    (event_id,),
+)
+
+# Single-statement write — acquires adapter write lock, commits
+result = store.execute_write(
+    "INSERT INTO my_plugin_events (created_at, payload) VALUES (?, ?)",
+    (now, payload),
+)
+print(result.rowcount, result.lastrowid)
+
+# Multi-statement transaction
+with store.write_transaction() as conn:
+    conn.execute("DELETE FROM my_plugin_events WHERE created_at < ?", (cutoff,))
+    conn.execute(
+        "INSERT INTO my_plugin_events (created_at, payload) VALUES (?, ?)",
+        (now, payload),
+    )
+# commits on success, rolls back on exception
+```
+
+- All methods use `?` placeholders. The adapter translates to `%s` for
+  PostgreSQL.
+- `execute()` returns `list[dict[str, Any]]` — one dict per row.
+- `execute_write()` returns `WriteResult(rowcount, lastrowid)`.
+- `write_transaction()` yields a `DBConnection` under the write lock.
+- **Never nest**: `execute_write` and `write_transaction` both acquire
+  the adapter write lock, which is a plain `threading.Lock` on SQLite
+  (non-reentrant). Do not call `execute_write` from inside a
+  `write_transaction` block — it will self-deadlock. Put all your
+  writes inside a single `write_transaction` block instead.
+- **Never log SQL parameters** — they may contain sensitive values
+  (the same values the scanner pipeline is looking for).
+
+These are the *only* public SQL entry points for plugins. Do not reach
+into `store._adapter` or `store._connect()` — they are internal and may
+change without notice.
+
+#### Multi-Package Static File Loading
+
+Plugins can ship their own JS/CSS/HTML files from their own package
+directory instead of bundling them inside another plugin. The dashboard
+server scans registered directories and injects their contents into the
+assembled SPA HTML.
+
+```python
+def register(registry):
+    static = os.path.join(os.path.dirname(__file__), "dashboard", "static")
+    registry.register_static_dir(static)
+```
+
+Directory layout:
+
+```
+dashboard/static/
+├── js/*.js       → concatenated into a <script> block before </body>
+├── css/*.css     → concatenated into the <style> block
+└── html/*.html   → exposed as var _pageHtml_<basename> inside <script>
+```
+
+- Directories are processed in registration order (community first, then
+  plugins in entry-point order).
+- File name collisions resolve last-write-wins, so a plugin *can* override
+  a community file if it really needs to — do this rarely.
+- If the registered path doesn't exist at registration time, a warning is
+  logged and the directory is skipped.
+- Missing subdirectories (`js/`, `css/`, `html/`) are silently ignored,
+  so a plugin may provide only JS, only CSS, etc.
+- HTML files become `var _pageHtml_<safename>=<json>;` globals. The
+  `<safename>` is the basename with non-identifier characters (`-`, `.`,
+  etc.) replaced with `_`, so `my-page.v2.html` becomes
+  `_pageHtml_my_page_v2`.
+- Results are cached on first request and reused across page loads. The
+  cache is busted when a plugin calls `registry.clear_dashboard_pages()`
+  (which happens on SIGHUP reload), so you never need to clear it
+  manually during normal operation.
+
+#### Dashboard Status Data Sharing
+
+The community dashboard calls `/api/v1/status` once per `loadData()`
+(initial load + SSE/polling refresh) and exposes the response on two
+globals *before* any page `loadFn` runs:
+
+```javascript
+window._statusData   // full /api/v1/status JSON response
+window._licenseTier  // "community" | "pro" | "team"
+```
+
+Plugin JS modules should read these synchronously instead of firing
+their own `/api/v1/status` fetch. On direct-hash navigation (e.g.
+bookmarking a page hash), the page's `loadFn` is guaranteed to run
+*after* `loadData()` completes, so the globals are always set by the
+time plugin code needs them.
+
 ## Data Structures
 
 ### ScanField

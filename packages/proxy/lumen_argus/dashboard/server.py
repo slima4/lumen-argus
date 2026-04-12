@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -141,6 +142,100 @@ def _json_error(status: int, error: str) -> web.Response:
     """Create a JSON error response with nosniff header."""
     body = json.dumps({"error": error}).encode("utf-8")
     return _nosniff_response(status, body)
+
+
+# Cache for _load_plugin_static: keyed on the tuple of registered dirs so
+# a plugin swap (add/remove via clear_dashboard_pages on SIGHUP) transparently
+# invalidates. Bounded in practice — the cardinality of (static_dirs) tuples
+# across a running process is 1 or 2 (pre/post plugin reload).
+_STATIC_CACHE: dict[tuple[str, ...], tuple[str, str, str]] = {}
+
+# Identifier characters that survive conversion to a JS variable name.
+# Anything else becomes underscore so "enrollment-pro.html" → "_pageHtml_enrollment_pro".
+_JS_IDENT_INVALID = re.compile(r"[^A-Za-z0-9_]")
+
+
+def _load_plugin_static(dirs: list[str]) -> tuple[str, str, str]:
+    """Read ``js/*.js``, ``css/*.css``, ``html/*.html`` from plugin static dirs.
+
+    Returns ``(css_block, html_vars_block, js_block)`` where:
+
+    - ``css_block``       — all CSS files concatenated
+    - ``html_vars_block`` — ``var _pageHtml_<safename>=<json>;`` per file,
+                            where ``<safename>`` is the basename with any
+                            non-identifier characters (``-``, ``.``) mapped
+                            to ``_`` so it parses as a valid JS identifier
+    - ``js_block``        — all JS files concatenated
+
+    Directories are processed in registration order. Within a directory
+    files are read in sorted order for determinism. Name collisions
+    resolve last-write-wins, matching the contract in the hooks spec:
+    a plugin can override a community file if it needs to.
+
+    Missing subdirectories are skipped silently (a plugin may provide
+    only JS, only CSS, etc.). Unreadable files log a warning but do not
+    fail the request — a broken plugin should degrade the dashboard, not
+    take it down.
+
+    Results are cached per-dirs-tuple so the dashboard handler does not
+    touch disk on every page load. The cache is process-lifetime; plugin
+    static files are installed files that don't change during a run.
+    ``clear_static_cache()`` drops the cache (called on plugin reload).
+    """
+    key = tuple(dirs)
+    cached = _STATIC_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    css_parts: dict[str, str] = {}
+    html_parts: dict[str, str] = {}
+    js_parts: dict[str, str] = {}
+
+    def _scan(root: str, subdir: str, ext: str, out: dict[str, str]) -> None:
+        sub = os.path.join(root, subdir)
+        if not os.path.isdir(sub):
+            return
+        for name in sorted(os.listdir(sub)):
+            if not name.endswith(ext):
+                continue
+            path = os.path.join(sub, name)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    out[name] = f.read()
+            except OSError as e:
+                log.warning("plugin static file unreadable: %s (%s)", path, e)
+
+    for d in dirs:
+        _scan(d, "css", ".css", css_parts)
+        _scan(d, "html", ".html", html_parts)
+        _scan(d, "js", ".js", js_parts)
+
+    css_block = "\n".join(css_parts.values())
+    html_vars_block = "\n".join(
+        "var _pageHtml_%s=%s;" % (_JS_IDENT_INVALID.sub("_", os.path.splitext(name)[0]), json.dumps(content))
+        for name, content in html_parts.items()
+    )
+    js_block = "\n".join(js_parts.values())
+    result = (css_block, html_vars_block, js_block)
+    _STATIC_CACHE[key] = result
+    log.info(
+        "plugin static cache miss: %d css / %d html / %d js across %d dir(s)",
+        len(css_parts),
+        len(html_parts),
+        len(js_parts),
+        len(dirs),
+    )
+    return result
+
+
+def clear_static_cache() -> None:
+    """Drop the plugin static-file cache.
+
+    Called during plugin reload / SIGHUP so the next dashboard page load
+    picks up any changes from ``register_static_dir`` calls made by the
+    reloaded plugins.
+    """
+    _STATIC_CACHE.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -679,6 +774,25 @@ class AsyncDashboardServer:
         if extra_css:
             css_block = "\n".join(extra_css)
             html = html.replace("</style>", css_block + "\n</style>")
+
+        # Inject plugin-registered static files (js/*.js, css/*.css, html/*.html)
+        # from directories registered via ExtensionRegistry.register_static_dir.
+        # CSS is injected before </style>; HTML fragments are injected as
+        # _pageHtml_<basename> JS vars, and JS modules as raw <script> blocks
+        # before </body>. Registration order: community → plugins in entry-point
+        # order; name collisions resolve last-write-wins.
+        static_dirs = self.extensions.get_static_dirs() if self.extensions else []
+        if static_dirs:
+            plugin_css, plugin_html_vars, plugin_js = _load_plugin_static(static_dirs)
+            if plugin_css:
+                html = html.replace("</style>", plugin_css + "\n</style>")
+            trailing_blocks: list[str] = []
+            if plugin_html_vars:
+                trailing_blocks.append("<script>\n%s\n</script>" % plugin_html_vars)
+            if plugin_js:
+                trailing_blocks.append("<script>\n%s\n</script>" % plugin_js)
+            if trailing_blocks:
+                html = html.replace("</body>", "\n".join(trailing_blocks) + "\n</body>")
 
         # Inject plugin page JS before </body>
         extra_pages = self.extensions.get_dashboard_pages() if self.extensions else []

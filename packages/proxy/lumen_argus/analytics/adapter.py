@@ -72,6 +72,15 @@ class DBConnection(Protocol):
         """Commit the current transaction."""
         ...
 
+    def rollback(self) -> None:
+        """Roll back the current transaction.
+
+        Required by AnalyticsStore.write_transaction for exception-safe
+        atomicity. Both sqlite3.Connection and psycopg.Connection
+        implement this (DB-API 2.0), so the protocol just declares it.
+        """
+        ...
+
     def close(self) -> None:
         """Close the connection."""
         ...
