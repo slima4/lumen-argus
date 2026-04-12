@@ -365,9 +365,11 @@ dashboard/static/
   etc.) replaced with `_`, so `my-page.v2.html` becomes
   `_pageHtml_my_page_v2`.
 - Results are cached on first request and reused across page loads. The
-  cache is busted when a plugin calls `registry.clear_dashboard_pages()`
-  (which happens on SIGHUP reload), so you never need to clear it
-  manually during normal operation.
+  cache is busted when `registry.clear_dashboard_pages()` runs (e.g. on
+  SIGHUP reload), so any on-disk content changes are picked up on the
+  next page load. Registered static dirs themselves are **not** dropped
+  on reload — they're tied to installed plugin packages, which don't
+  change at runtime.
 
 #### Dashboard Status Data Sharing
 

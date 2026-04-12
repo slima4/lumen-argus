@@ -215,24 +215,35 @@ class ExtensionRegistry:
         return list(self._dashboard_pages)
 
     def clear_dashboard_pages(self) -> None:
-        """Clear all plugin-registered dashboard pages, CSS, API handler, and static dirs.
+        """Clear plugin-registered dashboard pages, CSS, and API handler.
 
-        Called by Pro on SIGHUP when license state changes — allows Pro to
-        re-register (license renewed) or leave empty (license expired,
-        so community shows locked placeholders on next page load). Also
-        invalidates the dashboard server's cached plugin-static bundle so
-        the next page load picks up any new ``register_static_dir`` calls.
+        Called during SIGHUP config reload when a plugin needs to
+        re-register its UI elements — e.g. a license state change that
+        toggles which pages are available. The plugin is expected to
+        call ``register_dashboard_pages`` / ``register_dashboard_css`` /
+        ``register_dashboard_api`` again from its reload callback.
+
+        **Does not clear ``_static_dirs``.** Static directories are
+        filesystem paths tied to installed plugin packages — they are
+        registered once at ``load_plugins()`` time from each plugin's
+        ``register()`` entry point, which is *not* re-invoked on SIGHUP.
+        Clearing them here would permanently lose the registration for
+        any plugin that doesn't also re-register from a reload hook
+        (e.g. a package that only installs static files).
+
+        The dashboard server's cached static-file bundle *is* busted, so
+        any file content changes on disk are picked up on the next
+        page load even though the dirs list is unchanged.
         """
         self._dashboard_pages = []
         self._dashboard_css = []
         self._dashboard_api_handler = None
-        self._static_dirs = []
         # Bust the dashboard server's cached static-file bundle. Imported
         # lazily to avoid a circular import at module load time. If the
         # import fails (packaging fault, test environment where server.py
         # couldn't load), log a warning — the reload is non-fatal, but a
-        # stale cache after a license change would serve outdated plugin
-        # files with no diagnostic trace.
+        # stale cache after a reload would serve outdated plugin files
+        # with no diagnostic trace.
         try:
             from lumen_argus.dashboard.server import clear_static_cache
 

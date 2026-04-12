@@ -393,12 +393,40 @@ class TestStaticDirRegistration(unittest.TestCase):
         _css, _html, js = _load_plugin_static([d])
         self.assertIn("var a=2;", js)
 
-    def test_clear_dashboard_pages_clears_static_dirs_and_cache(self):
+    def test_clear_dashboard_pages_preserves_static_dirs(self):
+        # Static dirs are filesystem paths tied to installed plugin
+        # packages. They're registered once at load_plugins() time,
+        # which is NOT re-invoked on SIGHUP — so clear_dashboard_pages
+        # must not drop them. Otherwise a plugin that only registers
+        # static files (no pages / css / api handler to re-register
+        # in a reload hook) would lose its UI on the first SIGHUP
+        # and never recover until proxy restart.
         reg = ExtensionRegistry()
         reg.register_static_dir(self.tmpdir)
+        reg.register_dashboard_pages([{"name": "x", "js": "", "html": ""}])
         self.assertEqual(len(reg.get_static_dirs()), 1)
+        self.assertEqual(len(reg.get_dashboard_pages()), 1)
         reg.clear_dashboard_pages()
-        self.assertEqual(reg.get_static_dirs(), [])
+        # Pages are cleared (caller will re-register them from its
+        # reload hook), but static dirs survive.
+        self.assertEqual(reg.get_dashboard_pages(), [])
+        self.assertEqual(len(reg.get_static_dirs()), 1)
+
+    def test_clear_dashboard_pages_still_busts_static_cache(self):
+        # Even though _static_dirs survives, the cache must be busted so
+        # any on-disk content changes (rare but possible in dev) are
+        # picked up on the next dashboard page load.
+        d = os.path.join(self.tmpdir, "sighup")
+        self._make_static_tree(d, js={"a.js": "var a=1;"})
+        _load_plugin_static([d])  # populate cache
+        # Mutate the file to prove the cache is the thing being tested
+        with open(os.path.join(d, "js", "a.js"), "w", encoding="utf-8") as f:
+            f.write("var a=2;")
+        reg = ExtensionRegistry()
+        reg.register_static_dir(d)
+        reg.clear_dashboard_pages()
+        _css, _html, js = _load_plugin_static([d])
+        self.assertIn("var a=2;", js)
 
 
 # ---------------------------------------------------------------------------

@@ -231,9 +231,12 @@ def _load_plugin_static(dirs: list[str]) -> tuple[str, str, str]:
 def clear_static_cache() -> None:
     """Drop the plugin static-file cache.
 
-    Called during plugin reload / SIGHUP so the next dashboard page load
-    picks up any changes from ``register_static_dir`` calls made by the
-    reloaded plugins.
+    Called from ``ExtensionRegistry.clear_dashboard_pages()`` on SIGHUP
+    reload so the next dashboard page load re-reads any on-disk content
+    changes. The list of registered static dirs is *not* dropped on
+    reload — plugins register static dirs exactly once from their
+    ``register()`` entry point, which is not re-invoked on SIGHUP — so
+    this bust only picks up content changes, not registration changes.
     """
     _STATIC_CACHE.clear()
 
