@@ -582,10 +582,11 @@ async def _run_relay_and_forward(
 
     for task in pending:
         task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    # gather(return_exceptions=True) absorbs each task's own CancelledError
+    # as a result item, but an outer cancellation targeting this coroutine
+    # still propagates — unlike a manual try/except CancelledError loop,
+    # which would swallow it.
+    await asyncio.gather(*pending, return_exceptions=True)
 
     # Re-raise any exception from the completed task (port conflict,
     # startup failure, etc.) — never swallow silently.

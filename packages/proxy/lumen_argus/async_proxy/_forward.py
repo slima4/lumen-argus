@@ -352,7 +352,7 @@ async def _do_forward(
         scan_result = await scan_request_body(server, request_id, body, provider, model, session, span)
 
         # MCP-aware scanning
-        scan_result, _mcp_info, _mcp_method, mcp_block_resp = await scan_mcp_request(
+        scan_result, _mcp_info, _mcp_method, mcp_block_resp = scan_mcp_request(
             server, request_id, body, scan_result, session, provider, model, method, path, t0
         )
         if mcp_block_resp is not None:

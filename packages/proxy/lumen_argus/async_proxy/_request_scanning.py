@@ -106,7 +106,7 @@ async def scan_request_body(
     return ScanResult()
 
 
-async def scan_mcp_request(
+def scan_mcp_request(
     server: "AsyncArgusProxy",
     request_id: int,
     body: bytes,
