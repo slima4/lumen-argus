@@ -31,7 +31,6 @@ class TestNotificationAPI(StoreTestCase):
                 },
             }
         )
-        self.ext.set_channel_limit(None)  # unlimited for most tests
 
     def _api(self, path, method="GET", body=b""):
         return handle_community_api(
@@ -48,20 +47,18 @@ class TestNotificationAPI(StoreTestCase):
         data = json.loads(body)
         self.assertIn("webhook", data["types"])
         self.assertIn("email", data["types"])
-        self.assertIsNone(data["channel_limit"])
-
-    def test_get_types_with_limit(self):
-        self.ext.set_channel_limit(1)
-        _status, body = self._api("/api/v1/notifications/types")
-        data = json.loads(body)
-        self.assertEqual(data["channel_limit"], 1)
-        self.assertEqual(data["channel_count"], 0)
+        # No limit metadata in the types response — community is unlimited;
+        # plugin-imposed caps surface only via the 409 on POST.
+        self.assertNotIn("channel_limit", data)
+        self.assertNotIn("channel_count", data)
 
     def test_get_channels_empty(self):
         status, body = self._api("/api/v1/notifications/channels")
         self.assertEqual(status, 200)
         data = json.loads(body)
         self.assertEqual(data["channels"], [])
+        self.assertNotIn("channel_limit", data)
+        self.assertNotIn("channel_count", data)
 
     def test_create_channel(self):
         payload = json.dumps(

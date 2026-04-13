@@ -465,7 +465,7 @@ def register(registry):
 
 | Hook | Signature | Description |
 |------|-----------|-------------|
-| `register_dashboard_pages(pages)` | `pages: list[dict]` | Register additional dashboard pages. Each page dict has `name`, `label`, `js`, `order`. Pages matching locked placeholders unlock them. |
+| `register_dashboard_pages(pages)` | `pages: list[dict]` | Register additional dashboard pages. Each page dict has `name`, `label`, `js`, `order`. Plugins own their pages end-to-end — community no longer pre-registers locked placeholders. |
 | `register_dashboard_css(css)` | `css: str` | Register additional CSS injected after community CSS. |
 | `register_dashboard_api(handler)` | `async handler(path, method, body, store, audit_reader, agent_identity) -> (status, body) or None` | Register a plugin API handler. Called before community handler; return `None` to fall through. `agent_identity` is `AgentIdentity | None`. |
 | `set_analytics_store(store)` | `store: AnalyticsStore` | Override the analytics store (Pro passes its extended store). |
@@ -479,7 +479,7 @@ def register(registry):
 | `register_channel_types(types)` | `types: dict` | Register channel type definitions for the dashboard dropdown. |
 | `set_notifier_builder(builder)` | `builder(channel_dict) -> notifier or None` | Factory that builds notifier instances from DB channel rows. |
 | `set_dispatcher(dispatcher)` | `dispatcher.dispatch(findings, provider)` | Set the notification dispatcher. Community calls this from pipeline. |
-| `set_channel_limit(limit)` | `limit: int or None` | Set max channels (`None` = unlimited, `1` = freemium default). |
+| `set_channel_limit(limit)` | `limit: int or None` | Cap the number of dashboard-managed channels (`None` = unlimited, the community default). |
 
 ### Observability hooks
 

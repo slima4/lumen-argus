@@ -515,11 +515,11 @@ class TestExtensionHooks(unittest.TestCase):
         from lumen_argus.extensions import ExtensionRegistry
 
         reg = ExtensionRegistry()
-        self.assertEqual(reg.get_channel_limit(), 1)  # freemium default
-        reg.set_channel_limit(None)
-        self.assertIsNone(reg.get_channel_limit())
+        self.assertIsNone(reg.get_channel_limit())  # community default: unlimited
         reg.set_channel_limit(5)
         self.assertEqual(reg.get_channel_limit(), 5)
+        reg.set_channel_limit(None)
+        self.assertIsNone(reg.get_channel_limit())
 
     def test_dispatcher(self):
         from lumen_argus.extensions import ExtensionRegistry

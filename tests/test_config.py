@@ -408,13 +408,13 @@ logging:
         warnings = _validate_config(data, "test")
         self.assertTrue(any("backup_count" in w for w in warnings))
 
-    def test_json_format_warns_pro(self):
+    def test_json_format_no_tier_warning(self):
         data = _parse_yaml("""
 logging:
   format: json
 """)
         warnings = _validate_config(data, "test")
-        self.assertTrue(any("Pro license" in w and "JSON" in w for w in warnings))
+        self.assertEqual([w for w in warnings if "format" in w], [])
 
     def test_text_format_no_warning(self):
         data = _parse_yaml("""
@@ -425,21 +425,21 @@ logging:
         format_warnings = [w for w in warnings if "format" in w]
         self.assertEqual(len(format_warnings), 0)
 
-    def test_stdout_output_warns_pro(self):
+    def test_stdout_output_no_tier_warning(self):
         data = _parse_yaml("""
 logging:
   output: stdout
 """)
         warnings = _validate_config(data, "test")
-        self.assertTrue(any("Pro license" in w and "stdout" in w for w in warnings))
+        self.assertEqual([w for w in warnings if "output" in w], [])
 
-    def test_both_output_warns_pro(self):
+    def test_both_output_no_tier_warning(self):
         data = _parse_yaml("""
 logging:
   output: both
 """)
         warnings = _validate_config(data, "test")
-        self.assertTrue(any("Pro license" in w and "both" in w for w in warnings))
+        self.assertEqual([w for w in warnings if "output" in w], [])
 
     def test_file_output_no_warning(self):
         data = _parse_yaml("""

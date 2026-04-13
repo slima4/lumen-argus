@@ -2,6 +2,28 @@
 
 All notable changes to lumen-argus are documented here.
 
+## Unreleased
+
+### Dashboard Layering Cleanup
+
+- Removed all hardcoded tier branches, locked placeholders, and upsell
+  copy from the community dashboard. Plugins now own their dashboard
+  surface end-to-end, including any tier-aware rendering.
+- `pipeline.js` exposes a new `registerPipelineAction(name)` registry
+  hook so plugins can append action options to the dropdowns. The
+  community base set is `['log','alert','block']`.
+- Settings page reads `status.tier` directly and applies a `tier-<name>`
+  CSS class instead of branching on hardcoded tier values.
+- Removed the artificial 1-channel webhook cap. `ExtensionRegistry`
+  ships with `_channel_limit = None`. Plugins may impose a cap via
+  `set_channel_limit(N)`.
+- `GET /api/v1/notifications/types` and `GET /api/v1/notifications/channels`
+  no longer carry `channel_limit` / `channel_count` keys. The 409 response
+  on POST still surfaces a plugin-imposed cap when one is set.
+- New regression suite `tests/test_dashboard_layering.py` pins the
+  contract — fails the build if tier-aware marketing or gating leaks
+  back into community dashboard JS, HTML, or extension defaults.
+
 ## 0.6.0 (2026-03-23)
 
 ### MCP Security Hardening (Phase 2)

@@ -1,7 +1,7 @@
-/* settings.js — unified Settings page for both community and Pro tiers.
-   Detects tier from /api/v1/status and renders Pro sections as locked/dimmed
-   when no Pro license is active. Pro enriches GET /api/v1/config with
-   license, pro, and logging sections — this JS renders them when present. */
+/* settings.js — Settings page (community).
+   Renders proxy, license, detector, and logs sections. Plugin modules
+   register their own sections via registerSettingsSection(name, renderFn);
+   each renderFn receives (cfg, status) and returns a DOM node or null. */
 function loadSettings(){
   Promise.all([
     fetch('/api/v1/config').then(function(r){return r.json()}),
@@ -9,7 +9,6 @@ function loadSettings(){
   ]).then(function(results){
     const cfg=results[0],status=results[1];
     const el=document.getElementById('settings-content');el.replaceChildren();
-    const isProActive=(status.tier==='pro'||status.tier==='enterprise');
     const community=cfg.community||{};
 
     /* === 1. Proxy (always editable) === */
@@ -51,16 +50,13 @@ function loadSettings(){
 
     /* === 4. License === */
     const licGrp=_mkSG('License');
-    /* Tier badge */
+    const tier=(status.tier||'community');
     const tierRow=document.createElement('div');tierRow.className='setting-row';
     const tierKey=document.createElement('div');tierKey.className='setting-key';tierKey.textContent='Tier';
     const tierVal=document.createElement('div');tierVal.className='setting-val';
-    tierVal.textContent=isProActive?(status.tier.charAt(0).toUpperCase()+status.tier.slice(1)):'Community';
-    tierVal.classList.add(isProActive?'enabled':'disabled');
+    tierVal.textContent=tier.charAt(0).toUpperCase()+tier.slice(1);
+    tierVal.classList.add('tier-'+tier);
     tierRow.appendChild(tierKey);tierRow.appendChild(tierVal);licGrp.appendChild(tierRow);
-    /* Pro version */
-    if(isProActive&&status.pro_version)_addReadRow(licGrp,'Pro version',status.pro_version);
-    /* License details from status API (Pro enriches this) */
     if(status.license){
       const lic=status.license;
       /* Status with color */
@@ -116,64 +112,9 @@ function loadSettings(){
     const licResult=document.createElement('div');licResult.id='license-result';
     licResult.style.cssText='font-family:var(--font-data);font-size:.78rem;margin-top:6px;display:none';
     licGrp.appendChild(licResult);
-    /* Trial link (community only) */
-    if(!isProActive){
-      const trialRow=document.createElement('div');trialRow.style.marginTop='10px';
-      const trialLink=document.createElement('a');trialLink.href='https://lumen-argus.com/trial';
-      trialLink.target='_blank';trialLink.className='btn btn-sm';trialLink.textContent='Start Free Trial';
-      trialRow.appendChild(trialLink);licGrp.appendChild(trialRow);
-    }
     el.appendChild(licGrp);
 
-    /* === 5. Pro Features (locked when community) === */
-    if(isProActive&&cfg.pro){
-      const proRows=[];
-      if(cfg.pro.redaction)proRows.push(['Redaction',cfg.pro.redaction.enabled?'Enabled':'Disabled',cfg.pro.redaction.enabled]);
-      if(cfg.pro.custom_rules_count!=null)proRows.push(['Custom rules',cfg.pro.custom_rules_count+' rules']);
-      if(cfg.pro.notifications){
-        const chans=Object.keys(cfg.pro.notifications);
-        proRows.push(['Notifications',(chans.join(', ')||'none')+' (manage \u2192 Notifications tab)']);
-      }
-      _addLockedSG(el,'Pro Features',proRows,false);
-      /* Detection Rules — import button when Pro licensed but rules not imported */
-      if(cfg.pro.pro_rules_imported!=null){
-        const rulesInfo=_mkSG('Detection Rules');
-        if(cfg.pro.pro_rules_imported>0){
-          _addReadRow(rulesInfo,'Pro rules imported',cfg.pro.pro_rules_imported+' rules');
-        }else{
-          _addReadRow(rulesInfo,'Pro rules','Not imported yet');
-          const importRow=document.createElement('div');
-          importRow.style.cssText='margin-top:8px;display:flex;gap:8px;align-items:center';
-          const importBtn=document.createElement('div');importBtn.className='btn btn-primary btn-sm';
-          importBtn.textContent='Import Pro Rules';
-          const importMsg=document.createElement('span');
-          importMsg.style.cssText='font-family:var(--font-data);font-size:.78rem;color:var(--text-muted)';
-          importBtn.addEventListener('click',function(){
-            importMsg.textContent='Importing...';importBtn.style.opacity='0.5';
-            importBtn.style.pointerEvents='none';
-            fetch('/api/v1/rules/import-pro',{method:'POST',headers:csrfHeaders({'Content-Type':'application/json'})})
-              .then(function(r){return r.json()}).then(function(res){
-                if(res.error){importMsg.textContent=res.error;importMsg.style.color='var(--critical)';
-                  importBtn.style.opacity='1';importBtn.style.pointerEvents='auto';}
-                else{importMsg.textContent=res.message||'Done';importMsg.style.color='var(--accent)';
-                  setTimeout(loadSettings,1500);}
-              }).catch(function(e){importMsg.textContent='Failed';importMsg.style.color='var(--critical)';
-                importBtn.style.opacity='1';importBtn.style.pointerEvents='auto';});
-          });
-          importRow.appendChild(importBtn);importRow.appendChild(importMsg);
-          rulesInfo.appendChild(importRow);
-        }
-        el.appendChild(rulesInfo);
-      }
-    }else{
-      _addLockedSG(el,'Pro Features',[
-        ['Redaction','Requires Pro license'],
-        ['Custom rules','Requires Pro license'],
-        ['Notifications','Requires Pro license']
-      ],true);
-    }
-
-    /* === 6. Detectors (always shown) === */
+    /* === 5. Detectors (always shown) === */
     if(community.detectors){
       const detRows=[];
       for(const dd in community.detectors){if(community.detectors.hasOwnProperty(dd)){
@@ -183,26 +124,10 @@ function loadSettings(){
       _addSG(el,'Detectors',detRows);
     }
 
-    /* === 7. Logging (locked when community, enriched by Pro) === */
-    if(isProActive&&cfg.logging){
-      const logGrp=_mkSG('Logging');
-      _addReadRow(logGrp,'Format',cfg.logging.format||'text');
-      _addReadRow(logGrp,'Output',cfg.logging.output||'file');
-      if(cfg.logging.file_level)_addReadRow(logGrp,'File level',cfg.logging.file_level);
-      if(cfg.logging.max_size_mb)_addReadRow(logGrp,'Max file size',cfg.logging.max_size_mb+' MB');
-      if(cfg.logging.backup_count!=null)_addReadRow(logGrp,'Backup count',cfg.logging.backup_count);
-      if(cfg.logging.paths){for(const fname in cfg.logging.paths){if(cfg.logging.paths.hasOwnProperty(fname)){
-        const p=cfg.logging.paths[fname];
-        const sizeStr=p.exists?(p.size_bytes/1024).toFixed(1)+' KB':'(not created)';
-        _addReadRow(logGrp,fname,p.path+' \u2014 '+sizeStr);
-      }}}
-      _addDlButton(logGrp);
-      el.appendChild(logGrp);
-    }else{
-      const logGrp2=_mkSG('Logs');
-      _addDlButton(logGrp2);
-      el.appendChild(logGrp2);
-    }
+    /* === 6. Logs (download) === */
+    const logGrp=_mkSG('Logs');
+    _addDlButton(logGrp);
+    el.appendChild(logGrp);
 
     /* === Plugin settings sections === */
     for(const ss of _settingsSections){
@@ -259,24 +184,6 @@ function _addSG(parent,title,rows){
     const k=document.createElement('div');k.className='setting-key';k.textContent=rows[i][0];
     const v=document.createElement('div');v.className='setting-val';v.textContent=String(rows[i][1]);
     if(rows[i].length>2)v.classList.add(rows[i][2]?'enabled':'disabled');
-    row.appendChild(k);row.appendChild(v);grp.appendChild(row);
-  }
-  parent.appendChild(grp);}
-
-/* --- Helper: locked/dimmed section --- */
-function _addLockedSG(parent,title,rows,isLocked){
-  const grp=document.createElement('div');grp.className='setting-group';
-  if(isLocked)grp.style.opacity='0.5';
-  const h=document.createElement('h3');h.textContent=title;
-  if(isLocked){const lock=document.createElement('span');lock.textContent=' (Pro)';
-    lock.style.cssText='font-size:.65rem;color:var(--text-muted);font-weight:400';h.appendChild(lock);}
-  grp.appendChild(h);
-  for(let i=0;i<rows.length;i++){
-    const row=document.createElement('div');row.className='setting-row';
-    const k=document.createElement('div');k.className='setting-key';k.textContent=rows[i][0];
-    const v=document.createElement('div');v.className='setting-val';v.textContent=String(rows[i][1]);
-    if(isLocked)v.classList.add('disabled');
-    else if(rows[i].length>2)v.classList.add(rows[i][2]?'enabled':'disabled');
     row.appendChild(k);row.appendChild(v);grp.appendChild(row);
   }
   parent.appendChild(grp);}

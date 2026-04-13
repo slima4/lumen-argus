@@ -413,7 +413,7 @@ Configure alerting via YAML (IaC-managed) or the dashboard. Community includes W
 | **OpsGenie** | Team routing (Pro) |
 | **Jira** | Auto-create tickets (Pro) |
 
-**Community:** 1 webhook channel with basic dispatch, configurable event triggers (block/alert/log). **Pro:** unlimited channels, 7 types, retry with circuit breaker, dispatch health monitoring.
+**Community:** unlimited webhook channels with fire-and-forget dispatch and configurable event triggers (block/alert/log).
 
 ```yaml
 notifications:
@@ -613,24 +613,6 @@ def register(registry):
 - Plugin HTML sanitized client-side; plugin JS is trusted (entry-point only)
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.
-
-## Pro
-
-Upgrade to Pro for advanced features:
-
-- **Redaction** — replace secrets in request bodies instead of blocking
-- **1,800+ detection patterns** — AI-generated, curated, and validated
-- **NLP-based PII detection** — beyond regex
-- **Advanced notifications** — Slack, Teams, PagerDuty, Email, OpsGenie, Jira; circuit breakers, retry, deduplication, dispatch history
-- **Unlimited channels** — community allows 1 webhook channel
-- **Compliance reporting** — audit exports, analytics
-- **OpenTelemetry tracing** — full request lifecycle spans with provider, findings, action attributes
-
-```bash
-# Activate Pro — same package, just add a license key
-export LUMEN_ARGUS_LICENSE_KEY=eyJ...
-lumen-argus serve
-```
 
 ## License
 

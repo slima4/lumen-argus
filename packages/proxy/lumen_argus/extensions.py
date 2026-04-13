@@ -70,7 +70,7 @@ class ExtensionRegistry:
         self._channel_types: dict[str, Any] = {}
         self._notifier_builder: Callable[..., Any] | None = None
         self._dispatcher: Any | None = None
-        self._channel_limit: int | None = 1
+        self._channel_limit: int | None = None
         self._health_hook: Callable[..., Any] | None = None
         self._metrics_hook: Callable[..., Any] | None = None
         self._trace_request_hook: Callable[..., Any] | None = None
@@ -372,7 +372,7 @@ class ExtensionRegistry:
         return self._dispatcher
 
     def set_channel_limit(self, limit: int | None) -> None:
-        """Set notification channel limit. None=unlimited, 1=freemium default."""
+        """Set notification channel cap. None=unlimited (community default)."""
         self._channel_limit = limit
 
     def get_channel_limit(self) -> int | None:

@@ -230,9 +230,9 @@ The dashboard runs on a separate port (default `8081`) and provides a REST API f
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/notifications/types` | GET | Available channel types + channel limit + count |
+| `/api/v1/notifications/types` | GET | Registered channel types (label + field schema) |
 | `/api/v1/notifications/channels` | GET | List all channels (config masked, enriched with dispatch status) |
-| `/api/v1/notifications/channels` | POST | Create channel (type validated, limit enforced, events array) |
+| `/api/v1/notifications/channels` | POST | Create channel (type validated, plugin-imposed cap enforced if any, events array) |
 | `/api/v1/notifications/channels/:id` | GET | Full channel config (for edit form) |
 | `/api/v1/notifications/channels/:id` | PUT | Update channel (partial) |
 | `/api/v1/notifications/channels/:id` | DELETE | Delete channel |
@@ -514,12 +514,14 @@ Key fields:
 
 ### Channel limit enforcement
 
-`POST /api/v1/notifications/channels` returns `409` when the channel limit is reached:
+Community ships with no channel cap; plugins may impose one by calling
+`extensions.set_channel_limit(N)`. When that limit is reached,
+`POST /api/v1/notifications/channels` returns `409`:
 
 ```json
 {
   "error": "channel_limit_reached",
-  "message": "Free tier allows 1 channel(s). Upgrade to Pro for unlimited.",
+  "message": "Channel limit reached.",
   "limit": 1,
   "count": 1
 }

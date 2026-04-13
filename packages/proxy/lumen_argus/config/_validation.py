@@ -225,16 +225,12 @@ def _validate_config(data: dict[str, Any], source: str) -> list[str]:
             fmt = str(logging_sec["format"]).lower()
             if fmt not in ("text", "json"):
                 warnings.append("%s: logging.format '%s' is not valid (expected: text, json)" % (source, fmt))
-            elif fmt == "json":
-                warnings.append("%s: JSON log format requires Pro license" % source)
         if "output" in logging_sec:
             output = str(logging_sec["output"]).lower()
             if output not in ("file", "stdout", "both"):
                 warnings.append(
                     "%s: logging.output '%s' is not valid (expected: file, stdout, both)" % (source, output)
                 )
-            elif output in ("stdout", "both"):
-                warnings.append("%s: logging.output '%s' requires Pro license" % (source, output))
 
     # Validate custom_rules section
     rules = data.get("custom_rules", [])
@@ -405,10 +401,6 @@ def _validate_config(data: dict[str, Any], source: str) -> list[str]:
                             warnings.append(
                                 "%s: pipeline.stages.%s.mode '%s' is not valid (expected: async, buffered)"
                                 % (source, stage_name, mode)
-                            )
-                        elif mode == "buffered" and stage_name in ("response_secrets", "response_injection"):
-                            warnings.append(
-                                "%s: pipeline.stages.%s.mode 'buffered' requires Pro license" % (source, stage_name)
                             )
 
     # Validate allowlists section

@@ -285,8 +285,11 @@ notifications:
     min_severity: critical
 ```
 
-!!! note "Freemium model"
-    Without a Pro license, 1 channel of any type is allowed. With Pro, unlimited. All 7 channel types are available in both tiers — Pro provides the dispatch implementations.
+!!! note "Channel availability"
+    Community ships with unlimited channels of any registered type. Channel
+    types other than `webhook` require a plugin to register the corresponding
+    dispatch implementation; without it, channels of that type appear as
+    read-only YAML cards with a dispatch-unavailable warning.
 
 !!! info "YAML reconciliation"
     YAML channels appear as read-only cards in the dashboard with a `YAML` badge. All fields (including `enabled`) are overwritten from YAML on every startup/SIGHUP. Dashboard-managed channels are never touched by the reconciler.

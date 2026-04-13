@@ -22,11 +22,6 @@
 #   docker compose pull        # or: docker compose build
 #   docker compose up -d       # recreates container, data volume preserved
 #
-# Upgrade to Pro:
-#   1. Set image to lumen-argus/lumen-argus-pro:latest (or build from Pro repo)
-#   2. Add LUMEN_ARGUS_LICENSE_KEY to environment (or .env file)
-#   3. docker compose up -d (data volume preserved, Pro pages unlock)
-#
 # Data (audit logs, analytics DB) is stored in the argus-data volume
 # and survives container rebuilds. To reset: docker volume rm lumen-argus_argus-data
 

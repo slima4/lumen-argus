@@ -1,18 +1,19 @@
 /* pipeline.js — Pipeline configuration page.
    Displays scanning stages grouped by direction (request, response, protocol).
-   Community: stage toggles, sub-detector toggles, default action selector.
-   Pro: per-stage/per-detector action overrides (via plugin extension). */
+   Stage toggles, sub-detector toggles, default action selector.
+   Plugins extend the action set via registerPipelineAction(name). */
 
-let _pipelineActionOpts=['log','alert','block'];
+const _BASE_PIPELINE_ACTIONS=['log','alert','block'];
+const _extraPipelineActions=[];
+let _pipelineActionOpts=_BASE_PIPELINE_ACTIONS.slice();
+
+function registerPipelineAction(name){
+  if(_extraPipelineActions.indexOf(name)===-1)_extraPipelineActions.push(name);
+}
 
 function loadPipeline(){
-  Promise.all([
-    fetch('/api/v1/pipeline').then(function(r){return r.json()}),
-    fetch('/api/v1/status').then(function(r){return r.json()})
-  ]).then(function(results){
-    const data=results[0],status=results[1];
-    const isProActive=(status.tier==='pro'||status.tier==='enterprise');
-    _pipelineActionOpts=isProActive?['log','alert','redact','block']:['log','alert','block'];
+  fetch('/api/v1/pipeline').then(function(r){return r.json()}).then(function(data){
+    _pipelineActionOpts=_BASE_PIPELINE_ACTIONS.concat(_extraPipelineActions);
 
     const el=document.getElementById('page-pipeline');el.replaceChildren();
 

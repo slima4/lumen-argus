@@ -41,32 +41,19 @@ def handle_notifications(
     # GET /api/v1/notifications/types
     if path == "/api/v1/notifications/types" and method == "GET":
         types = extensions.get_channel_types() if extensions else {}
-        limit = extensions.get_channel_limit() if extensions else 1
-        count = store.count_notification_channels() if store else 0
-        return json_response(
-            200,
-            {
-                "types": types,
-                "channel_limit": limit,
-                "channel_count": count,
-            },
-        )
+        return json_response(200, {"types": types})
 
-    # No channel types registered — Pro not loaded (source install)
+    # No channel types registered — dispatcher plugin not loaded (source install)
     # Still return DB channels (from YAML reconciliation) so users can see them
     if not extensions or not extensions.get_channel_types():
         if method == "GET" and path == "/api/v1/notifications/channels":
             channels = []
-            count = 0
             if store:
                 channels = [mask_channel(ch) for ch in store.list_notification_channels()]
-                count = len(channels)
             return json_response(
                 200,
                 {
                     "channels": channels,
-                    "channel_limit": 1,
-                    "channel_count": count,
                     "notifications_unavailable": True,
                     "message": "Notification dispatch requires the published package. "
                     "Install from PyPI: pip install lumen-argus",
@@ -94,15 +81,7 @@ def handle_notifications(
                         ch["last_error"] = st["error"]
             except Exception:
                 log.debug("failed to enrich channels with dispatch status", exc_info=True)
-        limit = extensions.get_channel_limit()
-        return json_response(
-            200,
-            {
-                "channels": safe,
-                "channel_limit": limit,
-                "channel_count": len(channels),
-            },
-        )
+        return json_response(200, {"channels": safe})
 
     # POST /api/v1/notifications/channels
     if path == "/api/v1/notifications/channels" and method == "POST":
@@ -129,7 +108,7 @@ def handle_notifications(
                     409,
                     {
                         "error": "channel_limit_reached",
-                        "message": "Free tier allows %d channel(s). Upgrade to Pro for unlimited." % (limit or 0),
+                        "message": "Channel limit reached.",
                         "limit": limit,
                         "count": count,
                     },
