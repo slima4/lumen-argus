@@ -55,6 +55,31 @@ def make_finding(
     )
 
 
+def register_agent(
+    store: AnalyticsStore,
+    agent_id: str = "agent_1",
+    machine_id: str = "machine_1",
+    hostname: str = "test-host",
+    *,
+    os: str = "darwin",
+    arch: str = "arm64",
+    agent_version: str = "0.1.0",
+    enrolled_at: str = "2026-04-15T00:00:00Z",
+    seat_cap: int | None = None,
+) -> None:
+    """Register a test agent with sensible defaults."""
+    store.enrollment.register(
+        agent_id=agent_id,
+        machine_id=machine_id,
+        hostname=hostname,
+        os=os,
+        arch=arch,
+        agent_version=agent_version,
+        enrolled_at=enrolled_at,
+        seat_cap=seat_cap,
+    )
+
+
 def seed_findings(store: AnalyticsStore, count: int = 5) -> list[Finding]:
     """Insert sample findings into the store. Returns the finding list."""
     findings = [

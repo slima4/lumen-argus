@@ -1,19 +1,6 @@
 """Tests for enrollment_agent_tools table and EnrollmentRepository tool methods."""
 
-from tests.helpers import StoreTestCase
-
-
-def _register(store, agent_id="agent_1", machine_id="machine_1", hostname="test-host"):
-    """Register a test agent with sensible defaults."""
-    store.enrollment.register(
-        agent_id=agent_id,
-        machine_id=machine_id,
-        hostname=hostname,
-        os="darwin",
-        arch="arm64",
-        agent_version="0.1.0",
-        enrolled_at="2026-04-03T00:00:00Z",
-    )
+from tests.helpers import StoreTestCase, register_agent
 
 
 class TestEnrollmentToolsSchema(StoreTestCase):
@@ -87,7 +74,7 @@ class TestUpsertTools(StoreTestCase):
     """Test EnrollmentRepository.upsert_tools."""
 
     def test_upsert_inserts_tools(self):
-        _register(self.store)
+        register_agent(self.store)
         tools = [
             {
                 "client_id": "claude",
@@ -119,7 +106,7 @@ class TestUpsertTools(StoreTestCase):
         self.assertEqual(claude["proxy_config_type"], "env_var")
 
     def test_upsert_removes_uninstalled_tools(self):
-        _register(self.store)
+        register_agent(self.store)
         tools_v1 = [
             {"client_id": "claude", "proxy_configured": True, "routing_active": True},
             {"client_id": "aider", "proxy_configured": True, "routing_active": True},
@@ -137,7 +124,7 @@ class TestUpsertTools(StoreTestCase):
         self.assertEqual(result[0]["client_id"], "claude")
 
     def test_upsert_updates_existing_tool(self):
-        _register(self.store)
+        register_agent(self.store)
         tools_v1 = [
             {"client_id": "claude", "version": "1.0.0", "proxy_configured": False, "routing_active": False},
         ]
@@ -154,7 +141,7 @@ class TestUpsertTools(StoreTestCase):
         self.assertEqual(result[0]["proxy_configured"], 1)
 
     def test_upsert_empty_tools_clears_all(self):
-        _register(self.store)
+        register_agent(self.store)
         self.store.enrollment.upsert_tools(
             "agent_1",
             [{"client_id": "claude", "proxy_configured": True, "routing_active": True}],
@@ -178,8 +165,8 @@ class TestFleetToolsSummary(StoreTestCase):
 
     def _setup_fleet(self) -> None:
         """Register 2 agents with overlapping tools."""
-        _register(self.store, "agent_1", "m1", "alice-macbook")
-        _register(self.store, "agent_2", "m2", "bob-macbook")
+        register_agent(self.store, "agent_1", "m1", "alice-macbook")
+        register_agent(self.store, "agent_2", "m2", "bob-macbook")
 
         self.store.enrollment.upsert_tools(
             "agent_1",
