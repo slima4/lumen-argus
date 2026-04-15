@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from lumen_argus.audit import AuditLogger
 from lumen_argus.models import AuditEntry, Finding
@@ -124,9 +125,13 @@ class TestAuditLogger(unittest.TestCase):
 class TestLogRotation(unittest.TestCase):
     def test_old_logs_deleted(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create fake old log files
-            old_file = os.path.join(tmpdir, "guard-20240101-120000.jsonl")
-            recent_file = os.path.join(tmpdir, "guard-20260315-120000.jsonl")
+            # Dates must be computed relative to "now" — hardcoded stamps
+            # eventually fall outside the retention window as real time moves.
+            now = datetime.now(timezone.utc)
+            old_stamp = (now - timedelta(days=60)).strftime("%Y%m%d-%H%M%S")
+            recent_stamp = (now - timedelta(days=1)).strftime("%Y%m%d-%H%M%S")
+            old_file = os.path.join(tmpdir, "guard-%s.jsonl" % old_stamp)
+            recent_file = os.path.join(tmpdir, "guard-%s.jsonl" % recent_stamp)
             with open(old_file, "w") as f:
                 f.write("{}\n")
             with open(recent_file, "w") as f:
@@ -135,9 +140,7 @@ class TestLogRotation(unittest.TestCase):
             logger = AuditLogger(log_dir=tmpdir, retention_days=30)
             logger.close()
 
-            # Old file should be deleted
             self.assertFalse(os.path.exists(old_file))
-            # Recent file should remain
             self.assertTrue(os.path.exists(recent_file))
 
     def test_current_log_not_deleted(self):
