@@ -15,6 +15,14 @@ log = logging.getLogger("argus.analytics")
 _GAPS_LIMIT = 500
 
 
+class AgentStatus:
+    """Canonical agent lifecycle status values — single source of truth for SQL."""
+
+    ACTIVE = "active"
+    DEREGISTERED = "deregistered"
+    STALE = "stale"
+
+
 class SeatCapExceeded(Exception):
     """Raised by EnrollmentRepository.register when seat_cap would be exceeded
     by a new machine_id. Carries .current and .cap so callers can surface them
@@ -31,6 +39,20 @@ class EnrollmentRepository(BaseRepository):
 
     def __init__(self, adapter: DatabaseAdapter) -> None:
         super().__init__(adapter)
+
+    def _count_agents_locked(self, conn: Any, status: str = "") -> int:
+        # Caller must already hold write_lock. Empty status means "not deregistered".
+        if status:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM enrollment_agents WHERE status = ?",
+                (status,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM enrollment_agents WHERE status != ?",
+                (AgentStatus.DEREGISTERED,),
+            ).fetchone()
+        return row[0] if row else 0
 
     def register(
         self,
@@ -66,14 +88,11 @@ class EnrollmentRepository(BaseRepository):
                     # the seat count because the DELETE below removes its
                     # old row before the INSERT.
                     existing = conn.execute(
-                        "SELECT 1 FROM enrollment_agents WHERE machine_id = ? AND status != 'deregistered' LIMIT 1",
-                        (machine_id,),
+                        "SELECT 1 FROM enrollment_agents WHERE machine_id = ? AND status != ? LIMIT 1",
+                        (machine_id, AgentStatus.DEREGISTERED),
                     ).fetchone()
                     if existing is None:
-                        row = conn.execute(
-                            "SELECT COUNT(*) FROM enrollment_agents WHERE status != 'deregistered'",
-                        ).fetchone()
-                        current = row[0] if row else 0
+                        current = self._count_agents_locked(conn)
                         if current >= seat_cap:
                             raise SeatCapExceeded(current=current, cap=seat_cap)
 
@@ -84,9 +103,9 @@ class EnrollmentRepository(BaseRepository):
                 conn.execute(
                     """INSERT INTO enrollment_agents
                     (agent_id, machine_id, hostname, os, arch, agent_version, enrolled_at, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (agent_id, machine_id, hostname, os, arch, agent_version, enrolled_at),
+                    (agent_id, machine_id, hostname, os, arch, agent_version, enrolled_at, AgentStatus.ACTIVE),
                 )
         log.info("agent registered: %s (%s)", agent_id[:12], hostname)
 
@@ -95,8 +114,8 @@ class EnrollmentRepository(BaseRepository):
         with self._adapter.write_lock():
             with self._connect() as conn:
                 cur = conn.execute(
-                    "UPDATE enrollment_agents SET status = 'deregistered' WHERE agent_id = ?",
-                    (agent_id,),
+                    "UPDATE enrollment_agents SET status = ? WHERE agent_id = ?",
+                    (AgentStatus.DEREGISTERED, agent_id),
                 )
                 found = cur.rowcount > 0
         if found:
@@ -120,10 +139,18 @@ class EnrollmentRepository(BaseRepository):
                         agent_version = ?,
                         tools_configured = ?,
                         tools_detected = ?,
-                        status = 'active'
-                    WHERE agent_id = ? AND status != 'deregistered'
+                        status = ?
+                    WHERE agent_id = ? AND status != ?
                     """,
-                    (heartbeat_at, agent_version, tools_configured, tools_detected, agent_id),
+                    (
+                        heartbeat_at,
+                        agent_version,
+                        tools_configured,
+                        tools_detected,
+                        AgentStatus.ACTIVE,
+                        agent_id,
+                        AgentStatus.DEREGISTERED,
+                    ),
                 )
                 return cur.rowcount > 0
 
@@ -153,9 +180,8 @@ class EnrollmentRepository(BaseRepository):
                     ).fetchall()
                 else:
                     rows = conn.execute(
-                        "SELECT * FROM enrollment_agents WHERE status != 'deregistered' "
-                        "ORDER BY enrolled_at DESC LIMIT ? OFFSET ?",
-                        (limit, offset),
+                        "SELECT * FROM enrollment_agents WHERE status != ? ORDER BY enrolled_at DESC LIMIT ? OFFSET ?",
+                        (AgentStatus.DEREGISTERED, limit, offset),
                     ).fetchall()
                 return [dict(r) for r in rows]
 
@@ -163,16 +189,7 @@ class EnrollmentRepository(BaseRepository):
         """Count agents by status."""
         with self._adapter.write_lock():
             with self._connect() as conn:
-                if status:
-                    row = conn.execute(
-                        "SELECT COUNT(*) FROM enrollment_agents WHERE status = ?",
-                        (status,),
-                    ).fetchone()
-                else:
-                    row = conn.execute(
-                        "SELECT COUNT(*) FROM enrollment_agents WHERE status != 'deregistered'",
-                    ).fetchone()
-                return row[0] if row else 0
+                return self._count_agents_locked(conn, status)
 
     def list_and_count(
         self,
@@ -192,20 +209,12 @@ class EnrollmentRepository(BaseRepository):
                         "SELECT * FROM enrollment_agents WHERE status = ? ORDER BY enrolled_at DESC LIMIT ? OFFSET ?",
                         (status, limit, offset),
                     ).fetchall()
-                    count_row = conn.execute(
-                        "SELECT COUNT(*) FROM enrollment_agents WHERE status = ?",
-                        (status,),
-                    ).fetchone()
                 else:
                     rows = conn.execute(
-                        "SELECT * FROM enrollment_agents WHERE status != 'deregistered' "
-                        "ORDER BY enrolled_at DESC LIMIT ? OFFSET ?",
-                        (limit, offset),
+                        "SELECT * FROM enrollment_agents WHERE status != ? ORDER BY enrolled_at DESC LIMIT ? OFFSET ?",
+                        (AgentStatus.DEREGISTERED, limit, offset),
                     ).fetchall()
-                    count_row = conn.execute(
-                        "SELECT COUNT(*) FROM enrollment_agents WHERE status != 'deregistered'",
-                    ).fetchone()
-                total = count_row[0] if count_row else 0
+                total = self._count_agents_locked(conn, status)
                 return [dict(r) for r in rows], total
 
     def upsert_tools(self, agent_id: str, tools: list[dict[str, Any]], updated_at: str) -> None:
@@ -312,10 +321,11 @@ class EnrollmentRepository(BaseRepository):
                             SUM(routing_active) AS routing
                         FROM enrollment_agent_tools t
                         JOIN enrollment_agents a USING(agent_id)
-                        WHERE a.status != 'deregistered'
+                        WHERE a.status != ?
                         GROUP BY client_id, display_name
                         ORDER BY installed DESC
                         """,
+                        (AgentStatus.DEREGISTERED,),
                     ).fetchall()
                 ]
 
@@ -332,11 +342,11 @@ class EnrollmentRepository(BaseRepository):
                         FROM enrollment_agent_tools t
                         JOIN enrollment_agents a USING(agent_id)
                         WHERE t.proxy_configured = 0
-                        AND a.status != 'deregistered'
+                        AND a.status != ?
                         ORDER BY a.hostname, t.client_id
                         LIMIT ?
                         """,
-                        (_GAPS_LIMIT,),
+                        (AgentStatus.DEREGISTERED, _GAPS_LIMIT),
                     ).fetchall()
                 ]
 
@@ -362,12 +372,12 @@ class EnrollmentRepository(BaseRepository):
         with self._adapter.write_lock():
             with self._connect() as conn:
                 cur = conn.execute(
-                    """UPDATE enrollment_agents SET status = 'stale'
-                    WHERE status = 'active'
+                    """UPDATE enrollment_agents SET status = ?
+                    WHERE status = ?
                     AND last_heartbeat IS NOT NULL
                     AND last_heartbeat < ?
                     """,
-                    (stale_before,),
+                    (AgentStatus.STALE, AgentStatus.ACTIVE, stale_before),
                 )
                 count = cur.rowcount
         if count:
