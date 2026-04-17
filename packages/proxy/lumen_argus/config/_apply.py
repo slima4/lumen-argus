@@ -28,6 +28,8 @@ def _apply_config(config: Config, data: dict[str, Any]) -> None:
             config.proxy.bind = str(proxy["bind"])
         if "timeout" in proxy:
             config.proxy.timeout = int(proxy["timeout"])
+        if "connect_timeout" in proxy:
+            config.proxy.connect_timeout = int(proxy["connect_timeout"])
         if "retries" in proxy:
             config.proxy.retries = int(proxy["retries"])
         if "max_body_size" in proxy:

@@ -268,6 +268,7 @@ def run_server(
             audit=audit,
             display=display,  # type: ignore[arg-type]
             timeout=config.proxy.timeout,
+            connect_timeout=config.proxy.connect_timeout,
             retries=config.proxy.retries,
             max_body_size=config.proxy.max_body_size,
             redact_hook=extensions.get_redact_hook(),
@@ -318,6 +319,7 @@ def run_server(
             health_timeout=config.relay.health_check_timeout,
             queue_timeout=config.relay.queue_on_startup,
             timeout=config.relay.timeout,
+            connect_timeout=config.relay.connect_timeout,
             max_connections=config.proxy.max_connections,
         )
         log.info("combined mode: relay :%d → engine :%d (fail_mode=%s)", relay_port, port, relay_fail_mode)

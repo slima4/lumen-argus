@@ -46,6 +46,7 @@ def run_relay(args: argparse.Namespace) -> None:
         health_timeout=config.relay.health_check_timeout,
         queue_timeout=config.relay.queue_on_startup,
         timeout=config.relay.timeout,
+        connect_timeout=config.relay.connect_timeout,
         max_connections=config.proxy.max_connections,
     )
 

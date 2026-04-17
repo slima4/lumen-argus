@@ -32,10 +32,6 @@ from lumen_argus_agent.context import CallerContext, resolve_context, static_con
 
 log = logging.getLogger("argus.relay")
 
-# TCP connect timeout for upstream (proxy or direct API). Separate from the
-# read-idle timeout (config.timeout) so a slow connect fails fast.
-_UPSTREAM_CONNECT_TIMEOUT = 10
-
 # Hop-by-hop headers that must not be forwarded (RFC 2616 §13.5.1)
 _HOP_BY_HOP = frozenset(
     {
@@ -78,6 +74,7 @@ class RelayConfig:
     send_username: bool = True
     send_hostname: bool = True
     timeout: int = 150
+    connect_timeout: int = 10
     max_connections: int = 50
     health_interval: int = 5
 
@@ -364,7 +361,7 @@ class AgentRelay:
             url,
             data=body,
             headers=headers,
-            timeout=aiohttp.ClientTimeout(sock_read=self.config.timeout, connect=_UPSTREAM_CONNECT_TIMEOUT),
+            timeout=aiohttp.ClientTimeout(sock_read=self.config.timeout, connect=self.config.connect_timeout),
         ) as resp:
             content_type = resp.headers.get("Content-Type", "")
             is_sse = "text/event-stream" in content_type

@@ -179,6 +179,8 @@ def config_diff(old: Any, new: Any) -> list[str]:
                 changes.append("allowlist.%s: %d entries changed" % (list_name, len(new_list)))
     if old.proxy.timeout != new.proxy.timeout:
         changes.append("proxy.timeout: %d -> %d" % (old.proxy.timeout, new.proxy.timeout))
+    if old.proxy.connect_timeout != new.proxy.connect_timeout:
+        changes.append("proxy.connect_timeout: %d -> %d" % (old.proxy.connect_timeout, new.proxy.connect_timeout))
     if old.proxy.retries != new.proxy.retries:
         changes.append("proxy.retries: %d -> %d" % (old.proxy.retries, new.proxy.retries))
     if old.logging_config.file_level != new.logging_config.file_level:

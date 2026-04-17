@@ -90,6 +90,7 @@ class ArgusRelay:
         health_timeout: int = 1,
         queue_timeout: int = 2,
         timeout: int = 120,
+        connect_timeout: int = 10,
         max_connections: int = 20,
     ):
         self.bind = bind
@@ -101,6 +102,7 @@ class ArgusRelay:
         self.health_timeout = health_timeout
         self.queue_timeout = queue_timeout
         self.timeout = timeout
+        self.connect_timeout = connect_timeout
         self.max_connections = max_connections
 
         self.state = RelayState.STARTING
@@ -365,7 +367,7 @@ class ArgusRelay:
         kwargs: dict[str, Any] = {
             "data": body,
             "headers": fwd_headers,
-            "timeout": aiohttp.ClientTimeout(total=self.timeout),
+            "timeout": aiohttp.ClientTimeout(sock_read=self.timeout, connect=self.connect_timeout),
         }
         if ssl is not None:
             kwargs["ssl"] = ssl
@@ -388,9 +390,20 @@ class ArgusRelay:
                 # Stream SSE chunks back to client
                 stream_resp = web.StreamResponse(status=resp.status, headers=resp_headers)
                 await stream_resp.prepare(request)
-                async for chunk in resp.content.iter_any():
-                    await stream_resp.write(chunk)
-                await stream_resp.write_eof()
+                try:
+                    async for chunk in resp.content.iter_any():
+                        if not chunk:
+                            continue
+                        try:
+                            await stream_resp.write(chunk)
+                        except (ConnectionResetError, ConnectionAbortedError):
+                            break
+                except asyncio.TimeoutError:
+                    log.error("#%d upstream SSE idle timeout via %s", request_id, via)
+                try:
+                    await stream_resp.write_eof()
+                except (ConnectionResetError, BrokenPipeError, OSError):
+                    log.debug("#%d client disconnected during write_eof", request_id)
                 log.debug("#%d streamed SSE via %s", request_id, via)
                 return stream_resp
 

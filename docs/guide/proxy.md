@@ -98,9 +98,16 @@ mid-stream).
 
 ```yaml title="~/.lumen-argus/config.yaml"
 proxy:
-  timeout: 120        # Socket timeout in seconds (1-300)
-  retries: 1          # Retry count on connection failure (0-5)
+  timeout: 120          # Idle-read timeout in seconds (1-300)
+  connect_timeout: 10   # TCP connect timeout in seconds (1-120)
+  retries: 1            # Retry count on connection failure (0-5)
 ```
+
+`timeout` is an idle-read timeout, not a total-duration cap — a long-running SSE
+stream (e.g. a 1M-context extended thinking response) will not be killed as long
+as the upstream keeps sending data. `connect_timeout` controls how long to wait
+for the initial TCP handshake; raise it behind corporate proxy chains or
+cross-region VPNs.
 
 !!! info "Idle connection eviction"
     Pooled connections are evicted after sitting idle for `timeout * 2` seconds.
@@ -116,7 +123,7 @@ overwhelming the upstream provider during bursts.
 
 ```yaml title="~/.lumen-argus/config.yaml"
 proxy:
-  max_connections: 10   # Max concurrent upstream connections (1-100)
+  max_connections: 50   # Max concurrent upstream connections (1-100)
 ```
 
 When all connection slots are in use, new requests queue on the semaphore. A
@@ -266,7 +273,7 @@ Reloadable settings include:
 - Default action and per-detector action overrides
 - Allowlists (secrets, PII, paths)
 - Custom rules (recompiled on reload)
-- Timeout and retry counts
+- Timeout, connect timeout, and retry counts
 - `port` and `bind` (graceful rebind — in-flight requests complete on the old address)
 - `max_body_size` (scan limit and aiohttp rejection limit)
 - File log level

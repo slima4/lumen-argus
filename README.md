@@ -459,7 +459,8 @@ proxy:
   port: 8080
   bind: "127.0.0.1"
   timeout: 120
-  max_connections: 10
+  connect_timeout: 10
+  max_connections: 50
 
 default_action: alert     # log | alert | block
 

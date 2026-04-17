@@ -14,6 +14,7 @@ class ProxyConfig:
     port: int = 8080
     bind: str = "127.0.0.1"
     timeout: int = 120
+    connect_timeout: int = 10  # TCP connect timeout for upstream API calls
     retries: int = 1
     max_body_size: int = 50 * 1024 * 1024  # 50MB
     max_connections: int = 50  # max concurrent upstream connections
@@ -219,6 +220,7 @@ class RelayConfig:
     health_check_timeout: int = 1  # seconds before health check times out
     queue_on_startup: int = 2  # seconds to buffer requests while engine starts
     timeout: int = 150  # relay timeout (> proxy.timeout to account for scanning overhead)
+    connect_timeout: int = 10  # TCP connect timeout for engine
 
 
 @dataclass

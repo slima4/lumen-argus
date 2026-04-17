@@ -96,6 +96,7 @@ def do_reload(
             pipeline_config=build_pipeline_config(new_config),
         )
         server.timeout = new_config.proxy.timeout
+        server.connect_timeout = new_config.proxy.connect_timeout
         server.retries = new_config.proxy.retries
 
         # Hot-reload max_body_size

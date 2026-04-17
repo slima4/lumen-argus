@@ -107,7 +107,7 @@ Connection pooling is scoped per-host — connections to `api.anthropic.com` are
 
 ## Backpressure
 
-The `proxy.max_connections` setting (default: 10) limits concurrent upstream connections using a semaphore. This prevents:
+The `proxy.max_connections` setting (default: 50) limits concurrent upstream connections using a semaphore. This prevents:
 
 - File descriptor exhaustion under heavy parallel sub-agent usage
 - Overwhelming upstream providers with too many connections

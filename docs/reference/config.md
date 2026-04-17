@@ -26,10 +26,11 @@ Network and connection settings for the proxy server.
 |-----|------|---------|-------------|
 | `proxy.port` | `int` | `8080` | Port to listen on. Range: 1--65535. |
 | `proxy.bind` | `str` | `127.0.0.1` | Bind address. Only `127.0.0.1` and `localhost` are allowed (enforced at runtime). |
-| `proxy.timeout` | `int` | `120` | Socket timeout in seconds for upstream connections. Range: 1--300. |
+| `proxy.timeout` | `int` | `120` | Idle-read timeout in seconds for upstream connections. A stream that receives no data for this long is closed. Range: 1--300. |
+| `proxy.connect_timeout` | `int` | `10` | TCP connect timeout in seconds for upstream API calls. Range: 1--120. |
 | `proxy.retries` | `int` | `1` | Number of retry attempts on upstream connection failure. Range: 0--5. |
 | `proxy.max_body_size` | `int` | `52428800` | Maximum request body size in bytes to scan (50 MB). Bodies larger than this are forwarded without scanning. |
-| `proxy.max_connections` | `int` | `10` | Maximum concurrent upstream connections. Additional requests queue until a slot opens. Range: 1--100. |
+| `proxy.max_connections` | `int` | `50` | Maximum concurrent upstream connections. Additional requests queue until a slot opens. Range: 1--100. |
 | `proxy.drain_timeout` | `int` | `30` | Seconds to wait for in-flight requests to complete during shutdown. Range: 0--300. |
 | `proxy.ca_bundle` | `str` | `""` | Path to a custom CA certificate file or directory. Use this behind corporate proxies. Empty string uses system defaults. |
 | `proxy.verify_ssl` | `bool` | `true` | Verify upstream TLS certificates. Set to `false` only for development/testing. |
@@ -40,9 +41,10 @@ proxy:
   port: 8080
   bind: "127.0.0.1"
   timeout: 120
+  connect_timeout: 10
   retries: 1
   max_body_size: 52428800
-  max_connections: 10
+  max_connections: 50
   drain_timeout: 30
   ca_bundle: ""
   verify_ssl: true
@@ -496,9 +498,10 @@ proxy:
   port: 8080
   bind: "127.0.0.1"
   timeout: 120
+  connect_timeout: 10
   retries: 1
   max_body_size: 52428800
-  max_connections: 10
+  max_connections: 50
   drain_timeout: 30
   ca_bundle: ""
   verify_ssl: true

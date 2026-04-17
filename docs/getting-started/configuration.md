@@ -10,9 +10,10 @@ version: "1"
 proxy:
   port: 8080
   bind: "127.0.0.1"
-  timeout: 120            # upstream connection timeout (seconds)
+  timeout: 120            # idle-read timeout (seconds)
+  connect_timeout: 10     # TCP connect timeout (seconds)
   retries: 1              # retry count on connection failure
-  max_connections: 10     # max concurrent upstream connections
+  max_connections: 50     # max concurrent upstream connections
   drain_timeout: 30       # seconds to wait for in-flight requests on shutdown
   # ca_bundle: "/path/to/ca-certs.pem"  # custom CA for corporate proxies
   # verify_ssl: false     # disable TLS verification (dev only)
@@ -112,7 +113,7 @@ Send `SIGHUP` to reload config without restarting:
 kill -HUP $(pgrep -f "lumen_argus")
 ```
 
-Updates allowlists, action overrides, timeout, retries, file log level, SSL context, and custom rules. Changed settings are logged. No proxy downtime.
+Updates allowlists, action overrides, timeout, connect timeout, retries, file log level, SSL context, and custom rules. Changed settings are logged. No proxy downtime.
 
 !!! note
     `proxy.max_connections`, `dashboard.*`, and `analytics.*` require a restart to take effect.

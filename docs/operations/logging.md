@@ -32,7 +32,7 @@ The `--log-level` CLI flag controls **console** output only. The file always log
 ```
 2026-03-16 14:30:00.123 INFO  [argus.proxy] #42 BLOCK aws_access_key, private_key_pem (2 findings)
 2026-03-16 14:30:00.135 WARN  [argus.pipeline] slow scan: 87.3ms (12 fields, 198KB, budget 200KB)
-2026-03-16 14:30:12.456 ERROR [argus.proxy] #43 upstream timeout after 120s
+2026-03-16 14:30:12.456 ERROR [argus.proxy] #43 upstream idle timeout after 120s
 ```
 
 ### File Permissions

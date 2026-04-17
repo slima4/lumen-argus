@@ -29,11 +29,6 @@ from lumen_argus.session import extract_session as _extract_session
 
 log = logging.getLogger("argus.proxy")
 
-# TCP connect timeout for upstream API calls. Separate from the read-idle
-# timeout (proxy.timeout) so a slow connect fails fast without punishing
-# slow-but-live SSE streams.
-_UPSTREAM_CONNECT_TIMEOUT = 10
-
 # Addresses that count as loopback for the community-mode /_forward gate.
 # Matches the non-loopback-bind warning set in async_proxy/_server.py.
 # Keep both sites in sync if you add more loopback aliases.
@@ -402,7 +397,7 @@ async def _do_forward(
                 upstream_url,
                 data=body,
                 headers=fwd_headers,
-                timeout=aiohttp.ClientTimeout(sock_read=server.timeout, connect=_UPSTREAM_CONNECT_TIMEOUT),
+                timeout=aiohttp.ClientTimeout(sock_read=server.timeout, connect=server.connect_timeout),
             ) as upstream_resp:
                 # Determine response scanning strategy
                 _should_scan_response = server.response_scanner is not None and server.mode != "passthrough"
@@ -488,7 +483,7 @@ async def _do_forward(
                             upstream_url,
                             data=body,
                             headers=fwd_headers,
-                            timeout=aiohttp.ClientTimeout(sock_read=server.timeout, connect=_UPSTREAM_CONNECT_TIMEOUT),
+                            timeout=aiohttp.ClientTimeout(sock_read=server.timeout, connect=server.connect_timeout),
                         ) as upstream_resp:
                             # On successful retry, read and return full response
                             data = await upstream_resp.read()

@@ -41,6 +41,7 @@ class AsyncArgusProxy:
         audit: AuditLogger,
         display: TerminalDisplay,
         timeout: int = 30,
+        connect_timeout: int = 10,
         retries: int = 1,
         max_body_size: int = 50 * 1024 * 1024,
         redact_hook: Any = None,
@@ -57,6 +58,7 @@ class AsyncArgusProxy:
         self.audit = audit
         self.display = display
         self.timeout = timeout
+        self.connect_timeout = connect_timeout
         self.retries = retries
         self.max_body_size = max_body_size
         self.redact_hook = redact_hook

@@ -47,6 +47,7 @@ _KNOWN_PROXY_KEYS = {
     "bind",
     "upstream",
     "timeout",
+    "connect_timeout",
     "retries",
     "max_body_size",
     "max_connections",
@@ -122,6 +123,13 @@ def _validate_config(data: dict[str, Any], source: str) -> list[str]:
                     warnings.append("%s: proxy.timeout %d is out of range (1-300)" % (source, t))
             except (ValueError, TypeError):
                 warnings.append("%s: proxy.timeout must be an integer" % source)
+        if "connect_timeout" in proxy:
+            try:
+                ct = int(proxy["connect_timeout"])
+                if ct < 1 or ct > 120:
+                    warnings.append("%s: proxy.connect_timeout %d is out of range (1-120)" % (source, ct))
+            except (ValueError, TypeError):
+                warnings.append("%s: proxy.connect_timeout must be an integer" % source)
         if "retries" in proxy:
             try:
                 r = int(proxy["retries"])
