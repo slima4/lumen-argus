@@ -147,6 +147,13 @@ class TestConfigDiff(unittest.TestCase):
         self.assertEqual(len(changes), 1)
         self.assertIn("proxy.timeout", changes[0])
 
+    def test_connect_timeout_changed(self):
+        c1 = Config(proxy=ProxyConfig(connect_timeout=10))
+        c2 = Config(proxy=ProxyConfig(connect_timeout=30))
+        changes = config_diff(c1, c2)
+        self.assertEqual(len(changes), 1)
+        self.assertIn("proxy.connect_timeout", changes[0])
+
     def test_file_level_changed(self):
         c1 = Config(logging_config=LoggingConfig(file_level="info"))
         c2 = Config(logging_config=LoggingConfig(file_level="debug"))

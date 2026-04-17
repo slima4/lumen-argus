@@ -214,6 +214,16 @@ detectors:
         warnings = _validate_config(data, "test")
         self.assertTrue(any("timeout" in w for w in warnings))
 
+    def test_connect_timeout_out_of_range(self):
+        data = {"proxy": {"connect_timeout": 999}}
+        warnings = _validate_config(data, "test")
+        self.assertTrue(any("connect_timeout" in w for w in warnings))
+
+    def test_connect_timeout_valid(self):
+        data = {"proxy": {"connect_timeout": 10}}
+        warnings = _validate_config(data, "test")
+        self.assertEqual(len(warnings), 0)
+
     def test_retries_out_of_range(self):
         data = {"proxy": {"retries": 10}}
         warnings = _validate_config(data, "test")

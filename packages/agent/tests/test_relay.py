@@ -409,6 +409,8 @@ class TestRelayConfig(unittest.TestCase):
         self.assertEqual(config.agent_id, "")
         self.assertEqual(config.agent_token, "")
         self.assertEqual(config.timeout, 150)
+        self.assertEqual(config.connect_timeout, 10)
+        self.assertEqual(config.max_connections, 50)
 
 
 class TestRelayStateFile(unittest.TestCase):
