@@ -1,9 +1,15 @@
 """Tests for the lumen-argus-agent CLI."""
 
+import argparse
+import io
 import json
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
+
+from lumen_argus_agent.cli import _run_uninstall
+from lumen_argus_agent.uninstall import UninstallResult
 
 
 class TestAgentCLI(unittest.TestCase):
@@ -78,6 +84,64 @@ class TestAgentCLI(unittest.TestCase):
         result = self._run("watch", "--status")
         self.assertEqual(result.returncode, 0)
         self.assertIn("Platform", result.stdout)
+
+
+class TestRunUninstallHandler(unittest.TestCase):
+    """Unit tests for the ``_run_uninstall`` dispatch wrapper.
+
+    The end-to-end CLI is already covered via subprocess in
+    ``TestAgentCLI`` above.  These tests pin the contract of the thin
+    wrapper itself: JSON on stdout, exit-code mapping from
+    ``UninstallResult.ok``, and correct propagation of ``--keep-data``
+    into the call.  Running them in-process keeps the round-trip fast
+    and lets us assert on the exact orchestrator call, which a
+    subprocess test cannot observe.
+    """
+
+    @staticmethod
+    def _args(*, keep_data: bool = False) -> argparse.Namespace:
+        return argparse.Namespace(keep_data=keep_data, non_interactive=False)
+
+    def test_prints_json_and_exits_zero_when_result_is_ok(self):
+        ok_result = UninstallResult(steps={"protection_disable": "ok"})
+        buf = io.StringIO()
+        with (
+            patch("lumen_argus_agent.cli.sys.stdout", buf),
+            patch("lumen_argus_agent.uninstall.uninstall_agent", return_value=ok_result) as fake,
+        ):
+            _run_uninstall(self._args())  # does not raise SystemExit
+
+        fake.assert_called_once_with(keep_data=False)
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["steps"], {"protection_disable": "ok"})
+        self.assertEqual(payload["errors"], [])
+
+    def test_exits_nonzero_when_result_has_errors(self):
+        failed = UninstallResult(
+            steps={"protection_disable": "failed"},
+            errors=["protection_disable: boom"],
+        )
+        buf = io.StringIO()
+        with (
+            patch("lumen_argus_agent.cli.sys.stdout", buf),
+            patch("lumen_argus_agent.uninstall.uninstall_agent", return_value=failed),
+            self.assertRaises(SystemExit) as cm,
+        ):
+            _run_uninstall(self._args())
+        self.assertEqual(cm.exception.code, 1)
+        # The JSON still has to be on stdout before the exit — callers
+        # (tray app) parse it even on the failure path.
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["errors"], ["protection_disable: boom"])
+
+    def test_keep_data_flag_is_forwarded(self):
+        ok = UninstallResult(steps={"protection_disable": "ok"})
+        with (
+            patch("lumen_argus_agent.cli.sys.stdout", io.StringIO()),
+            patch("lumen_argus_agent.uninstall.uninstall_agent", return_value=ok) as fake,
+        ):
+            _run_uninstall(self._args(keep_data=True))
+        fake.assert_called_once_with(keep_data=True)
 
 
 if __name__ == "__main__":
