@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from lumen_argus_core.detect import _SHELL_PROFILES, _strip_jsonc_comments, detect_installed_clients, load_jsonc
 from lumen_argus_core.env_template import ManagedBy, parse_header_managed_by, render_body
+from lumen_argus_core.platform_env import clear_launchctl_env_vars
 from lumen_argus_core.time_utils import now_iso
 
 if TYPE_CHECKING:
@@ -536,16 +537,52 @@ def enable_protection(
 
 
 def disable_protection() -> dict[str, object]:
-    """Truncate ~/.lumen-argus/env and remove OpenCode overrides.
+    """Truncate ~/.lumen-argus/env, remove OpenCode overrides, and clear launchctl.
 
-    Returns status dict.
+    Ordering: read the env file first, *then* truncate, *then* clear
+    launchctl using the snapshot.  The read-then-truncate-then-clear
+    sequence means a crash after the truncate and before the launchctl
+    call leaves the shell env empty while launchctl still carries stale
+    values — strictly better than the inverse (shell active, launchctl
+    empty) which would cause AI tools in the GUI to hit the dead
+    proxy without a matching shell symptom.
+
+    On non-macOS platforms the ``launchctl`` step is a no-op and
+    ``launchctl_vars_cleared`` comes back empty.
+
+    Returns status dict with an extra ``launchctl_vars_cleared`` list
+    of var names actually cleared — a machine-readable audit trail
+    for structured CLI output.
     """
-    # Empty body is identical across modes — render_body returns "" for
-    # any mode when entries is empty, so we do not need to preserve the
-    # previously-recorded mode here.
-    write_env_file([], managed_by=ManagedBy.CLI)
+    # Snapshot managed env var names before truncating so we can ask
+    # launchctl to drop exactly the vars we owned.  A non-managed
+    # writer (older tray build, hand-edited file) is excluded from
+    # this list because ``read_env_file`` only surfaces lines carrying
+    # our managed marker — we do not want to unsetenv names we did
+    # not set.
+    existing = read_env_file()
+    managed_names = sorted({var for var, _, _ in existing})
+
+    # ``managed_by=None`` honours the sticky-mode contract: "preserve
+    # what is recorded on disk".  The body ends up empty either way
+    # because ``render_body`` short-circuits on empty ``entries``, but
+    # hardcoding a mode here would lie about intent and silently flip
+    # enrolled machines if ``render_body`` ever gained a mode-dependent
+    # header for empty inputs.
+    write_env_file([], managed_by=None)
     unconfigure_opencode()
-    return {"enabled": False, "env_file": _ENV_FILE, "env_vars_set": 0, "managed_by": None}
+
+    cleared = clear_launchctl_env_vars(managed_names)
+    if cleared:
+        log.info("cleared %d launchctl env var(s): %s", len(cleared), ", ".join(cleared))
+
+    return {
+        "enabled": False,
+        "env_file": _ENV_FILE,
+        "env_vars_set": 0,
+        "managed_by": None,
+        "launchctl_vars_cleared": cleared,
+    }
 
 
 def protection_status() -> dict[str, object]:

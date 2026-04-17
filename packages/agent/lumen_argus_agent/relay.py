@@ -481,7 +481,7 @@ async def _handle_request(request: web.Request) -> web.StreamResponse:
 # ---------------------------------------------------------------------------
 
 _ARGUS_DIR = os.path.expanduser("~/.lumen-argus")
-_RELAY_STATE_PATH = os.path.join(_ARGUS_DIR, "relay.json")
+RELAY_STATE_PATH = os.path.join(_ARGUS_DIR, "relay.json")
 
 
 def _write_relay_state(config: RelayConfig) -> None:
@@ -499,12 +499,12 @@ def _write_relay_state(config: RelayConfig) -> None:
         "started_at": now_iso(),
     }
     try:
-        tmp = _RELAY_STATE_PATH + ".tmp"
+        tmp = RELAY_STATE_PATH + ".tmp"
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2)
-        os.replace(tmp, _RELAY_STATE_PATH)
-        log.info("relay state written to %s", _RELAY_STATE_PATH)
+        os.replace(tmp, RELAY_STATE_PATH)
+        log.info("relay state written to %s", RELAY_STATE_PATH)
     except OSError as exc:
         log.warning("could not write relay state: %s", exc)
 
@@ -512,7 +512,7 @@ def _write_relay_state(config: RelayConfig) -> None:
 def _remove_relay_state() -> None:
     """Remove relay state file on shutdown."""
     try:
-        os.remove(_RELAY_STATE_PATH)
+        os.remove(RELAY_STATE_PATH)
         log.debug("relay state removed")
     except FileNotFoundError:
         pass
@@ -529,7 +529,7 @@ def load_relay_state() -> dict[str, Any] | None:
     import json
 
     try:
-        with open(_RELAY_STATE_PATH, encoding="utf-8") as f:
+        with open(RELAY_STATE_PATH, encoding="utf-8") as f:
             state: dict[str, Any] = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None

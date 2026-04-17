@@ -130,11 +130,15 @@ lumen-argus protection <enable|disable|status> [OPTIONS]
 By default (`--managed-by cli`) the exports are unconditional — right
 for users running the binary from a terminal.  `--managed-by tray`
 wraps the exports in a liveness guard so they skip when the tray app
-is gone and no relay is running.  `disable` truncates the file.
-`status` returns JSON with `enabled`, `env_file`, `env_vars_set`, and
-(when enabled) the recorded `managed_by`.  See the
-[Protection Env File reference](protection-env-file.md) for the full
-format and guard semantics.
+is gone and no relay is running.  `disable` truncates the file **and**
+clears the matching launchctl env vars on macOS so GUI-launched AI
+tools (Claude Desktop, Cursor) stop pointing at the proxy immediately
+— not just new terminals.  `status` returns JSON with `enabled`,
+`env_file`, `env_vars_set`, and (when enabled) the recorded
+`managed_by`.  `disable` additionally returns
+`launchctl_vars_cleared` (macOS only — empty list elsewhere).  See
+the [Protection Env File reference](protection-env-file.md) for the
+full format and guard semantics.
 
 ---
 
@@ -433,7 +437,7 @@ lumen-argus clients [--json]
 
 Lightweight workstation agent — available as a separate package (`pip install lumen-argus-agent`).
 
-Supports a subset of commands: `detect`, `setup`, `watch`, `protection`, `clients`, `enroll`, `heartbeat`.
+Supports a subset of commands: `detect`, `setup`, `watch`, `protection`, `clients`, `enroll`, `heartbeat`, `relay`, `forward-proxy`, `uninstall`.
 
 ```bash
 lumen-argus-agent [--version] [--help] <command> [<args>]
@@ -508,6 +512,77 @@ OPENAI_BASE_URL=http://localhost:8070 opencode
 ```
 
 The relay resolves caller identity from OS-level APIs (process working directory, git branch, hostname, username) and injects `X-Lumen-Argus-*` headers into every forwarded request. The proxy reads these headers from authenticated agents to attribute findings to specific agent instances.
+
+### `uninstall`
+
+Reverse every system change the agent made: tool configurations, MCP
+wrappers, shell profile source blocks, shell env file, launchctl env
+vars (macOS), and agent-owned state files.  Idempotent — running on a
+clean machine is a no-op.
+
+```bash
+lumen-argus-agent uninstall [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--keep-data` | `bool` | `false` | Skip removal of agent-owned state files (`~/.lumen-argus/env`, `enrollment.json`, `relay.json`, `.env.lock`).  Use when the caller plans to `rm -rf ~/.lumen-argus/` itself (desktop tray app uninstall path). |
+| `--non-interactive` | `bool` | `false` | Accepted for script compatibility.  `uninstall` has no interactive prompts. |
+
+Step ordering is load-bearing — the command runs:
+
+1. `protection_disable` — snapshots the managed env vars, truncates
+   `~/.lumen-argus/env`, removes OpenCode per-provider overrides, and
+   clears the snapshotted names via `launchctl unsetenv` (macOS).
+2. `mcp_undo` — unwraps every MCP server back to its original command
+   or URL.
+3. `setup_undo` — removes shell profile source blocks, restores IDE
+   settings from backups, clears forward-proxy aliases, truncates the
+   env file again (idempotent).
+4. `data_files_removed` — deletes agent-owned state files unless
+   `--keep-data` was passed.
+
+Each step is best-effort — a failure in one is logged and the
+orchestrator continues so a partially-broken machine still gets
+maximal cleanup.  Exit code is `0` when every step succeeded, `1`
+when at least one failed.
+
+Always emits JSON on stdout so callers (desktop tray app, shell
+scripts) do not have to parse free text:
+
+```json
+{
+  "steps": {
+    "protection_disable": "ok",
+    "mcp_undo": "ok",
+    "setup_undo": "ok",
+    "data_files_removed": "ok"
+  },
+  "launchctl_vars_cleared": ["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL"],
+  "data_files_removed": [
+    "/Users/alice/.lumen-argus/env",
+    "/Users/alice/.lumen-argus/enrollment.json"
+  ],
+  "errors": []
+}
+```
+
+```bash
+# CLI user — clean up before pip uninstall
+lumen-argus-agent uninstall
+
+# Tray app sidecar — reverse config, but keep data files so the
+# tray app can rm -rf the directory itself
+lumen-argus-agent uninstall --keep-data --non-interactive
+```
+
+What the command does **not** touch — these belong to the desktop
+installer:
+
+-   `~/.lumen-argus/.app-path`, `license.key`, `trial.json`, `bin/`
+-   LaunchAgent plists (tray watchdog, relay service)
+-   The application bundle in `/Applications`
+-   macOS App Support / Logs directories
 
 ---
 

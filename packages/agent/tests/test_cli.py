@@ -30,6 +30,13 @@ class TestAgentCLI(unittest.TestCase):
         self.assertIn("watch", result.stdout)
         self.assertIn("protection", result.stdout)
         self.assertIn("clients", result.stdout)
+        self.assertIn("uninstall", result.stdout)
+
+    def test_uninstall_help_documents_flags(self):
+        result = self._run("uninstall", "--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("--keep-data", result.stdout)
+        self.assertIn("--non-interactive", result.stdout)
 
     def test_no_command_shows_help(self):
         result = self._run()

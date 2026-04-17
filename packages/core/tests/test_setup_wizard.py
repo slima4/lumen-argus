@@ -337,6 +337,16 @@ class TestProtection(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.env_file = os.path.join(self.tmpdir, "env")
+        # Stop ``disable_protection`` from invoking the host's real
+        # ``launchctl unsetenv`` during the test — otherwise a macOS
+        # dev machine running the suite silently loses its shell
+        # env vars (ANTHROPIC_BASE_URL, OPENAI_BASE_URL, …) on every
+        # run.  The two tests that care about the snapshot contract
+        # install their own fake in a nested ``with patch(...)``
+        # block; mock.patch layering ensures those still win.
+        self._launchctl_patch = patch("lumen_argus_core.setup_wizard.clear_launchctl_env_vars", return_value=[])
+        self._launchctl_patch.start()
+        self.addCleanup(self._launchctl_patch.stop)
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -471,6 +481,58 @@ class TestProtection(unittest.TestCase):
         with open(self.env_file) as f:
             content = f.read()
         self.assertEqual(content, "")
+
+    def test_disable_clears_launchctl_with_snapshot_from_env_file(self):
+        """Regression guard: launchctl cleanup must read the env file
+        BEFORE the truncate — if the order flipped, the cleared list
+        would always be empty and the GUI session would keep pointing
+        at the proxy.  The snapshot+clear pair is what the uninstall
+        spec's F2 step promises.
+        """
+        cleared_calls: list[list[str]] = []
+
+        def fake_clear(names):
+            # Record the exact input the caller passed so we can prove
+            # we got names, not an empty list from a post-truncate read.
+            cleared_calls.append(list(names))
+            return list(names)
+
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup_wizard.clear_launchctl_env_vars", fake_clear),
+        ):
+            enable_protection("http://localhost:8080")
+            result = disable_protection()
+
+        self.assertEqual(len(cleared_calls), 1)
+        # At least the two canonical env vars must be in the snapshot.
+        snapshot = cleared_calls[0]
+        self.assertIn("ANTHROPIC_BASE_URL", snapshot)
+        self.assertIn("OPENAI_BASE_URL", snapshot)
+        # And the status dict must expose what was cleared.
+        self.assertIn("launchctl_vars_cleared", result)
+        self.assertIn("ANTHROPIC_BASE_URL", result["launchctl_vars_cleared"])
+
+    def test_disable_on_empty_file_clears_nothing(self):
+        """Idempotent: disable on an already-disabled machine calls
+        launchctl with an empty list and returns an empty cleared list.
+        """
+        cleared_calls: list[list[str]] = []
+
+        def fake_clear(names):
+            cleared_calls.append(list(names))
+            return list(names)
+
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup_wizard.clear_launchctl_env_vars", fake_clear),
+        ):
+            result = disable_protection()
+
+        self.assertEqual(cleared_calls, [[]])
+        self.assertEqual(result["launchctl_vars_cleared"], [])
 
     def test_status_enabled(self):
         with (

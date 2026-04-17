@@ -424,9 +424,9 @@ class TestRelayStateFile(unittest.TestCase):
         import lumen_argus_agent.relay as relay_mod
 
         self._orig_dir = relay_mod._ARGUS_DIR
-        self._orig_path = relay_mod._RELAY_STATE_PATH
+        self._orig_path = relay_mod.RELAY_STATE_PATH
         relay_mod._ARGUS_DIR = self._tmp
-        relay_mod._RELAY_STATE_PATH = os.path.join(self._tmp, "relay.json")
+        relay_mod.RELAY_STATE_PATH = os.path.join(self._tmp, "relay.json")
 
     def tearDown(self):
         import shutil
@@ -434,7 +434,7 @@ class TestRelayStateFile(unittest.TestCase):
         import lumen_argus_agent.relay as relay_mod
 
         relay_mod._ARGUS_DIR = self._orig_dir
-        relay_mod._RELAY_STATE_PATH = self._orig_path
+        relay_mod.RELAY_STATE_PATH = self._orig_path
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def test_write_and_load(self):
@@ -473,13 +473,13 @@ class TestRelayStateFile(unittest.TestCase):
         from lumen_argus_agent.relay import load_relay_state
 
         state = {"port": 8070, "bind": "127.0.0.1", "pid": 999999999, "upstream_url": ""}
-        with open(relay_mod._RELAY_STATE_PATH, "w") as f:
+        with open(relay_mod.RELAY_STATE_PATH, "w") as f:
             json.dump(state, f)
 
         # Dead PID should cause cleanup
         result = load_relay_state()
         self.assertIsNone(result)
-        self.assertFalse(os.path.exists(relay_mod._RELAY_STATE_PATH))
+        self.assertFalse(os.path.exists(relay_mod.RELAY_STATE_PATH))
 
 
 class TestReloadEnrollmentConfig(unittest.TestCase):

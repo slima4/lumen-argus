@@ -155,6 +155,27 @@ def _build_parser() -> argparse.ArgumentParser:
     # forward-proxy aliases
     fp_subparsers.add_parser("aliases", help="Show or regenerate tool aliases")
 
+    # uninstall
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="Reverse all agent-made system changes (setup + MCP + protection + launchctl + data files)",
+    )
+    uninstall_parser.add_argument(
+        "--keep-data",
+        action="store_true",
+        help=(
+            "Skip removal of agent-owned state files "
+            "(~/.lumen-argus/env, enrollment.json, relay.json). "
+            "Use when the caller plans to rm -rf the directory itself "
+            "(desktop tray app uninstall path)."
+        ),
+    )
+    uninstall_parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="(No-op — uninstall is always non-interactive. Flag accepted for script compatibility.)",
+    )
+
     return parser
 
 
@@ -757,6 +778,15 @@ def _run_forward_proxy(args: argparse.Namespace) -> None:
     print_setup_instructions()
 
 
+def _run_uninstall(args: argparse.Namespace) -> None:
+    from lumen_argus_agent.uninstall import uninstall_agent
+
+    result = uninstall_agent(keep_data=args.keep_data)
+    print(json.dumps(result.to_dict(), indent=2))
+    if not result.ok:
+        sys.exit(1)
+
+
 def _run_heartbeat(_args: argparse.Namespace) -> None:
     from lumen_argus_core.enrollment import is_enrolled
     from lumen_argus_core.telemetry import send_heartbeat
@@ -795,6 +825,7 @@ def main() -> None:
         "heartbeat": _run_heartbeat,
         "relay": _run_relay,
         "forward-proxy": _run_forward_proxy,
+        "uninstall": _run_uninstall,
     }
 
     handler = handlers.get(args.command)

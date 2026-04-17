@@ -34,7 +34,7 @@ class TestEnrollmentState(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_not_enrolled_by_default(self):
-        with patch("lumen_argus_core.enrollment._ENROLLMENT_FILE", self.enrollment_file):
+        with patch("lumen_argus_core.enrollment.ENROLLMENT_FILE", self.enrollment_file):
             self.assertFalse(is_enrolled())
             self.assertIsNone(load_enrollment())
 
@@ -50,7 +50,7 @@ class TestEnrollmentState(unittest.TestCase):
             "machine_id": "mac_def456",
         }
         with (
-            patch("lumen_argus_core.enrollment._ENROLLMENT_FILE", self.enrollment_file),
+            patch("lumen_argus_core.enrollment.ENROLLMENT_FILE", self.enrollment_file),
             patch("lumen_argus_core.enrollment._ARGUS_DIR", self.tmpdir),
         ):
             _save_enrollment(state)
@@ -63,7 +63,7 @@ class TestEnrollmentState(unittest.TestCase):
     def test_file_permissions(self):
         state = {"server": "https://test.io", "agent_id": "a", "machine_id": "m", "enrolled_at": "now"}
         with (
-            patch("lumen_argus_core.enrollment._ENROLLMENT_FILE", self.enrollment_file),
+            patch("lumen_argus_core.enrollment.ENROLLMENT_FILE", self.enrollment_file),
             patch("lumen_argus_core.enrollment._ARGUS_DIR", self.tmpdir),
         ):
             _save_enrollment(state)
@@ -71,13 +71,13 @@ class TestEnrollmentState(unittest.TestCase):
             self.assertEqual(mode, 0o600, "enrollment.json must have 0600 permissions")
 
     def test_unenroll_when_not_enrolled(self):
-        with patch("lumen_argus_core.enrollment._ENROLLMENT_FILE", self.enrollment_file):
+        with patch("lumen_argus_core.enrollment.ENROLLMENT_FILE", self.enrollment_file):
             self.assertFalse(unenroll())
 
     def test_unenroll_removes_file(self):
         state = {"server": "https://test.io", "agent_id": "a", "machine_id": "m", "enrolled_at": "now"}
         with (
-            patch("lumen_argus_core.enrollment._ENROLLMENT_FILE", self.enrollment_file),
+            patch("lumen_argus_core.enrollment.ENROLLMENT_FILE", self.enrollment_file),
             patch("lumen_argus_core.enrollment._ARGUS_DIR", self.tmpdir),
             patch("lumen_argus_core.enrollment._CA_CERT_FILE", os.path.join(self.tmpdir, "ca.pem")),
             patch("lumen_argus_core.enrollment.deregister_agent"),
@@ -91,7 +91,7 @@ class TestEnrollmentState(unittest.TestCase):
     def test_load_corrupted_file(self):
         with open(self.enrollment_file, "w") as f:
             f.write("not json")
-        with patch("lumen_argus_core.enrollment._ENROLLMENT_FILE", self.enrollment_file):
+        with patch("lumen_argus_core.enrollment.ENROLLMENT_FILE", self.enrollment_file):
             self.assertIsNone(load_enrollment())
 
 
@@ -396,7 +396,7 @@ class TestEnrollCA(unittest.TestCase):
         with (
             patch("lumen_argus_core.enrollment.fetch_enrollment_config", return_value=config_response),
             patch("lumen_argus_core.enrollment.register_agent", return_value={}),
-            patch("lumen_argus_core.enrollment._ENROLLMENT_FILE", os.path.join(self.tmpdir, "enrollment.json")),
+            patch("lumen_argus_core.enrollment.ENROLLMENT_FILE", os.path.join(self.tmpdir, "enrollment.json")),
             patch("lumen_argus_core.enrollment._ARGUS_DIR", self.tmpdir),
             patch("lumen_argus_core.enrollment._CA_CERT_FILE", ca_cert_path),
         ):
@@ -423,7 +423,7 @@ class TestEnrollCA(unittest.TestCase):
         with (
             patch("lumen_argus_core.enrollment.fetch_enrollment_config", return_value=config_response),
             patch("lumen_argus_core.enrollment.register_agent", return_value={}),
-            patch("lumen_argus_core.enrollment._ENROLLMENT_FILE", os.path.join(self.tmpdir, "enrollment.json")),
+            patch("lumen_argus_core.enrollment.ENROLLMENT_FILE", os.path.join(self.tmpdir, "enrollment.json")),
             patch("lumen_argus_core.enrollment._ARGUS_DIR", self.tmpdir),
             patch("lumen_argus_core.enrollment._CA_CERT_FILE", ca_cert_path),
         ):

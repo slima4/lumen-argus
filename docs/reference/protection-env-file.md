@@ -125,7 +125,19 @@ glance which lifecycle this file belongs to.
 
 `protection disable` truncates the file to empty bytes regardless of
 mode; the source block in your shell profile is a no-op on an empty
-file.
+file.  On macOS the same call also runs `launchctl unsetenv` for each
+managed variable name so GUI-launched AI tools (Claude Desktop,
+Cursor) stop pointing at the proxy immediately — not just newly
+spawned terminals.  The list of cleared names comes back in the
+status dict as `launchctl_vars_cleared` (empty on non-Darwin).
+
+Ordering inside `disable_protection` is load-bearing: **read the env
+file → truncate → clear launchctl**.  A crash after the truncate and
+before the `launchctl` call leaves the shell env empty while
+launchctl still carries stale values, which is strictly better than
+the inverse (shell active, launchctl empty) — the latter would cause
+GUI AI tools to hit the dead proxy without a matching shell symptom
+the user could investigate.
 
 ## Guard semantics (tray mode only)
 
@@ -219,4 +231,5 @@ canonical entry for the same variable is written.
 
 -   Layer 3 of the [clean-uninstall spec](https://github.com/lumen-argus/lumen-argus) covers the five-layer design that this env file participates in.
 -   [Client detection and setup](../guide/client-detection.md) explains how the env file is populated from the client registry.
--   [CLI reference](cli.md) documents `lumen-argus protection {enable,disable,status}`.
+-   [CLI reference](cli.md) documents `lumen-argus protection {enable,disable,status}` and `lumen-argus-agent uninstall`.
+-   `lumen-argus-agent uninstall` is the clean removal path that combines `protection disable` with full config revert and data-file cleanup; see the CLI reference for its structured JSON output.

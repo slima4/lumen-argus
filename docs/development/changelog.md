@@ -4,6 +4,48 @@ All notable changes to lumen-argus are documented here.
 
 ## Unreleased
 
+### Agent Uninstall — Single-Command Workstation Cleanup
+
+- New subcommand `lumen-argus-agent uninstall [--keep-data]
+  [--non-interactive]` reverses every system change the agent made
+  during `setup` / `protection enable` / `enroll` / MCP wrapping, and
+  removes agent-owned state files from `~/.lumen-argus/`.
+- Step ordering is load-bearing:
+  `disable_protection` → `undo_mcp_setup` → `undo_setup` → data files.
+  Running `disable_protection` first lets it snapshot the managed env
+  vars *before* anything truncates the env file, so `launchctl
+  unsetenv` on macOS sees the right names.
+- `disable_protection()` now clears the matching launchctl env vars
+  on macOS (read-then-truncate-then-launchctl order, so a crash
+  mid-way fails safe) and returns a new `launchctl_vars_cleared`
+  field in the status dict.  GUI-launched AI tools (Claude Desktop,
+  Cursor) stop hitting the proxy immediately instead of only on new
+  terminals.
+- New module `lumen_argus_core.platform_env.clear_launchctl_env_vars`
+  owns the macOS launchctl seam — strict `[A-Za-z_][A-Za-z0-9_]*`
+  whitelist on var names (shell-injection defence), no-op on Linux /
+  Windows, per-name failure tolerated and excluded from the returned
+  list.  Zero new runtime dependencies (stdlib `subprocess`).
+- Orchestrator (`lumen_argus_agent.uninstall.uninstall_agent`) is
+  best-effort per step — a failing step is logged with `exc_info`
+  and the next step still runs.  The CLI always prints structured
+  JSON (`steps`, `launchctl_vars_cleared`, `data_files_removed`,
+  `errors`) so tray-app / shell-script callers do not parse stderr.
+  Exit code `0` iff `errors` is empty, `1` otherwise.
+- **Out of scope** (tray app / desktop installer's job, deliberately
+  untouched): `.app-path`, `license.key`, `trial.json`, `bin/`,
+  LaunchAgent plists, `/Applications/*.app`, macOS App Support /
+  Logs directories.  The ownership boundary from the uninstall spec
+  is preserved.
+- Tests: `test_platform_env.py` (8 launchctl scenarios — empty input,
+  non-Darwin no-op, happy path, non-zero exit, `OSError`,
+  `TimeoutExpired`, non-identifier name rejection, missing
+  `launchctl` binary), `test_uninstall.py` (happy path, best-effort
+  failure — one step / two steps, `--keep-data`, clean-machine
+  idempotency, JSON serialisation), plus new pins in
+  `test_setup_wizard.py` for the read-before-truncate ordering and
+  the idempotent empty-file path.
+
 ### Protection Env File — Dual-Mode Body with Sticky Mode
 
 - New module `lumen_argus_core.env_template` owns the

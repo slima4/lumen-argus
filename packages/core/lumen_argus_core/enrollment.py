@@ -22,7 +22,7 @@ from lumen_argus_core.time_utils import now_iso
 log = logging.getLogger("argus.enrollment")
 
 _ARGUS_DIR = os.path.expanduser("~/.lumen-argus")
-_ENROLLMENT_FILE = os.path.join(_ARGUS_DIR, "enrollment.json")
+ENROLLMENT_FILE = os.path.join(_ARGUS_DIR, "enrollment.json")
 _CA_CERT_FILE = os.path.join(_ARGUS_DIR, "ca.pem")
 
 
@@ -224,7 +224,7 @@ def unenroll() -> bool:
     deregister_agent(state["server"], state["agent_id"])
 
     # Remove files
-    for path in (_ENROLLMENT_FILE, _CA_CERT_FILE):
+    for path in (ENROLLMENT_FILE, _CA_CERT_FILE):
         try:
             os.remove(path)
         except FileNotFoundError:
@@ -237,7 +237,7 @@ def unenroll() -> bool:
 def load_enrollment() -> dict[str, Any] | None:
     """Load enrollment state from disk. Returns None if not enrolled."""
     try:
-        with open(_ENROLLMENT_FILE, encoding="utf-8") as f:
+        with open(ENROLLMENT_FILE, encoding="utf-8") as f:
             state: dict[str, Any] = json.load(f)
             return state
     except (FileNotFoundError, PermissionError, json.JSONDecodeError):
@@ -246,7 +246,7 @@ def load_enrollment() -> dict[str, Any] | None:
 
 def is_enrolled() -> bool:
     """Check if this machine is enrolled."""
-    return os.path.isfile(_ENROLLMENT_FILE)
+    return os.path.isfile(ENROLLMENT_FILE)
 
 
 def update_agent_token(new_token: str) -> bool:
@@ -270,11 +270,11 @@ def update_agent_token(new_token: str) -> bool:
 def _save_enrollment(state: dict[str, Any]) -> None:
     """Write enrollment state atomically with 0o600 permissions."""
     os.makedirs(_ARGUS_DIR, mode=0o700, exist_ok=True)
-    tmp_path = _ENROLLMENT_FILE + ".tmp"
+    tmp_path = ENROLLMENT_FILE + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
     os.chmod(tmp_path, 0o600)
-    os.replace(tmp_path, _ENROLLMENT_FILE)
+    os.replace(tmp_path, ENROLLMENT_FILE)
 
 
 def _write_file(path: str, content: str) -> None:
