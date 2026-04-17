@@ -14,8 +14,10 @@ function loadSettings(){
     /* === 1. Proxy (always editable) === */
     const proxyGrp=_mkSG('Proxy (hot-reloadable)');
     const timeout=community.proxy?community.proxy.timeout:120;
+    const connectTimeout=community.proxy?community.proxy.connect_timeout:10;
     const retries=community.proxy?community.proxy.retries:1;
-    _addEditRow(proxyGrp,'Timeout (seconds)','proxy.timeout','number',timeout,{min:1,max:300});
+    _addEditRow(proxyGrp,'Idle-read timeout (seconds)','proxy.timeout','number',timeout,{min:1,max:300});
+    _addEditRow(proxyGrp,'Connect timeout (seconds)','proxy.connect_timeout','number',connectTimeout,{min:1,max:120});
     _addEditRow(proxyGrp,'Retries','proxy.retries','number',retries,{min:0,max:10});
     if(community.proxy){
       const port=community.proxy.port||8080;

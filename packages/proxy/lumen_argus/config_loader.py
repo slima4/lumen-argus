@@ -192,7 +192,11 @@ def reconcile_yaml_rules(store: AnalyticsStore, config: Config) -> None:
 # DB config overrides
 # ---------------------------------------------------------------------------
 
-_OVERRIDE_INT_KEYS = {"proxy.timeout": "proxy.timeout", "proxy.retries": "proxy.retries"}
+_OVERRIDE_INT_KEYS = {
+    "proxy.timeout": "proxy.timeout",
+    "proxy.connect_timeout": "proxy.connect_timeout",
+    "proxy.retries": "proxy.retries",
+}
 _OVERRIDE_STR_KEYS = {"default_action": "default_action"}
 _OVERRIDE_DETECTOR_ACTION = {
     "detectors.secrets.action": ("secrets", "action"),

@@ -119,6 +119,7 @@ def handle_config(config: Config | None, store: AnalyticsStore | None = None) ->
 
     # Start with YAML values
     timeout = config.proxy.timeout
+    connect_timeout = config.proxy.connect_timeout
     retries = config.proxy.retries
     default_action = config.default_action
     secrets_action = config.secrets.action or config.default_action
@@ -131,6 +132,8 @@ def handle_config(config: Config | None, store: AnalyticsStore | None = None) ->
             overrides = store.get_config_overrides()
             if "proxy.timeout" in overrides:
                 timeout = int(overrides["proxy.timeout"])
+            if "proxy.connect_timeout" in overrides:
+                connect_timeout = int(overrides["proxy.connect_timeout"])
             if "proxy.retries" in overrides:
                 retries = int(overrides["proxy.retries"])
             if "default_action" in overrides:
@@ -150,6 +153,7 @@ def handle_config(config: Config | None, store: AnalyticsStore | None = None) ->
                 "port": config.proxy.port,
                 "bind": config.proxy.bind,
                 "timeout": timeout,
+                "connect_timeout": connect_timeout,
                 "retries": retries,
             },
             "default_action": default_action,
