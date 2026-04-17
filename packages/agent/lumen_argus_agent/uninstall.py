@@ -48,8 +48,11 @@ module intentionally does not call ``sys.exit``.
 
 from __future__ import annotations
 
+import argparse
+import json
 import logging
 import os
+import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
@@ -163,6 +166,52 @@ def _step_remove_data_files(result: UninstallResult) -> None:
 # ---------------------------------------------------------------------------
 # Step runner
 # ---------------------------------------------------------------------------
+
+
+def emit_and_exit(result: UninstallResult) -> None:
+    """Print the structured result as JSON and exit non-zero on any failure.
+
+    Both CLI entry points share this so a caller gets the same stdout
+    shape and exit-code mapping regardless of which binary they ran.
+    """
+    print(json.dumps(result.to_dict(), indent=2))
+    if not result.ok:
+        sys.exit(1)
+
+
+def main() -> None:
+    """Standalone ``lumen-argus-uninstall`` console_scripts entry point.
+
+    Equivalent to ``lumen-argus-agent uninstall`` — exists so users who
+    just ran ``pip uninstall lumen-argus-agent`` (and therefore no
+    longer have the ``lumen-argus-agent`` binary) can still run
+    cleanup by name discovery.  Same flags, same JSON output, same
+    exit codes.
+    """
+    parser = argparse.ArgumentParser(
+        prog="lumen-argus-uninstall",
+        description=(
+            "Reverse every system change the lumen-argus agent made: "
+            "tool configurations, MCP wrappers, shell env file, "
+            "launchctl env vars (macOS), and agent-owned state files."
+        ),
+    )
+    parser.add_argument(
+        "--keep-data",
+        action="store_true",
+        help=(
+            "Skip removal of agent-owned state files "
+            "(~/.lumen-argus/env, enrollment.json, relay.json). "
+            "Use when the caller plans to remove ~/.lumen-argus/ itself."
+        ),
+    )
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="(No-op — uninstall is always non-interactive. Flag accepted for script compatibility.)",
+    )
+    args = parser.parse_args()
+    emit_and_exit(uninstall_agent(keep_data=args.keep_data))
 
 
 def _run_step(result: UninstallResult, name: str, fn: Callable[[UninstallResult], None]) -> None:

@@ -573,6 +573,9 @@ Agent commands: `detect`, `setup`, `watch`, `protection`, `clients`, `enroll`, `
 # wrappers, shell env file, launchctl env vars (macOS), and agent-
 # owned state files in ~/.lumen-argus/
 lumen-argus-agent uninstall
+
+# Equivalent standalone binary — same flags, same output:
+lumen-argus-uninstall
 ```
 
 Always emits JSON on stdout, exits `0` on full success and `1` on any

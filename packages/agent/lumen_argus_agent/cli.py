@@ -779,12 +779,9 @@ def _run_forward_proxy(args: argparse.Namespace) -> None:
 
 
 def _run_uninstall(args: argparse.Namespace) -> None:
-    from lumen_argus_agent.uninstall import uninstall_agent
+    from lumen_argus_agent.uninstall import emit_and_exit, uninstall_agent
 
-    result = uninstall_agent(keep_data=args.keep_data)
-    print(json.dumps(result.to_dict(), indent=2))
-    if not result.ok:
-        sys.exit(1)
+    emit_and_exit(uninstall_agent(keep_data=args.keep_data))
 
 
 def _run_heartbeat(_args: argparse.Namespace) -> None:

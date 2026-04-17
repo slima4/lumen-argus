@@ -520,8 +520,15 @@ wrappers, shell profile source blocks, shell env file, launchctl env
 vars (macOS), and agent-owned state files.  Idempotent — running on a
 clean machine is a no-op.
 
+Two equivalent entry points ship with the agent package:
+
 ```bash
 lumen-argus-agent uninstall [OPTIONS]
+
+# Standalone alias — same flags, same output.  Useful when the
+# subcommand form is awkward (e.g. a Homebrew post-uninstall hook
+# that gets invoked by binary name).
+lumen-argus-uninstall [OPTIONS]
 ```
 
 | Flag | Type | Default | Description |

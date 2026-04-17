@@ -32,6 +32,7 @@ dependencies = [
 
 [project.scripts]
 lumen-argus-agent = "lumen_argus_agent.cli:main"
+lumen-argus-uninstall = "lumen_argus_agent.uninstall:main"
 
 [project.urls]
 Homepage = "https://github.com/lumen-argus/lumen-argus"

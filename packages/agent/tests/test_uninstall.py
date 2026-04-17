@@ -199,6 +199,76 @@ class TestUninstallIdempotent(unittest.TestCase):
         self.assertEqual(result.steps["data_files_removed"], "ok")
 
 
+class TestStandaloneMain(unittest.TestCase):
+    """Tests for the ``lumen-argus-uninstall`` console_scripts entry.
+
+    ``main()`` parses its own argv (so ``pip uninstall lumen-argus-agent``
+    victims can still run cleanup by binary name) and reuses
+    ``emit_and_exit`` with ``uninstall_agent``.  These pin that the
+    standalone entry matches the sub-command entry's contract:
+    same JSON shape, same exit-code mapping, same keep-data semantics.
+    """
+
+    def test_exit_zero_on_clean_run(self):
+        from lumen_argus_agent.uninstall import UninstallResult, main
+
+        ok = UninstallResult(steps={"protection_disable": "ok"})
+        with (
+            patch("sys.argv", ["lumen-argus-uninstall"]),
+            patch("lumen_argus_agent.uninstall.uninstall_agent", return_value=ok) as fake,
+        ):
+            main()  # no SystemExit
+        fake.assert_called_once_with(keep_data=False)
+
+    def test_exit_one_on_errors(self):
+        import io
+
+        from lumen_argus_agent.uninstall import UninstallResult, main
+
+        failed = UninstallResult(
+            steps={"protection_disable": "failed"},
+            errors=["protection_disable: boom"],
+        )
+        buf = io.StringIO()
+        with (
+            patch("sys.argv", ["lumen-argus-uninstall"]),
+            patch("sys.stdout", buf),
+            patch("lumen_argus_agent.uninstall.uninstall_agent", return_value=failed),
+            self.assertRaises(SystemExit) as cm,
+        ):
+            main()
+        self.assertEqual(cm.exception.code, 1)
+        # Machine-readable output still lands on stdout on failure.
+        import json
+
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["errors"], ["protection_disable: boom"])
+
+    def test_keep_data_flag_is_forwarded(self):
+        from lumen_argus_agent.uninstall import UninstallResult, main
+
+        ok = UninstallResult(steps={"protection_disable": "ok"})
+        with (
+            patch("sys.argv", ["lumen-argus-uninstall", "--keep-data"]),
+            patch("lumen_argus_agent.uninstall.uninstall_agent", return_value=ok) as fake,
+        ):
+            main()
+        fake.assert_called_once_with(keep_data=True)
+
+    def test_non_interactive_flag_parses_and_is_ignored(self):
+        """Flag is a no-op (uninstall has no prompts) but must parse
+        so scripts passing it blindly do not crash.
+        """
+        from lumen_argus_agent.uninstall import UninstallResult, main
+
+        ok = UninstallResult(steps={"protection_disable": "ok"})
+        with (
+            patch("sys.argv", ["lumen-argus-uninstall", "--non-interactive"]),
+            patch("lumen_argus_agent.uninstall.uninstall_agent", return_value=ok),
+        ):
+            main()  # does not raise SystemExit from argparse
+
+
 class TestUninstallResult(unittest.TestCase):
     """Sanity: the dataclass has the shape the CLI writes out."""
 

@@ -9,7 +9,10 @@ All notable changes to lumen-argus are documented here.
 - New subcommand `lumen-argus-agent uninstall [--keep-data]
   [--non-interactive]` reverses every system change the agent made
   during `setup` / `protection enable` / `enroll` / MCP wrapping, and
-  removes agent-owned state files from `~/.lumen-argus/`.
+  removes agent-owned state files from `~/.lumen-argus/`.  Also
+  available as a standalone `lumen-argus-uninstall` binary (same
+  flags, same JSON output) for callers that want discovery by
+  binary name rather than subcommand.
 - Step ordering is load-bearing:
   `disable_protection` → `undo_mcp_setup` → `undo_setup` → data files.
   Running `disable_protection` first lets it snapshot the managed env
