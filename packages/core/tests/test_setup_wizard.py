@@ -355,6 +355,110 @@ class TestProtection(unittest.TestCase):
         self.assertIn("ANTHROPIC_BASE_URL", content)
         self.assertIn("OPENAI_BASE_URL", content)
 
+    def test_enable_default_is_cli_mode(self):
+        """Calling `enable_protection` with no kwargs picks CLI mode — the
+        safe default for anyone running the binary from a terminal.
+        """
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+        ):
+            result = enable_protection("http://localhost:8080")
+            with open(self.env_file) as f:
+                content = f.read()
+        self.assertEqual(result["managed_by"], "cli")
+        self.assertIn("(cli)", content)
+        # No liveness guard tokens — user owns the lifecycle.
+        for guard_token in ("_la_active", "kill -0", ".app-path"):
+            self.assertNotIn(guard_token, content)
+
+    def test_enable_tray_mode_emits_guarded_body(self):
+        """Tray / enrollment callers opt into the self-healing guard."""
+        from lumen_argus_core.env_template import ManagedBy
+
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+        ):
+            result = enable_protection("http://localhost:8080", managed_by=ManagedBy.TRAY)
+            with open(self.env_file) as f:
+                content = f.read()
+        self.assertEqual(result["managed_by"], "tray")
+        self.assertIn("(tray)", content)
+        for expected in ("_la_active=0", "kill -0", ".app-path", "enrollment.json", "relay.json"):
+            self.assertIn(expected, content)
+
+    def test_write_env_file_preserves_tray_mode_when_caller_is_silent(self):
+        """``add_env_to_env_file`` is a low-level mutator that does not
+        know the lifecycle mode.  If a TRAY-guarded file already exists,
+        the next write (via ``write_env_file`` without ``managed_by``)
+        must keep it TRAY — otherwise ``setup`` silently strips the
+        self-healing guard from every enrolled machine.  This pins that
+        invariant at the seam where agent #3 originally flagged the
+        regression.
+        """
+        from lumen_argus_core.env_template import ManagedBy
+        from lumen_argus_core.setup_wizard import add_env_to_env_file, write_env_file
+
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+        ):
+            # Seed the file in tray mode (as an enrollment flow would).
+            write_env_file(
+                [("ANTHROPIC_BASE_URL", "http://127.0.0.1:8070", "claude_code")],
+                managed_by=ManagedBy.TRAY,
+            )
+            # A subsequent mutation that knows nothing about the mode.
+            add_env_to_env_file("OPENAI_BASE_URL", "http://127.0.0.1:8070", "aider")
+            with open(self.env_file) as f:
+                content = f.read()
+
+        self.assertIn("(tray)", content)
+        self.assertIn("_la_active=0", content)
+        # The newly-added export is inside the guard, not below it.
+        self.assertIn("  export OPENAI_BASE_URL=http://127.0.0.1:8070", content)
+
+    def test_write_env_file_defaults_to_cli_when_no_file_exists(self):
+        """Fresh machine, no ``managed_by`` supplied → CLI default."""
+        from lumen_argus_core.setup_wizard import write_env_file
+
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+        ):
+            write_env_file([("ANTHROPIC_BASE_URL", "http://localhost:8080", "claude_code")])
+            with open(self.env_file) as f:
+                content = f.read()
+        self.assertIn("(cli)", content)
+        self.assertNotIn("_la_active", content)
+
+    def test_status_exposes_managed_by_when_enabled(self):
+        """``protection status`` must surface the mode so tray / dashboard
+        consumers can verify the file they are looking at is the one they
+        wrote.  The documented contract in docs/reference/protection-env-file.md
+        is "the chosen mode is echoed back in the status dict".
+        """
+        from lumen_argus_core.env_template import ManagedBy
+
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+        ):
+            enable_protection("http://localhost:8080", managed_by=ManagedBy.TRAY)
+            result = protection_status()
+        self.assertTrue(result["enabled"])
+        self.assertEqual(result["managed_by"], "tray")
+
+    def test_status_managed_by_is_none_when_disabled(self):
+        with (
+            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+        ):
+            result = protection_status()
+        self.assertFalse(result["enabled"])
+        self.assertIsNone(result["managed_by"])
+
     def test_disable_truncates_env_file(self):
         with (
             patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),

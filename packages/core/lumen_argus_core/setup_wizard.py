@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
 from lumen_argus_core.detect import _SHELL_PROFILES, _strip_jsonc_comments, detect_installed_clients, load_jsonc
+from lumen_argus_core.env_template import ManagedBy, parse_header_managed_by, render_body
 from lumen_argus_core.time_utils import now_iso
 
 if TYPE_CHECKING:
@@ -282,6 +283,12 @@ class _env_file_lock:
 # add_env_to_env_file(). We still need to see them so protection_status()
 # reports the truth and add_env_to_env_file() can evict them when a
 # canonical write targets the same variable.
+#
+# ``read_env_file`` strips each line before matching, so the regex anchors
+# against the already-trimmed export line — indented tray-body exports
+# (rendered with two leading spaces inside the ``if ...; then`` block)
+# arrive here stripped and match the same pattern as column-zero CLI-body
+# exports.
 _MANAGED_LINE_RE = re.compile(r"^export\s+(\w+)=(\S+)\s+#\s+lumen-argus:managed(?:\s+client=(\S+))?\s*$")
 
 
@@ -320,7 +327,27 @@ def _strip_quotes(value: str) -> str:
     return value
 
 
-def write_env_file(entries: list[tuple[str, str, str]]) -> None:
+def _read_managed_by_from_disk() -> ManagedBy | None:
+    """Return the mode recorded in the current env file, if any.
+
+    The first line carries the header — see ``env_template``.  We only
+    need that byte-range, so we stop reading after one line.
+    """
+    if not os.path.isfile(_ENV_FILE):
+        return None
+    try:
+        with open(_ENV_FILE, "r", encoding="utf-8") as f:
+            return parse_header_managed_by(f.readline())
+    except OSError as e:
+        log.warning("could not read env file header: %s", e)
+        return None
+
+
+def write_env_file(
+    entries: list[tuple[str, str, str]],
+    *,
+    managed_by: ManagedBy | None = None,
+) -> None:
     """Write env vars to ~/.lumen-argus/env atomically.
 
     Uses write-to-temp-then-rename to prevent corruption if the process
@@ -328,40 +355,41 @@ def write_env_file(entries: list[tuple[str, str, str]]) -> None:
     because it is sourced by the shell — a writable env file is an
     arbitrary code execution vector.
 
+    Body format is owned by ``env_template.render_body``.  Mode is
+    "sticky": if the caller does not specify ``managed_by``, the mode
+    recorded on the existing file is preserved so that low-level
+    mutators (``add_env_to_env_file``) never silently strip the
+    liveness guard from an enrolled machine's env file.  A fresh
+    machine with no existing file falls back to ``ManagedBy.CLI``.
+
     Args:
         entries: list of (var_name, value, client_id) tuples.
+        managed_by: explicit mode override.  ``None`` means "keep the
+            mode already recorded on disk".
     """
     import tempfile
 
+    if managed_by is None:
+        managed_by = _read_managed_by_from_disk() or ManagedBy.CLI
+
     os.makedirs(_ARGUS_DIR, mode=0o700, exist_ok=True)
-    lines = []
-    for var_name, value, client_id in entries:
-        if client_id:
-            lines.append("export %s=%s  %s client=%s" % (var_name, value, MANAGED_TAG, client_id))
-        else:
-            # Orphan (no known client owner) — preserve round-trip without a
-            # bogus empty client= suffix that would mis-parse on re-read.
-            lines.append("export %s=%s  %s" % (var_name, value, MANAGED_TAG))
+    body = render_body(entries, MANAGED_TAG, managed_by=managed_by)
     try:
-        # Write to temp file in same directory, then atomic rename
         fd, tmp_path = tempfile.mkstemp(dir=_ARGUS_DIR, prefix=".env.", suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                if lines:
-                    f.write("\n".join(lines))
-                    f.write("\n")
+                f.write(body)
             os.chmod(tmp_path, 0o600)
             os.rename(tmp_path, _ENV_FILE)
         except BaseException:
-            # Clean up temp file on any failure
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
             raise
-        log.info("env file written: %d var(s)", len(lines))
+        log.info("env file written (%s): %d var(s)", managed_by.value, len(entries))
     except OSError as e:
-        log.error("could not write env file: %s", e, exc_info=True)
+        log.error("could not write env file (%s): %s", managed_by.value, e, exc_info=True)
 
 
 def add_env_to_env_file(
@@ -458,13 +486,28 @@ def add_env_to_shell_profile(
 # ---------------------------------------------------------------------------
 
 
-def enable_protection(proxy_url: str = "http://localhost:8080") -> dict[str, object]:
+def enable_protection(
+    proxy_url: str = "http://localhost:8080",
+    *,
+    managed_by: ManagedBy = ManagedBy.CLI,
+) -> dict[str, object]:
     """Write all configured tool env vars to ~/.lumen-argus/env.
 
-    Also writes per-provider baseURL overrides to opencode.json if OpenCode
-    is installed.
+    Also writes per-provider baseURL overrides to opencode.json if
+    OpenCode is installed.  The OpenCode config is not gated by
+    ``managed_by`` — it always points at ``proxy_url`` because OpenCode
+    has no equivalent of the shell-sourced env file the self-healing
+    guard protects.
 
-    Returns status dict with enabled flag and tool count.
+    Args:
+        proxy_url: base URL that every client should point at.
+        managed_by: lifecycle owner of the env file.  Defaults to
+            ``ManagedBy.CLI`` — the desktop tray app and the enrollment
+            flow pass ``ManagedBy.TRAY`` so the rendered body includes
+            the self-healing liveness guard.
+
+    Returns status dict with enabled flag, tool count, and the
+    recorded ``managed_by`` value so callers can verify ownership.
     """
     from lumen_argus_core.clients import CLIENT_REGISTRY, ProxyConfigType
 
@@ -476,15 +519,20 @@ def enable_protection(proxy_url: str = "http://localhost:8080") -> dict[str, obj
             if pc.alt_config and pc.alt_config.config_type == ProxyConfigType.ENV_VAR and pc.alt_config.env_var:
                 entries.append((pc.alt_config.env_var, proxy_url, client.id))
 
-    write_env_file(entries)
+    write_env_file(entries, managed_by=managed_by)
 
     # Configure OpenCode per-provider baseURLs
     opencode_change = configure_opencode(proxy_url)
     if opencode_change:
         log.info("OpenCode providers configured for %s", proxy_url)
 
-    log.info("protection enabled: %d env var(s) for %s", len(entries), proxy_url)
-    return {"enabled": True, "env_file": _ENV_FILE, "env_vars_set": len(entries)}
+    log.info("protection enabled (%s): %d env var(s) for %s", managed_by.value, len(entries), proxy_url)
+    return {
+        "enabled": True,
+        "env_file": _ENV_FILE,
+        "env_vars_set": len(entries),
+        "managed_by": managed_by.value,
+    }
 
 
 def disable_protection() -> dict[str, object]:
@@ -492,21 +540,31 @@ def disable_protection() -> dict[str, object]:
 
     Returns status dict.
     """
-    # Write empty file atomically via write_env_file
-    write_env_file([])
-    # Remove OpenCode per-provider overrides
+    # Empty body is identical across modes — render_body returns "" for
+    # any mode when entries is empty, so we do not need to preserve the
+    # previously-recorded mode here.
+    write_env_file([], managed_by=ManagedBy.CLI)
     unconfigure_opencode()
-    return {"enabled": False, "env_file": _ENV_FILE, "env_vars_set": 0}
+    return {"enabled": False, "env_file": _ENV_FILE, "env_vars_set": 0, "managed_by": None}
 
 
 def protection_status() -> dict[str, object]:
-    """Return current protection status as JSON-serializable dict."""
+    """Return current protection status as JSON-serializable dict.
+
+    ``managed_by`` is ``None`` when protection is disabled or the env
+    file was written by something that does not emit our header; a
+    string ("cli" / "tray") when the file carries a recognised header.
+    Tray-app consumers verify ownership by comparing this value to what
+    they themselves last wrote.
+    """
     entries = read_env_file()
     enabled = len(entries) > 0
+    mode = _read_managed_by_from_disk() if enabled else None
     return {
         "enabled": enabled,
         "env_file": _ENV_FILE,
         "env_vars_set": len(entries),
+        "managed_by": mode.value if mode is not None else None,
     }
 
 

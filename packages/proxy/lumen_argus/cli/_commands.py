@@ -115,10 +115,11 @@ def run_setup(args: argparse.Namespace) -> None:
 
 def run_protection(args: argparse.Namespace) -> None:
     """Execute the 'protection' subcommand — toggle proxy routing."""
+    from lumen_argus_core.env_template import ManagedBy
     from lumen_argus_core.setup_wizard import disable_protection, enable_protection, protection_status
 
     if args.action == "enable":
-        result = enable_protection(proxy_url=args.proxy_url)
+        result = enable_protection(proxy_url=args.proxy_url, managed_by=ManagedBy(args.managed_by))
         print(json.dumps(result, indent=2))
     elif args.action == "disable":
         result = disable_protection()

@@ -76,6 +76,7 @@ nav:
     - Config Schema: reference/config.md
     - API Endpoints: reference/api-endpoints.md
     - Architecture: reference/architecture.md
+    - Protection Env File: reference/protection-env-file.md
     - Exit Codes: reference/exit-codes.md
   - Development:
     - Extensions: development/extensions.md

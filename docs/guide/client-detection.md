@@ -221,6 +221,22 @@ export OPENAI_BASE_URL=http://localhost:8080  # lumen-argus:managed client=aider
 export ANTHROPIC_BASE_URL=http://localhost:8080  # lumen-argus:managed client=claude_code
 ```
 
+The file has **two body shapes**, picked by whoever invoked
+`protection enable`:
+
+* `--managed-by cli` *(default)* — unconditional exports.  Right when
+  you are running the binary yourself from a terminal (source install,
+  `pip`, `brew`).
+* `--managed-by tray` — exports wrapped in a pure-shell liveness guard
+  (`.app-path` for local mode, `enrollment.json` + `relay.json` PID for
+  dedicated mode), zero subprocesses, sub-millisecond cost.  The
+  desktop tray app and the enrollment flow pass this flag so
+  dragging-to-Trash does not leave AI tools pointed at a dead proxy.
+
+See the [Protection Env File reference](../reference/protection-env-file.md)
+for both body shapes, the activation matrix, and the full guard
+semantics.
+
 This separation lets the tray app toggle protection by writing or truncating the env file, without ever touching your shell profile.
 
 **IDE extensions** (VS Code, JetBrains) get their proxy setting updated in

@@ -4,6 +4,49 @@ All notable changes to lumen-argus are documented here.
 
 ## Unreleased
 
+### Protection Env File — Dual-Mode Body with Sticky Mode
+
+- New module `lumen_argus_core.env_template` owns the
+  `~/.lumen-argus/env` body format end-to-end: `render_body(...)` for
+  writes, `parse_header_managed_by(...)` for reads, and the
+  `ManagedBy` StrEnum (`CLI` / `TRAY`) both sides agree on.
+  `setup_wizard.write_env_file()` only handles atomic I/O.
+- The env file has two body shapes.  `ManagedBy.CLI` *(default)*
+  emits unconditional `export` lines with a
+  `# lumen-argus:managed-env (cli)` header — the right shape for
+  users running the proxy from a terminal (source, `pip`, `brew`).
+  `ManagedBy.TRAY` wraps the exports in a pure-shell liveness guard
+  (`.app-path` marker or `enrollment.json` + live relay PID) with a
+  `(tray)` header — the shape the desktop tray app and the
+  enrollment flow need so a dragged-to-Trash bundle does not leave
+  AI tools pointed at a dead proxy.
+- CLI surface: `--managed-by {cli,tray}` on `protection enable` in
+  both `lumen-argus` and `lumen-argus-agent`.  The tray app sidecar
+  and `lumen-argus-agent enroll` pass `--managed-by tray`.  No
+  heuristic inference of deployment context — the invoker states
+  the mode.  The `choices` list is derived from the enum so a third
+  mode propagates to both parsers automatically.
+- **Sticky mode:** `write_env_file(..., managed_by=None)` (the
+  default for low-level mutators like `add_env_to_env_file` and
+  `setup`) reads the existing file header and preserves the mode.
+  Running `setup` on an enrolled machine no longer silently strips
+  the liveness guard.
+- `enable_protection()` and `protection_status()` now return
+  `managed_by` in their status dicts.  Tray-app / dashboard
+  consumers can verify ownership by comparing the value against
+  what they themselves last wrote.
+- Zero subprocesses in the tray guard — `relay.json` PID is parsed
+  with `while read` + `case '"pid":'` + `${line##*: }` / `${pid%,}`.
+  Two or three `stat()` syscalls plus one small file read on every
+  shell startup; well under 1 ms in either mode.
+- `render_body` uses `match`/`case` + `case _: raise ValueError`,
+  so adding a future `ManagedBy` value hard-fails at render time
+  rather than silently falling into the CLI shape.
+- Tests: 17 pure-function tests (format + parser), 3 CLI-mode
+  real-`bash` tests, 5 TRAY-mode real-`bash` tests covering every
+  activation-matrix row, plus `test_setup_wizard.py` pins for the
+  sticky-mode invariant and the `protection_status` contract.
+
 ### Dashboard Layering Cleanup
 
 - Removed all hardcoded tier branches, locked placeholders, and upsell

@@ -60,12 +60,24 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # protection
+    from lumen_argus_core.env_template import ManagedBy
+
     protection_parser = subparsers.add_parser("protection", help="Toggle proxy routing (enable/disable/status)")
     protection_parser.add_argument(
         "action", choices=["enable", "disable", "status"], help="Enable, disable, or check protection status"
     )
     protection_parser.add_argument(
         "--proxy-url", type=str, default="http://localhost:8080", help="Proxy URL (for enable)"
+    )
+    protection_parser.add_argument(
+        "--managed-by",
+        choices=[m.value for m in ManagedBy],
+        default=ManagedBy.CLI.value,
+        help=(
+            "Lifecycle owner of the env file (default: cli). "
+            "Pass 'tray' when invoked by the desktop app or the enrollment flow "
+            "to emit the self-healing liveness guard."
+        ),
     )
 
     # watch
@@ -327,10 +339,11 @@ def _run_setup(args: argparse.Namespace) -> None:
 
 
 def _run_protection(args: argparse.Namespace) -> None:
+    from lumen_argus_core.env_template import ManagedBy
     from lumen_argus_core.setup_wizard import disable_protection, enable_protection, protection_status
 
     if args.action == "enable":
-        result = enable_protection(proxy_url=args.proxy_url)
+        result = enable_protection(proxy_url=args.proxy_url, managed_by=ManagedBy(args.managed_by))
         print(json.dumps(result, indent=2))
     elif args.action == "disable":
         result = disable_protection()
@@ -451,13 +464,16 @@ def _run_enroll(args: argparse.Namespace) -> None:
     if state.get("organization"):
         print("Organization: %s" % state["organization"])
 
-    # Auto-configure tools and enable protection
+    # Auto-configure tools and enable protection.
+    # Enrollment provides a relay for liveness, so the env file body
+    # uses the self-healing guard (managed_by=TRAY).
+    from lumen_argus_core.env_template import ManagedBy
     from lumen_argus_core.setup_wizard import enable_protection, run_setup
 
     proxy_url = state["proxy_url"]
     print("\nConfiguring AI tools for %s..." % proxy_url)
     run_setup(proxy_url=proxy_url, non_interactive=True)
-    enable_protection(proxy_url=proxy_url)
+    enable_protection(proxy_url=proxy_url, managed_by=ManagedBy.TRAY)
     print("Protection enabled.")
 
     # Send first heartbeat

@@ -222,12 +222,24 @@ def _add_setup_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
 
 
 def _add_protection_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    from lumen_argus_core.env_template import ManagedBy
+
     protection_parser = subparsers.add_parser("protection", help="Toggle proxy routing (enable/disable/status)")
     protection_parser.add_argument(
         "action", choices=["enable", "disable", "status"], help="Enable, disable, or check protection status"
     )
     protection_parser.add_argument(
         "--proxy-url", type=str, default="http://localhost:8080", help="Proxy URL (for enable)"
+    )
+    protection_parser.add_argument(
+        "--managed-by",
+        choices=[m.value for m in ManagedBy],
+        default=ManagedBy.CLI.value,
+        help=(
+            "Lifecycle owner of the env file (default: cli). "
+            "Pass 'tray' when invoked by the desktop app or the enrollment flow "
+            "to emit the self-healing liveness guard."
+        ),
     )
 
 

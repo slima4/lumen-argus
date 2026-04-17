@@ -124,8 +124,17 @@ lumen-argus protection <enable|disable|status> [OPTIONS]
 |----------|------|-------------|
 | `action` | `str` | `enable`, `disable`, or `status`. |
 | `--proxy-url` | `str` | Proxy URL for `enable` (default: `http://localhost:8080`). |
+| `--managed-by` | `str` | Lifecycle owner — `cli` (default) or `tray`. Pass `tray` when invoked by the desktop app or enrollment flow to emit the self-healing liveness guard around the exports. |
 
-`enable` writes all ENV_VAR client env vars to `~/.lumen-argus/env`. `disable` truncates the file. `status` returns JSON with `enabled`, `env_file`, and `env_vars_set`.
+`enable` writes all ENV_VAR client env vars to `~/.lumen-argus/env`.
+By default (`--managed-by cli`) the exports are unconditional — right
+for users running the binary from a terminal.  `--managed-by tray`
+wraps the exports in a liveness guard so they skip when the tray app
+is gone and no relay is running.  `disable` truncates the file.
+`status` returns JSON with `enabled`, `env_file`, `env_vars_set`, and
+(when enabled) the recorded `managed_by`.  See the
+[Protection Env File reference](protection-env-file.md) for the full
+format and guard semantics.
 
 ---
 
