@@ -4,6 +4,21 @@ All notable changes to lumen-argus are documented here.
 
 ## Unreleased
 
+### Agent Relay — `fail_mode` in State File
+
+- `~/.lumen-argus/relay.json` now carries the `fail_mode` value the
+  relay was started (or reloaded) with, alongside the existing
+  `port` / `bind` / `upstream_url` / `pid` / `started_at` fields.
+  Adopters that compare on-disk config to decide whether to reuse a
+  running relay instead of respawning it can now see the fail-mode
+  value without probing `/health`.
+- `_reload_enrollment_config` rewrites the state file after any
+  SIGHUP-driven config change, so a policy-pushed `fail_mode` flip
+  is visible on disk without restarting the relay.  No-op reloads
+  (no fields changed) skip the write.
+- The `/health` endpoint already exposed `fail_mode`; no change
+  there.
+
 ### Agent Uninstall — Single-Command Workstation Cleanup
 
 - New subcommand `lumen-argus-agent uninstall [--keep-data]
