@@ -384,12 +384,20 @@ class AgentRelay:
                 await stream_resp.prepare(request)
                 try:
                     async for chunk in resp.content.iter_any():
-                        await stream_resp.write(chunk)
+                        if not chunk:
+                            continue
+                        try:
+                            await stream_resp.write(chunk)
+                        except (ConnectionResetError, ConnectionAbortedError):
+                            break
                 except asyncio.TimeoutError:
                     # Headers already flushed — close stream cleanly instead
                     # of surfacing a second response the client can't parse.
                     log.error("#%d upstream SSE idle timeout", request_id)
-                await stream_resp.write_eof()
+                try:
+                    await stream_resp.write_eof()
+                except (ConnectionResetError, BrokenPipeError, OSError):
+                    log.debug("#%d client disconnected during write_eof", request_id)
                 log.debug("#%d streamed SSE response", request_id)
                 return stream_resp
 
