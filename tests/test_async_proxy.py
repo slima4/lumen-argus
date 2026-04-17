@@ -549,13 +549,6 @@ class TestAsyncProxy(unittest.TestCase):
 
         asyncio.run(_test())
 
-    def test_update_timeout(self):
-        """update_timeout should update the timeout value."""
-        proxy, _port = self._create_proxy()
-        self.assertEqual(proxy.timeout, 30)
-        proxy.update_timeout(60)
-        self.assertEqual(proxy.timeout, 60)
-
     async def _post_forward(self, port, body_dict, forward_host, forward_scheme, forward_port):
         """Send a POST to /_forward/v1/messages simulating a mitm rewrite."""
         TestAsyncProxy._session_counter += 1

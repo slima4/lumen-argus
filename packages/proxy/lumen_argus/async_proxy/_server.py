@@ -207,10 +207,6 @@ class AsyncArgusProxy:
             await self._runner.cleanup()
             log.info("async proxy stopped")
 
-    def update_timeout(self, timeout: int) -> None:
-        """Update request timeout."""
-        self.timeout = timeout
-
     async def drain(self, timeout: int = 30) -> int:
         """Wait for in-flight requests to complete."""
         if timeout <= 0:
