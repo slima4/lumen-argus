@@ -482,6 +482,8 @@ lumen-argus-agent relay [OPTIONS]
 | `--host` | `str` | `127.0.0.1` | Bind address |
 | `--upstream` | `str` | from enrollment or `http://localhost:8080` | Upstream proxy URL |
 | `--fail-mode` | `str` | `open` | Behavior when proxy unreachable: `open` (pass-through) or `closed` (block) |
+| `--timeout` | `int` | `150` | Idle-read timeout in seconds for upstream connections |
+| `--connect-timeout` | `int` | `10` | TCP connect timeout in seconds |
 | `--log-level` | `str` | `info` | Log level |
 
 ```bash
@@ -514,7 +516,7 @@ CLI flags override values from the config file. The full precedence order (highe
 | Signal | Behavior |
 |--------|----------|
 | `SIGINT` / `SIGTERM` | Graceful shutdown: stop accepting connections, drain in-flight requests (up to `proxy.drain_timeout` seconds), then exit. |
-| `SIGHUP` | Reload config from disk without restarting. Updates allowlists, detector actions, custom rules, timeouts, log levels, port/bind (graceful rebind), and max body size. |
+| `SIGHUP` | Reload config from disk without restarting. Updates allowlists, detector actions, custom rules, timeouts (including connect timeout), log levels, port/bind (graceful rebind), and max body size. |
 
 !!! tip "Second SIGINT forces exit"
     If the proxy is stuck during graceful shutdown, sending a second `SIGINT` (Ctrl+C) forces an immediate exit.

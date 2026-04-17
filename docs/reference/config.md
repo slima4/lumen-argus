@@ -430,6 +430,9 @@ Configuration for the relay process in fault-isolated mode.
 | `relay.health_check_interval` | `int` | `2` | Seconds between engine health checks. |
 | `relay.health_check_timeout` | `int` | `1` | Seconds before a health check times out. |
 | `relay.queue_on_startup` | `int` | `2` | Seconds to buffer requests while engine starts. |
+| `relay.timeout` | `int` | `150` | Idle-read timeout in seconds. Higher than proxy timeout to account for scanning overhead. |
+| `relay.connect_timeout` | `int` | `10` | TCP connect timeout in seconds for the engine. |
+| `relay.max_connections` | `int` | `50` | Maximum concurrent upstream connections. |
 
 ```yaml title="Example"
 relay:
@@ -439,6 +442,9 @@ relay:
   health_check_interval: 2
   health_check_timeout: 1
   queue_on_startup: 2
+  timeout: 150
+  connect_timeout: 10
+  max_connections: 50
 ```
 
 ---

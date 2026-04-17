@@ -103,6 +103,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Behavior when proxy unreachable (default: open)",
     )
+    relay_parser.add_argument("--timeout", type=int, default=150, help="Idle-read timeout in seconds (default: 150)")
+    relay_parser.add_argument(
+        "--connect-timeout", type=int, default=10, help="TCP connect timeout in seconds (default: 10)"
+    )
     relay_parser.add_argument("--log-level", type=str, default="info", help="Log level (default: info)")
     relay_parser.add_argument("--install", action="store_true", help="Install as system service (launchd/systemd)")
     relay_parser.add_argument("--uninstall", action="store_true", help="Remove system service")
@@ -537,6 +541,8 @@ def _run_relay(args: argparse.Namespace) -> None:
         machine_id=machine_id,
         send_username=send_username,
         send_hostname=send_hostname,
+        timeout=args.timeout,
+        connect_timeout=args.connect_timeout,
     )
 
     forward_proxy_port = getattr(args, "forward_proxy_port", 0)

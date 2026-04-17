@@ -302,6 +302,10 @@ def _apply_config(config: Config, data: dict[str, Any]) -> None:
             config.relay.queue_on_startup = max(0, int(relay_data["queue_on_startup"]))
         if "timeout" in relay_data:
             config.relay.timeout = max(1, int(relay_data["timeout"]))
+        if "connect_timeout" in relay_data:
+            config.relay.connect_timeout = max(1, int(relay_data["connect_timeout"]))
+        if "max_connections" in relay_data:
+            config.relay.max_connections = max(1, int(relay_data["max_connections"]))
 
     # Engine config (fault-isolation mode)
     engine_data = data.get("engine", {})

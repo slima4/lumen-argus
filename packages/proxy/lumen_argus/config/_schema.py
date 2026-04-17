@@ -221,6 +221,7 @@ class RelayConfig:
     queue_on_startup: int = 2  # seconds to buffer requests while engine starts
     timeout: int = 150  # relay timeout (> proxy.timeout to account for scanning overhead)
     connect_timeout: int = 10  # TCP connect timeout for engine
+    max_connections: int = 50  # max concurrent upstream connections
 
 
 @dataclass

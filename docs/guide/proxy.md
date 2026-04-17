@@ -406,12 +406,14 @@ relay:
   health_check_timeout: 1
   queue_on_startup: 2
   timeout: 150
+  connect_timeout: 10
+  max_connections: 50
 
 engine:
   port: 8090
 ```
 
-The relay timeout (150s) is intentionally higher than the engine timeout (120s) to account for scanning overhead.
+The relay timeout (150s) is intentionally higher than the engine timeout (120s) to account for scanning overhead. Both `timeout` and `connect_timeout` use the same idle-read / TCP-connect semantics as the proxy.
 
 ### SIGHUP reload
 

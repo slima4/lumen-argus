@@ -6,6 +6,9 @@ version: "1"
 proxy:
   port: 8080
   bind: "127.0.0.1"
+  timeout: 120              # idle-read timeout (seconds)
+  connect_timeout: 10       # TCP connect timeout (seconds)
+  max_connections: 50       # max concurrent upstream connections
   upstream:
     anthropic: "https://api.anthropic.com"
     openai: "https://api.openai.com"

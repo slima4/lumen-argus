@@ -91,7 +91,7 @@ class ArgusRelay:
         queue_timeout: int = 2,
         timeout: int = 120,
         connect_timeout: int = 10,
-        max_connections: int = 20,
+        max_connections: int = 50,
     ):
         self.bind = bind
         self.port = port

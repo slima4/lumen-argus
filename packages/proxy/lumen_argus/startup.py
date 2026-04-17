@@ -320,7 +320,7 @@ def run_server(
             queue_timeout=config.relay.queue_on_startup,
             timeout=config.relay.timeout,
             connect_timeout=config.relay.connect_timeout,
-            max_connections=config.proxy.max_connections,
+            max_connections=config.relay.max_connections,
         )
         log.info("combined mode: relay :%d → engine :%d (fail_mode=%s)", relay_port, port, relay_fail_mode)
 

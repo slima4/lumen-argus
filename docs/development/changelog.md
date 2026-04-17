@@ -248,8 +248,8 @@ Initial release of the lumen-argus Community Edition.
 - Transparent HTTP proxy for AI coding tools (Claude Code, Copilot, Cursor)
 - Provider auto-detection: Anthropic, OpenAI, Gemini
 - SSE streaming passthrough via `read1()`
-- Connection pooling with idle timeout
-- Backpressure via `max_connections` semaphore
+- Connection pooling with idle-read timeout (`proxy.timeout`) and separate TCP connect timeout (`proxy.connect_timeout`)
+- Backpressure via `max_connections` semaphore (default: 50)
 - Graceful drain on shutdown (`drain_timeout`)
 - Custom CA bundle support for corporate proxies
 - `/health` JSON endpoint
