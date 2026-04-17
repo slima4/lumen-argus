@@ -495,6 +495,7 @@ def _write_relay_state(config: RelayConfig) -> None:
         "port": config.port,
         "bind": config.bind,
         "upstream_url": config.upstream_url,
+        "fail_mode": config.fail_mode,
         "pid": os.getpid(),
         "started_at": now_iso(),
     }
@@ -597,6 +598,9 @@ def _reload_enrollment_config(relay: AgentRelay) -> None:
 
     if changed:
         log.info("sighup reload: updated %s", ", ".join(changed))
+        # Keep relay.json in sync so adopters comparing on-disk config
+        # see the post-reload fail_mode, not the startup value.
+        _write_relay_state(config)
     else:
         log.info("sighup reload: no changes detected")
 

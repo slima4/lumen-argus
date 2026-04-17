@@ -440,7 +440,7 @@ class TestRelayStateFile(unittest.TestCase):
     def test_write_and_load(self):
         from lumen_argus_agent.relay import _write_relay_state, load_relay_state
 
-        config = RelayConfig(port=9999, bind="0.0.0.0", upstream_url="http://proxy:8080")
+        config = RelayConfig(port=9999, bind="0.0.0.0", upstream_url="http://proxy:8080", fail_mode="closed")
         _write_relay_state(config)
 
         state = load_relay_state()
@@ -448,6 +448,7 @@ class TestRelayStateFile(unittest.TestCase):
         self.assertEqual(state["port"], 9999)
         self.assertEqual(state["bind"], "0.0.0.0")
         self.assertEqual(state["upstream_url"], "http://proxy:8080")
+        self.assertEqual(state["fail_mode"], "closed")
         self.assertEqual(state["pid"], os.getpid())
 
     def test_load_missing_returns_none(self):
@@ -485,6 +486,15 @@ class TestRelayStateFile(unittest.TestCase):
 class TestReloadEnrollmentConfig(unittest.TestCase):
     """SIGHUP enrollment reload."""
 
+    def setUp(self):
+        # Reload now persists to ~/.lumen-argus/relay.json when config
+        # changes; patch globally so no test writes to the host.
+        from unittest.mock import patch
+
+        self._write_state_patch = patch("lumen_argus_agent.relay._write_relay_state")
+        self.write_state = self._write_state_patch.start()
+        self.addCleanup(self._write_state_patch.stop)
+
     def test_updates_token(self):
         from unittest.mock import patch
 
@@ -512,6 +522,8 @@ class TestReloadEnrollmentConfig(unittest.TestCase):
             _reload_enrollment_config(relay)
 
         self.assertEqual(relay.config.fail_mode, "closed")
+        # Adopters read relay.json, so the new fail_mode must land on disk.
+        self.write_state.assert_called_once_with(config)
 
     def test_updates_privacy_flags(self):
         from unittest.mock import patch
@@ -541,6 +553,7 @@ class TestReloadEnrollmentConfig(unittest.TestCase):
 
         self.assertEqual(relay.config.agent_token, "keep")
         self.assertEqual(relay.config.fail_mode, "open")
+        self.write_state.assert_not_called()
 
     def test_ignores_invalid_fail_mode(self):
         from unittest.mock import patch
