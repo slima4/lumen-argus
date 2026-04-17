@@ -24,6 +24,15 @@ Design notes:
   list for a subprocess, so a strict POSIX-identifier whitelist is
   applied — anything outside ``[A-Za-z_][A-Za-z0-9_]*`` is skipped
   with a warning.
+
+* **Domain alignment with the tray app.**  We invoke bare
+  ``launchctl unsetenv`` without an ``asuser`` or ``gui/<uid>``
+  target.  This is deliberate: the desktop tray sets the matching
+  vars from its own process (login session) with bare
+  ``launchctl setenv`` too, so both operations target the same
+  domain.  If the tray ever switches to ``launchctl asuser`` or
+  ``gui/<uid>`` for ``setenv``, this function must match — otherwise
+  GUI apps stop seeing the unset and keep pointing at a dead proxy.
 """
 
 from __future__ import annotations
