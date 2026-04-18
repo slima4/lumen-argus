@@ -1,0 +1,244 @@
+name: binaries
+
+# Build PyInstaller sidecar binaries on release tags, compute SHA256s,
+# and publish a GitHub Release. Downstream repos that bundle the
+# sidecar (and compare its runtime `/api/v1/build.build_id` against a
+# known-good hash) consume `checksums.txt` from the release.
+#
+# See `docs/development/releases.md` for the why; `RELEASE.md` for the
+# how-to.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    # Manual dispatch builds artifacts but does NOT publish a release.
+    # Use for smoke-testing the workflow on a branch.
+
+permissions:
+  contents: write  # gh release create + asset upload
+
+jobs:
+  build:
+    name: Build sidecars (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: macos-13
+            target: x86_64-apple-darwin
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          # Linux aarch64 PyInstaller binaries are intentionally not
+          # shipped — that audience is served by the multi-arch Docker
+          # image (`ghcr.io/lumen-argus/lumen-argus-community`, which
+          # already publishes `linux/arm64`). Anyone who specifically
+          # needs a Linux aarch64 sidecar binary can build from source.
+    runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # generate_build_info.py runs `git rev-parse HEAD` during
+          # Analysis() — need the commit available, not just a
+          # shallow snapshot.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+
+      - name: Sync workspace (installs PyInstaller from dev deps)
+        run: uv sync
+
+      - name: Build proxy sidecar
+        run: uv run pyinstaller packages/proxy/lumen-argus.spec --distpath dist --workpath build
+
+      - name: Build agent sidecar
+        run: uv run pyinstaller packages/agent/lumen-argus-agent.spec --distpath dist --workpath build
+
+      - name: Rename binaries to target-triple naming
+        run: |
+          set -euo pipefail
+          cd dist
+          mv lumen-argus "lumen-argus-${TARGET}"
+          mv lumen-argus-agent "lumen-argus-agent-${TARGET}"
+
+      - name: Smoke test (executable + /api/v1/build reports matching build_id)
+        # Asserts sha256(binary-on-disk) == the build_id the running
+        # process reports at /api/v1/build. If this drifts, every
+        # downstream adopt check silently breaks, so a failure here
+        # hard-blocks the release.
+        run: |
+          set -euxo pipefail
+          cd dist
+          test -x "lumen-argus-${TARGET}"
+          test -x "lumen-argus-agent-${TARGET}"
+          # Compute the hash we expect the running binary to report.
+          expected=$(shasum -a 256 "lumen-argus-${TARGET}" | awk '{print $1}')
+          echo "expected build_id: sha256:${expected}"
+          # Spawn the proxy, log stderr+stdout, let it bind, curl the
+          # build endpoint, kill it.
+          "./lumen-argus-${TARGET}" --port 18080 --dashboard-port 18081 >proxy.log 2>&1 &
+          pid=$!
+          # Wait up to 60s for the dashboard to come up — ARM macOS
+          # runners + cold PyInstaller bootloader can be slow on first
+          # extract.
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -sf "http://127.0.0.1:18081/api/v1/build" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "${ready}" != "1" ]; then
+            echo "::error::dashboard did not come up within 60s"
+            echo "--- proxy.log ---"
+            tail -200 proxy.log || true
+            kill "$pid" 2>/dev/null || true
+            exit 1
+          fi
+          response=$(curl -sf "http://127.0.0.1:18081/api/v1/build")
+          reported=$(echo "${response}" | python3 -c "import json,sys; print(json.load(sys.stdin)['build_id'])")
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          echo "reported build_id: ${reported}"
+          if [ "${reported}" != "sha256:${expected}" ]; then
+            echo "::error::build_id mismatch"
+            echo "expected: sha256:${expected}"
+            echo "reported: ${reported}"
+            echo "--- /api/v1/build response ---"
+            echo "${response}"
+            echo "--- proxy.log (tail) ---"
+            tail -200 proxy.log || true
+            exit 1
+          fi
+
+      - name: Compute SHA256 sidecars
+        run: |
+          set -euo pipefail
+          cd dist
+          shasum -a 256 "lumen-argus-${TARGET}" > "lumen-argus-${TARGET}.sha256"
+          shasum -a 256 "lumen-argus-agent-${TARGET}" > "lumen-argus-agent-${TARGET}.sha256"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: |
+            dist/lumen-argus-${{ matrix.target }}
+            dist/lumen-argus-${{ matrix.target }}.sha256
+            dist/lumen-argus-agent-${{ matrix.target }}
+            dist/lumen-argus-agent-${{ matrix.target }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only publish on tag pushes — workflow_dispatch stops at artifacts.
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Aggregate checksums.txt
+        run: |
+          set -euo pipefail
+          cd dist
+          # Per-platform .sha256 files → single sorted checksums.txt.
+          cat *.sha256 | sort -k2 > checksums.txt
+          rm -f *.sha256
+          echo "---"
+          cat checksums.txt
+
+      - name: Extract package versions (for release notes)
+        id: versions
+        run: |
+          set -euo pipefail
+          for pkg in core agent proxy; do
+            v=$(python3 -c "import tomllib,sys; print(tomllib.load(open(f'packages/{sys.argv[1]}/pyproject.toml','rb'))['project']['version'])" "$pkg")
+            echo "${pkg}=${v}" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Generate release notes
+        env:
+          TAG: ${{ github.ref_name }}
+          CORE_V: ${{ steps.versions.outputs.core }}
+          AGENT_V: ${{ steps.versions.outputs.agent }}
+          PROXY_V: ${{ steps.versions.outputs.proxy }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # shasum output: "<hex>  <filename>" (two spaces) — rewrite into
+          # a markdown bullet with `sha256:<hex>` prefix for readability.
+          sidecar_lines=$(awk '{printf "- `%s` — `sha256:%s`\n", $2, $1}' dist/checksums.txt)
+
+          # Docker image name is pinned in docker.yml; the version tag is
+          # the semver without the leading `v`.
+          docker_tag="${TAG#v}"
+
+          cat > RELEASE_NOTES.md <<EOF
+          # ${TAG}
+
+          ## PyPI packages
+
+          | Package | Version | Install |
+          | --- | --- | --- |
+          | \`lumen-argus-core\` | ${CORE_V} | \`pip install lumen-argus-core==${CORE_V}\` |
+          | \`lumen-argus-agent\` | ${AGENT_V} | \`pip install lumen-argus-agent==${AGENT_V}\` |
+          | \`lumen-argus-proxy\` | ${PROXY_V} | \`pip install lumen-argus-proxy==${PROXY_V}\` |
+
+          ## Sidecar binaries
+
+          Each binary's \`build_id\` is \`sha256:<hex>\` of the binary bytes and matches what the running process reports at \`GET /api/v1/build\`. Downstream repos that bundle the sidecar and compare against the running process should consume the hashes below verbatim.
+
+          ${sidecar_lines}
+
+          \`checksums.txt\` is attached to this release for machine-readable consumption.
+
+          ## Verifying downloads
+
+          \`\`\`bash
+          shasum -a 256 -c checksums.txt
+          \`\`\`
+
+          ## Docker
+
+          \`\`\`bash
+          docker pull ghcr.io/lumen-argus/lumen-argus-community:${docker_tag}
+          \`\`\`
+
+          ## Changelog
+
+          See [\`docs/development/changelog.md\`](https://github.com/${REPO}/blob/${TAG}/docs/development/changelog.md).
+          EOF
+
+          echo "--- RELEASE_NOTES.md ---"
+          cat RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --repo "$REPO" \
+            --title "$TAG" \
+            --notes-file RELEASE_NOTES.md \
+            dist/*

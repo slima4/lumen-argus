@@ -22,3 +22,8 @@ config.yaml
 # Absent in dev runs; lumen_argus_core.build_info falls back gracefully.
 packages/proxy/lumen_argus/_build_info.py
 packages/agent/lumen_argus_agent/_build_info.py
+
+# Operator-specific release notes (paths, credential references, per-machine
+# provisioning state). Public runbook lives at RELEASE.md; local sibling
+# stays out of git. See RELEASE.md § "Operator-specific notes".
+*.local.md

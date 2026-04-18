@@ -81,6 +81,7 @@ nav:
   - Development:
     - Extensions: development/extensions.md
     - Contributing: development/contributing.md
+    - Releases: development/releases.md
     - Changelog: development/changelog.md
 
 markdown_extensions:
