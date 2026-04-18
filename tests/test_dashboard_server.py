@@ -4,13 +4,11 @@ Uses stdlib-only HTTP clients and temp directories. Starts actual HTTP servers
 on random ports for integration tests.
 """
 
-import asyncio
 import http.client
 import json
 import os
 import shutil
 import tempfile
-import threading
 import time
 import unittest
 
@@ -23,54 +21,18 @@ from lumen_argus.dashboard.html import (
 )
 from lumen_argus.dashboard.server import (
     _SESSION_TIMEOUT,
-    AsyncDashboardServer,
 )
 from lumen_argus.dashboard.sse import SSEBroadcaster
 from lumen_argus.extensions import ExtensionRegistry
 from tests.helpers import StoreTestCase, make_store
-from tests.helpers import free_port as _free_port
 from tests.helpers import seed_findings as _seed_findings
+from tests.helpers import start_dashboard_server as _start_server
+from tests.helpers import stop_dashboard_server as _stop_server
 
 
 def _make_store(tmpdir):
     store, _ = make_store(tmpdir)
     return store
-
-
-def _start_server(password="", store=None, extensions=None, audit_reader=None, config=None, sse_broadcaster=None):
-    """Start an AsyncDashboardServer on a random port in a background event loop.
-
-    Returns (server, port, loop, sse_broadcaster).
-    """
-    port = _free_port()
-    if extensions is None:
-        extensions = ExtensionRegistry()
-    if sse_broadcaster is None:
-        sse_broadcaster = SSEBroadcaster(heartbeat_interval=9999)
-    server = AsyncDashboardServer(
-        "127.0.0.1",
-        port,
-        store,
-        extensions,
-        password=password,
-        audit_reader=audit_reader,
-        sse_broadcaster=sse_broadcaster,
-        config=config,
-    )
-
-    loop = asyncio.new_event_loop()
-    thread = threading.Thread(target=loop.run_forever, daemon=True, name="test-dashboard")
-    thread.start()
-    loop.call_soon_threadsafe(sse_broadcaster.start)
-    asyncio.run_coroutine_threadsafe(server.start(), loop).result(5)
-    return server, port, loop, sse_broadcaster
-
-
-def _stop_server(server, loop, sse_broadcaster):
-    """Stop the async dashboard server and its event loop."""
-    asyncio.run_coroutine_threadsafe(server.stop(), loop).result(5)
-    asyncio.run_coroutine_threadsafe(sse_broadcaster.stop(), loop).result(5)
-    loop.call_soon_threadsafe(loop.stop)
 
 
 def _get(port, path, headers=None, follow_redirects=False):

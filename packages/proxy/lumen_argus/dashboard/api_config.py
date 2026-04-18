@@ -20,6 +20,7 @@ from lumen_argus.dashboard.api_helpers import (
     require_store,
     send_sighup,
 )
+from lumen_argus_core.build_info import get_build_info
 
 log = logging.getLogger("argus.dashboard.api")
 
@@ -110,6 +111,17 @@ def handle_status(
         **proxy_info,
     }
     return json_response(200, data)
+
+
+def handle_build(extensions: ExtensionRegistry | None = None) -> tuple[int, bytes]:
+    """Handle GET /api/v1/build — proxy build identity + loaded plugins.
+
+    See ``sidecar-build-identity-spec.md``. Auth is handled by the
+    dashboard middleware (same as every other ``/api/v1/*`` route).
+    """
+    info = get_build_info("lumen-argus", __version__)
+    info["plugins"] = extensions.loaded_plugin_build_infos() if extensions else []
+    return json_response(200, info)
 
 
 def handle_config(config: Config | None, store: AnalyticsStore | None = None) -> tuple[int, bytes]:

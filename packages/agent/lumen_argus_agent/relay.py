@@ -469,6 +469,16 @@ async def _handle_request(request: web.Request) -> web.StreamResponse:
             }
         )
 
+    # Build identity (sidecar-build-identity-spec.md). Loopback-bound; no
+    # inbound auth — same security model as /health.
+    if path == "/api/v1/build" and request.method == "GET":
+        from lumen_argus_agent import __version__
+        from lumen_argus_core.build_info import get_build_info
+
+        info = get_build_info("lumen-argus-agent", __version__)
+        info["plugins"] = []
+        return web.json_response(info)
+
     relay._active_requests += 1
     try:
         return await relay.forward(request)

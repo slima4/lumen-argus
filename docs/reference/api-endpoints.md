@@ -1,9 +1,10 @@
 # API Endpoints
 
-lumen-argus exposes endpoints on two ports:
+lumen-argus exposes endpoints on three ports:
 
 - **Proxy port** (default `8080`): `/health` and `/metrics` — handled directly, not forwarded to AI providers
-- **Dashboard port** (default `8081`): `/api/v1/*` — dashboard API for findings, stats, notifications, and more
+- **Dashboard port** (default `8081`): `/api/v1/*` — dashboard API for findings, stats, notifications, build identity, and more
+- **Agent relay port** (default `8070`, `lumen-argus-agent` only): `/health` and `/api/v1/build` — loopback-only, the rest of the surface is transparent forwarding to the proxy
 
 ---
 
@@ -210,6 +211,7 @@ The dashboard runs on a separate port (default `8081`) and provides a REST API f
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/v1/status` | GET | Health, uptime, version, tier, proxy port/bind, standalone |
+| `/api/v1/build` | GET | Build identity for sidecar adoption (`build_id` = SHA256 of running binary) + loaded plugins |
 | `/api/v1/findings` | GET | Paginated findings with severity/detector/provider/session/account filters |
 | `/api/v1/sessions` | GET | Sessions grouped by session_id with finding counts and metadata |
 | `/api/v1/findings/:id` | GET | Single finding detail |
@@ -517,3 +519,88 @@ Community ships with no channel cap; plugins may impose one by calling
   "count": 1
 }
 ```
+
+---
+
+## `GET /api/v1/build`
+
+Returns the running sidecar's build identity. Designed for sidecar-adoption callers that want to decide whether a still-running process is safe to reuse, or whether the binary on disk has changed since it was spawned and the process should be respawned.
+
+Exposed on both the **proxy dashboard** (`:8081`) and the **agent relay** (`:8070`) — see [Agent Relay API](#agent-relay-api) for the agent's version, which emits the same shape.
+
+### Response
+
+**Status:** `200 OK`
+**Content-Type:** `application/json`
+
+```json
+{
+  "service": "lumen-argus",
+  "version": "0.1.0",
+  "git_commit": "2e3947b670cad8fe7fb0262bf73ac1e9a8fb5087",
+  "build_id": "sha256:def4567890abcdef...",
+  "built_at": "2026-04-18T06:51:03Z",
+  "plugins": [
+    {
+      "name": "lumen-argus-pro",
+      "version": "0.3.0",
+      "git_commit": "789ab12cafef00d...",
+      "build_id": "sha256:abcdef01..."
+    }
+  ]
+}
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `service` | `str` | `"lumen-argus"` (proxy) or `"lumen-argus-agent"` (relay). |
+| `version` | `str` | Semantic version from the package's `pyproject.toml` at build time. Falls back to the package's `__version__` in dev runs. |
+| `git_commit` | `str` | `git rev-parse HEAD` at build time (40-char SHA). `"unknown"` in dev runs or outside a git checkout. |
+| `build_id` | `str` | `sha256:<hex>` of the running binary (`sys.executable`). Cached once per process. **This is the authoritative comparator** — two processes with the same `build_id` are running identical binary bytes. `sha256:unknown` if the executable is unreadable. |
+| `built_at` | `str` | RFC3339 UTC timestamp of the PyInstaller build. `"unknown"` in dev runs. |
+| `plugins` | `list[object]` | Loaded plugins' build identities. Empty on the agent (the agent never loads plugins). On the proxy, each entry has the same four fields as the top-level shape (`name`, `version`, `git_commit`, `build_id`) — read from the plugin module's `__build_info__` attribute. Plugins that haven't shipped `__build_info__` still appear, with `git_commit` / `build_id` defaulted to the `"unknown"` sentinels. |
+
+### Authentication
+
+- **Proxy** (`:8081`): same auth as every other `/api/v1/*` route — session cookie or Bearer token (via plugin-registered agent auth provider). Unauthenticated requests return `401`.
+- **Agent relay** (`:8070`): no inbound auth. The relay binds loopback-only; this endpoint mirrors `/health` in that respect. The rest of the relay's surface is transparent forwarding, so a dedicated bearer scheme for one endpoint would be inconsistent.
+
+### Why `build_id` is computed at runtime
+
+A PyInstaller onefile binary extracts to `/tmp/_MEIxxxxx` at spawn and lazy-loads modules from there. If the on-disk binary is replaced between spawn and the next request (auto-update, manual rebuild), lazy imports can fail (`zlib.error: Error -3`) — `/api/v1/status` will still return `200` because its code path is already loaded, but the dashboard HTML route will `500`. Hashing `sys.executable` at request time reflects exactly the bytes the current process is running from; a caller comparing it against a bundled manifest catches the drift before relying on the process.
+
+### Example
+
+```bash
+curl -s http://localhost:8081/api/v1/build | jq
+```
+
+---
+
+## Agent Relay API
+
+The agent relay (`lumen-argus-agent relay`, default port `8070`) is primarily a **forwarding proxy** — it wraps AI API traffic with OS-level identity headers and sends it to the upstream proxy. Two loopback-only diagnostic endpoints are served out of that same port.
+
+### `GET /health`
+
+Returns the relay's status and upstream health.
+
+```json
+{
+  "status": "ok",
+  "upstream": "healthy",
+  "upstream_url": "http://localhost:8080",
+  "fail_mode": "open",
+  "agent_id": "agent_abc123",
+  "enrolled": true,
+  "uptime": 143.2
+}
+```
+
+No authentication required — designed for sidecar-adoption callers and local health checks.
+
+### `GET /api/v1/build`
+
+Same shape as the proxy's `/api/v1/build` (see [above](#get-apiv1build)), with `service = "lumen-argus-agent"` and `plugins = []` (the agent never loads plugins). No authentication — loopback-only.

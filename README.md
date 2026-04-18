@@ -366,6 +366,7 @@ Plugins extend the dashboard via the `register_dashboard_pages` / `register_dash
 | Endpoint | Description |
 |---|---|
 | `GET /api/v1/status` | Health, uptime, version |
+| `GET /api/v1/build` | Build identity for sidecar adoption (`build_id` = SHA256 of running binary) + loaded plugins. Also served by the agent relay on `:8070`. |
 | `GET /api/v1/findings` | Paginated findings (filter by severity, detector, action, type, provider, client, days, session, account) |
 | `GET /api/v1/sessions` | Sessions with finding counts and metadata |
 | `GET /api/v1/sessions/dashboard` | Active sessions (last 24h) with severity breakdown |

@@ -4,11 +4,14 @@ Usage:
     from tests.helpers import make_finding, make_store, free_port, StoreTestCase
 """
 
+import asyncio
 import os
 import shutil
 import socket
 import tempfile
+import threading
 import unittest
+from typing import Any
 
 from lumen_argus.analytics.store import AnalyticsStore
 from lumen_argus.models import Finding
@@ -96,6 +99,54 @@ def seed_findings(store: AnalyticsStore, count: int = 5) -> list[Finding]:
     ]
     store.record_findings(findings, provider="anthropic", model="claude-opus-4-6")
     return findings
+
+
+def start_dashboard_server(
+    password: str = "",
+    store: AnalyticsStore | None = None,
+    extensions: Any = None,
+    audit_reader: Any = None,
+    config: Any = None,
+    sse_broadcaster: Any = None,
+) -> tuple[Any, int, asyncio.AbstractEventLoop, Any]:
+    """Start an ``AsyncDashboardServer`` on a random port in a background
+    event loop.  Returns ``(server, port, loop, sse_broadcaster)``.
+
+    Imports are deferred so this helper has no import-time cost for tests
+    that never touch the dashboard.
+    """
+    from lumen_argus.dashboard.server import AsyncDashboardServer
+    from lumen_argus.dashboard.sse import SSEBroadcaster
+    from lumen_argus.extensions import ExtensionRegistry
+
+    port = free_port()
+    if extensions is None:
+        extensions = ExtensionRegistry()
+    if sse_broadcaster is None:
+        sse_broadcaster = SSEBroadcaster(heartbeat_interval=9999)
+    server = AsyncDashboardServer(
+        "127.0.0.1",
+        port,
+        store,
+        extensions,
+        password=password,
+        audit_reader=audit_reader,
+        sse_broadcaster=sse_broadcaster,
+        config=config,
+    )
+
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, daemon=True, name="test-dashboard").start()
+    loop.call_soon_threadsafe(sse_broadcaster.start)
+    asyncio.run_coroutine_threadsafe(server.start(), loop).result(5)
+    return server, port, loop, sse_broadcaster
+
+
+def stop_dashboard_server(server: Any, loop: asyncio.AbstractEventLoop, sse_broadcaster: Any) -> None:
+    """Stop the dashboard server and its event loop."""
+    asyncio.run_coroutine_threadsafe(server.stop(), loop).result(5)
+    asyncio.run_coroutine_threadsafe(sse_broadcaster.stop(), loop).result(5)
+    loop.call_soon_threadsafe(loop.stop)
 
 
 class StoreTestCase(unittest.TestCase):

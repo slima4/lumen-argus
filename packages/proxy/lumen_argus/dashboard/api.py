@@ -78,6 +78,9 @@ def _dispatch_api(
         if path == "/api/v1/status":
             return api_config.handle_status(store, extensions, _start_time)
 
+        if path == "/api/v1/build":
+            return api_config.handle_build(extensions)
+
         if path == "/api/v1/findings":
             return api_findings.handle_findings_list(params, store)
 

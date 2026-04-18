@@ -214,6 +214,45 @@ class TestAgentRelayHealth(AioHTTPTestCase):
         self.assertEqual(data["agent_id"], "agent_test123")
 
 
+class TestAgentRelayBuildEndpoint(AioHTTPTestCase):
+    """GET /api/v1/build — sidecar-build-identity-spec.md."""
+
+    async def get_application(self):
+        config = RelayConfig(upstream_url="http://localhost:19999")
+        relay = AgentRelay(config)
+        app = web.Application()
+        from lumen_argus_agent.relay import _RELAY_KEY, _handle_request
+
+        app[_RELAY_KEY] = relay
+        app.router.add_route("*", "/{path_info:.*}", _handle_request)
+        return app
+
+    @unittest_run_loop
+    async def test_shape(self):
+        resp = await self.client.get("/api/v1/build")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["service"], "lumen-argus-agent")
+        for field in ("version", "git_commit", "build_id", "built_at", "plugins"):
+            self.assertIn(field, data)
+        self.assertTrue(data["build_id"].startswith("sha256:"))
+        # Agent never loads plugins.
+        self.assertEqual(data["plugins"], [])
+
+    @unittest_run_loop
+    async def test_build_id_stable(self):
+        r1 = await (await self.client.get("/api/v1/build")).json()
+        r2 = await (await self.client.get("/api/v1/build")).json()
+        self.assertEqual(r1["build_id"], r2["build_id"])
+
+    @unittest_run_loop
+    async def test_post_rejected(self):
+        # Only GET is a build endpoint; POST should fall through to the
+        # forwarder (which will fail without an upstream, but not 200-ish).
+        resp = await self.client.post("/api/v1/build", data=b"{}")
+        self.assertNotEqual(resp.status, 200)
+
+
 class TestAgentRelayForwarding(AioHTTPTestCase):
     """Test relay forwarding to upstream proxy."""
 

@@ -591,6 +591,32 @@ The gate transitions automatically when a plugin registers a provider via `exten
 
 ---
 
+## Build Identity
+
+**Modules:** `packages/core/lumen_argus_core/build_info.py`, `scripts/generate_build_info.py`
+
+Both the proxy dashboard (`:8081`) and the agent relay (`:8070`) expose `GET /api/v1/build` returning `{service, version, git_commit, build_id, built_at, plugins[]}`. See the [API reference](api-endpoints.md#get-apiv1build) for the response shape and auth matrix.
+
+### `build_id` as the authoritative comparator
+
+`build_id = "sha256:" + sha256(sys.executable)`, computed once per process and cached. Two processes with the same `build_id` are running identical binary bytes.
+
+The motivation is sidecar adoption. A PyInstaller onefile binary extracts to `/tmp/_MEIxxxxx` at spawn and lazy-loads modules from there. If the on-disk binary is replaced between spawn and the next request (auto-update, manual rebuild), lazy imports can fail — `/api/v1/status` will still return `200` because its code path is already loaded, but routes that trigger a cold lazy import will `500`. Hashing `sys.executable` at request time reflects exactly the bytes the current process is running from, letting an adoption caller detect drift before trusting the process.
+
+`version` / `git_commit` / `built_at` are human fields — read from a per-package `_build_info.py` (gitignored), generated at PyInstaller build time by `scripts/generate_build_info.py` (version from `pyproject.toml`, `git_commit` from `git rev-parse HEAD`, `built_at` from UTC now). Both spec files (`packages/proxy/lumen-argus.spec`, `packages/agent/lumen-argus-agent.spec`) invoke the generator before `Analysis()` collects the package. Dev runs (no built binary, no `_build_info.py`) fall back — `get_build_info(service, version_fallback)` uses the caller-supplied version and `"unknown"` for the rest; `build_id` stays authoritative because it always reflects `sys.executable`.
+
+### Plugin aggregation
+
+On the proxy, `plugins[]` aggregates each loaded plugin's `__build_info__` dict via `ExtensionRegistry.loaded_plugin_build_infos()`. The registry maintains a parallel `_loaded_plugin_modules: dict[name, module]` populated during `load_plugins()` so the build-info read hits the already-imported module — no second entry-point walk. Plugins that have not shipped `__build_info__` still appear in the list, with `git_commit` / `build_id` defaulted to the `UNKNOWN` / `BUILD_ID_UNKNOWN` sentinels. The contract is additive, not gating.
+
+The agent always emits `plugins: []` — it does not load plugins.
+
+### Auth asymmetry
+
+The proxy endpoint goes through the dashboard middleware (session cookie or plugin-registered Bearer, `401` on unauth) like every other `/api/v1/*` route. The agent endpoint is loopback-only with no inbound auth — mirrors `/health` in that respect. The rest of the relay's surface is transparent forwarding, so a dedicated bearer scheme for one endpoint would be inconsistent.
+
+---
+
 ## Module structure
 
 ### CLI and startup
@@ -616,7 +642,7 @@ The dashboard REST API is split by domain. All handlers import shared utilities 
 | `dashboard/api_findings.py` | Findings list/detail, sessions, stats |
 | `dashboard/api_rules.py` | Rules CRUD, bulk update, clone, analysis |
 | `dashboard/api_channels.py` | Notification channel CRUD, types, test, batch |
-| `dashboard/api_config.py` | Config/pipeline CRUD, status, license, logs, clients |
+| `dashboard/api_config.py` | Config/pipeline CRUD, status, build, license, logs, clients |
 | `dashboard/api_allowlists.py` | Allowlist CRUD and pattern testing |
 | `dashboard/api_mcp.py` | MCP tool list management |
 

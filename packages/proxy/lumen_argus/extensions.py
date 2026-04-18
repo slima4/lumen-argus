@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -59,6 +60,10 @@ class ExtensionRegistry:
         self._pre_request_hook: Callable[..., Any] | None = None
         self._proxy_server: Any | None = None
         self._loaded_plugins: list[tuple[str, str]] = []
+        # Parallel to _loaded_plugins: ep.name -> module object, populated on
+        # successful load. Used by loaded_plugin_build_infos() to read each
+        # plugin's ``__build_info__`` (sidecar-build-identity-spec.md).
+        self._loaded_plugin_modules: dict[str, Any] = {}
         # Dashboard extension hooks
         self._dashboard_pages: list[dict[str, Any]] = []
         self._dashboard_css: list[str] = []
@@ -665,6 +670,41 @@ class ExtensionRegistry:
         """Return list of (name, version) for loaded plugins."""
         return list(self._loaded_plugins)
 
+    def loaded_plugin_build_infos(self) -> list[dict[str, Any]]:
+        """Return each loaded plugin's build identity for ``/api/v1/build``.
+
+        Reads ``__build_info__`` from the plugin module — contract set by
+        ``sidecar-build-identity-spec.md``. Plugins that haven't shipped
+        the attribute yet still appear, with ``git_commit`` and
+        ``build_id`` defaulted to the "unknown" sentinels. Name and
+        version always come from entry-point metadata.
+        """
+        from lumen_argus_core.build_info import BUILD_ID_UNKNOWN, UNKNOWN
+
+        out: list[dict[str, Any]] = []
+        for name, version in self._loaded_plugins:
+            entry: dict[str, Any] = {
+                "name": name,
+                "version": version,
+                "git_commit": UNKNOWN,
+                "build_id": BUILD_ID_UNKNOWN,
+            }
+            module = self._loaded_plugin_modules.get(name)
+            build_info = getattr(module, "__build_info__", None) if module is not None else None
+            if isinstance(build_info, dict):
+                for field_name in ("name", "version", "git_commit", "build_id"):
+                    value = build_info.get(field_name)
+                    if value:
+                        entry[field_name] = value
+            elif build_info is not None:
+                log.warning(
+                    "plugin %r __build_info__ is %s, expected dict; ignoring",
+                    name,
+                    type(build_info).__name__,
+                )
+            out.append(entry)
+        return out
+
     @staticmethod
     def _resolve_plugin_load_order(
         plugin_deps: list[tuple[str, tuple[str, ...]]],
@@ -853,6 +893,8 @@ class ExtensionRegistry:
                     except Exception as ve:
                         log.debug("could not read version for %s: %s", ep.name, ve)
                     self._loaded_plugins.append((ep.name, version))
+                    # sys.modules hit (already imported above for dep reading).
+                    self._loaded_plugin_modules[ep.name] = sys.modules.get(ep.module)
                     log.info("loaded extension: %s", ep.name)
                 except Exception as e:
                     log.error("failed to load extension '%s': %s", ep.name, e, exc_info=True)

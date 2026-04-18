@@ -12,9 +12,20 @@
 #   cp dist/lumen-argus src-tauri/binaries/lumen-argus-aarch64-apple-darwin
 
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(SPECPATH, '..', 'core'))
+
+# Generate _build_info.py before Analysis() collects the package. Gitignored —
+# only the built binary carries it. See sidecar-build-identity-spec.md.
+subprocess.check_call([
+    sys.executable,
+    os.path.join(SPECPATH, '..', '..', 'scripts', 'generate_build_info.py'),
+    '--package-dir', os.path.join(SPECPATH, 'lumen_argus'),
+    '--pyproject', os.path.join(SPECPATH, 'pyproject.toml'),
+    '--git-root', os.path.join(SPECPATH, '..', '..'),
+])
 
 a = Analysis(
     [os.path.join(SPECPATH, 'lumen_argus', '__main__.py')],
@@ -28,6 +39,7 @@ a = Analysis(
     ],
     hiddenimports=[
         'lumen_argus_core',
+        'lumen_argus_core.build_info',
         'lumen_argus_core.clients',
         'lumen_argus_core.detect',
         'lumen_argus_core.setup_wizard',
@@ -35,6 +47,7 @@ a = Analysis(
         'lumen_argus_core.time_utils',
         'lumen_argus_core.enrollment',
         'lumen_argus_core.telemetry',
+        'lumen_argus._build_info',
         'aiohttp',
         'aiohttp.web',
         'aiohttp.web_app',
