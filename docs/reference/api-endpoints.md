@@ -567,6 +567,18 @@ Exposed on both the **proxy dashboard** (`:8081`) and the **agent relay** (`:807
 - **Proxy** (`:8081`): same auth as every other `/api/v1/*` route — session cookie or Bearer token (via plugin-registered agent auth provider). Unauthenticated requests return `401`.
 - **Agent relay** (`:8070`): no inbound auth. The relay binds loopback-only; this endpoint mirrors `/health` in that respect. The rest of the relay's surface is transparent forwarding, so a dedicated bearer scheme for one endpoint would be inconsistent.
 
+### Stability
+
+The response shape is a **stable contract within a major version** of `lumen-argus-core` (which defines the shared helper both services use to build the response). Downstream callers that parse specific fields — e.g. `jq '.plugins[].build_id'` in a release-verification script — can rely on these guarantees:
+
+- Top-level fields (`service`, `version`, `git_commit`, `build_id`, `built_at`, `plugins`) will remain present with the types documented above.
+- Each `plugins[]` entry will retain the four fields documented (`name`, `version`, `git_commit`, `build_id`).
+- **Additive changes** — new top-level fields, or new fields inside `plugins[]` entries — are **not** considered breaking. Parsers should ignore unknown fields gracefully.
+- **Breaking changes** (field removal, type change, rename, semantic repurpose) require a major version bump on `lumen-argus-core`, with a one-minor-version deprecation window: the new shape ships as additive in version `N.(M+1).0`, and the old shape is removed no earlier than `(N+1).0.0`.
+- Sentinel values (`"unknown"`, `"sha256:unknown"`) are part of the contract — callers should treat them as valid values rather than parse errors.
+
+The stability guarantee covers the response **shape**, not the values. `build_id` and `git_commit` are expected to change on every rebuild — that's the point.
+
 ### Why `build_id` is computed at runtime
 
 A PyInstaller onefile binary extracts to `/tmp/_MEIxxxxx` at spawn and lazy-loads modules from there. If the on-disk binary is replaced between spawn and the next request (auto-update, manual rebuild), lazy imports can fail (`zlib.error: Error -3`) — `/api/v1/status` will still return `200` because its code path is already loaded, but the dashboard HTML route will `500`. Hashing `sys.executable` at request time reflects exactly the bytes the current process is running from; a caller comparing it against a bundled manifest catches the drift before relying on the process.
