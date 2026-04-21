@@ -939,9 +939,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.9" },
+    { name = "aiohttp", specifier = ">=3.13" },
     { name = "lumen-argus-core", editable = "packages/core" },
-    { name = "mitmproxy", specifier = ">=12.0" },
+    { name = "mitmproxy", specifier = ">=12.2" },
 ]
 
 [[package]]
@@ -967,11 +967,11 @@ rules-analysis = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.9" },
+    { name = "aiohttp", specifier = ">=3.13" },
     { name = "crossfire-rules", extras = ["re2"], marker = "extra == 'rules-analysis'", specifier = ">=0.2.1" },
     { name = "lumen-argus-core", editable = "packages/core" },
-    { name = "pyahocorasick", specifier = ">=2.0" },
-    { name = "pyyaml", specifier = ">=6.0.1" },
+    { name = "pyahocorasick", specifier = ">=2.3" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 provides-extras = ["rules-analysis"]
 

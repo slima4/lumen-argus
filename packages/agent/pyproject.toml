@@ -26,8 +26,8 @@ classifiers = [
 
 dependencies = [
     "lumen-argus-core",
-    "aiohttp>=3.9",
-    "mitmproxy>=12.0",
+    "aiohttp>=3.13",
+    "mitmproxy>=12.2",
 ]
 
 [project.scripts]

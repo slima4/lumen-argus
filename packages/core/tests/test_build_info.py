@@ -52,9 +52,9 @@ class TestGetBuildInfoFallback(unittest.TestCase):
         self.assertTrue(info["build_id"].startswith("sha256:"))
 
     def test_agent_fallback(self):
-        info = bi.get_build_info("lumen-argus-agent", "0.2.0")
+        info = bi.get_build_info("lumen-argus-agent", "0.1.0")
         self.assertEqual(info["service"], "lumen-argus-agent")
-        self.assertEqual(info["version"], "0.2.0")
+        self.assertEqual(info["version"], "0.1.0")
 
     def test_unknown_service_fallback(self):
         info = bi.get_build_info("something-else", "1.0.0")
