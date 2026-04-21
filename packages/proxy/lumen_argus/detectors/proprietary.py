@@ -39,11 +39,7 @@ DEFAULT_KEYWORDS_CRITICAL = (
     "NDA REQUIRED",
 )
 
-DEFAULT_KEYWORDS_WARNING = (
-    "DRAFT",
-    "PRE-RELEASE",
-    "UNRELEASED",
-)
+DEFAULT_KEYWORDS_WARNING = ("UNRELEASED",)
 
 
 class ProprietaryDetector(BaseDetector):

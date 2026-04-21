@@ -393,13 +393,43 @@
       "entropy_context": false
     },
     {
-      "name": "phone_us",
-      "pattern": "\\b(?:\\+1)?[\\s.\\-]?\\(?\\d{3}\\)?[\\s.\\-]?\\d{3}[\\s.\\-]?\\d{4}\\b",
+      "name": "phone_us_intl",
+      "pattern": "\\+1[\\s.\\-]\\(?\\d{3}\\)?[\\s.\\-]\\d{3}[\\s.\\-]\\d{4}\\b",
       "detector": "pii",
       "severity": "warning",
-      "description": "Phone Us",
+      "description": "US phone with +1 country prefix",
       "tags": [],
-      "validator": "",
+      "validator": "phone_us",
+      "entropy_context": false
+    },
+    {
+      "name": "phone_us_paren",
+      "pattern": "\\(\\d{3}\\)[\\s.\\-]?\\d{3}[\\s.\\-]\\d{4}\\b",
+      "detector": "pii",
+      "severity": "warning",
+      "description": "US phone with parenthesized area code",
+      "tags": [],
+      "validator": "phone_us",
+      "entropy_context": false
+    },
+    {
+      "name": "phone_us_dash",
+      "pattern": "\\b\\d{3}-\\d{3}-\\d{4}\\b",
+      "detector": "pii",
+      "severity": "warning",
+      "description": "US phone, dash-separated",
+      "tags": [],
+      "validator": "phone_us",
+      "entropy_context": false
+    },
+    {
+      "name": "phone_us_dot",
+      "pattern": "\\b\\d{3}\\.\\d{3}\\.\\d{4}\\b",
+      "detector": "pii",
+      "severity": "warning",
+      "description": "US phone, dot-separated",
+      "tags": [],
+      "validator": "phone_us",
       "entropy_context": false
     },
     {
@@ -407,9 +437,9 @@
       "pattern": "\\+\\d{1,3}[\\s.\\-]?\\d{4,14}",
       "detector": "pii",
       "severity": "info",
-      "description": "Phone Intl",
+      "description": "E.164 international phone",
       "tags": [],
-      "validator": "",
+      "validator": "phone_intl",
       "entropy_context": false
     },
     {
@@ -534,10 +564,10 @@
     },
     {
       "name": "exfil_webhook",
-      "pattern": "(?i)(fetch|XMLHttpRequest|sendBeacon)\\s*\\(",
+      "pattern": "(?i)(fetch|XMLHttpRequest|sendBeacon)\\s*\\(\\s*['\"`]?https?://",
       "detector": "injection",
       "severity": "high",
-      "description": "Data exfiltration: web API call attempt",
+      "description": "Data exfiltration: web API call with URL",
       "tags": ["injection", "exfiltration"],
       "validator": "",
       "entropy_context": false

@@ -5,6 +5,12 @@ the DB-backed RulesDetector (detectors/rules.py). Centralizing prevents
 drift between the two detection paths.
 """
 
+import logging
+
+import phonenumbers
+
+log = logging.getLogger("argus.validators")
+
 
 def validate_ssn(value: str) -> bool:
     """Validate US SSN: not 000/666/900+ area, not 00 group, not 0000 serial."""
@@ -72,3 +78,30 @@ def validate_iban(value: str) -> bool:
         else:
             return False
     return int("".join(digits)) % 97 == 1
+
+
+# phonenumbers (Apache 2.0, Google libphonenumber port) owns NANPA + E.164
+# validation here. Escape hatch if sidecar binary size ever becomes a release
+# blocker: hand-roll NANPA (area/exchange in 2-9, reject N11, reject digit runs)
+# + E.164 (1-3 digit country code + >=7 subscriber digits, reject bare 4-digit
+# TZ-offset shapes like +0300). ~60 lines, no dep.
+
+
+def validate_phone_us(value: str) -> bool:
+    """US/NANPA phone number. Rejects UUID fragments, sequential IDs, TZ offsets."""
+    try:
+        parsed = phonenumbers.parse(value, "US")
+    except phonenumbers.NumberParseException as e:
+        log.debug("phone_us reject %r: %s", value, e)
+        return False
+    return phonenumbers.is_valid_number(parsed)
+
+
+def validate_phone_intl(value: str) -> bool:
+    """E.164 international phone number. Rejects TZ offsets like +0300."""
+    try:
+        parsed = phonenumbers.parse(value, None)
+    except phonenumbers.NumberParseException as e:
+        log.debug("phone_intl reject %r: %s", value, e)
+        return False
+    return phonenumbers.is_valid_number(parsed)

@@ -44,7 +44,7 @@ lumen-argus sits between your AI tool and the provider, scanning every outbound 
 - **8 PII detectors** with validation (Luhn, SSN ranges, IBAN checksums)
 - **Proprietary code** detection (file patterns + keyword matching)
 - **< 50ms scanning overhead** for typical payloads
-- **Minimal dependencies** — PyYAML + aiohttp, everything else is stdlib
+- **Minimal dependencies** — aiohttp, pyyaml, pyahocorasick, phonenumbers — everything else is stdlib
 - **Forward proxy** — TLS-intercepting proxy (mitmproxy) for tools that don't support custom base URLs (Copilot CLI with GitHub auth). Tool-specific shell aliases, CA cert management, combined relay+forward mode
 - **Session tracking** — identify WHO, WHICH project, WHICH conversation per finding. Agent relay enriches with OS-level identity (hostname, username, working directory via PID correlation)
 - **Cross-request dedup** — 3-layer dedup eliminates redundant scanning of conversation history
@@ -539,7 +539,7 @@ Three PyPI packages from one monorepo:
 |---------|------|------|-------------|
 | `lumen-argus-core` | Client registry, detection engine, setup wizard | 27KB | Zero (stdlib only) |
 | `lumen-argus-agent` | Lightweight workstation agent CLI | 5KB | `lumen-argus-core` |
-| `lumen-argus-proxy` | Full proxy server with dashboard | 245KB | `lumen-argus-core` + aiohttp + pyyaml |
+| `lumen-argus-proxy` | Full proxy server with dashboard | 245KB | `lumen-argus-core` + aiohttp + pyyaml + pyahocorasick + phonenumbers |
 
 ```bash
 # Individual developer — full proxy

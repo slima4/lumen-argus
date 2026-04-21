@@ -12,6 +12,10 @@ from lumen_argus.validators import (
     validate_luhn as _luhn_check,
 )
 from lumen_argus.validators import (
+    validate_phone_intl,
+    validate_phone_us,
+)
+from lumen_argus.validators import (
     validate_ssn as _validate_ssn,
 )
 
@@ -142,6 +146,42 @@ class TestPIIDetector(unittest.TestCase):
         # Filter out low-confidence matches
         significant = [f for f in findings if f.severity in ("critical", "high")]
         self.assertEqual(len(significant), 0)
+
+
+class TestPhoneUsValidator(unittest.TestCase):
+    """Unit-level NANPA validation.
+
+    The upstream regex filters out UUID / hex-ID / non-phone-shape strings
+    before the validator runs — this suite covers only inputs that reach
+    the validator with a phone-shaped match. End-to-end UUID false-positive
+    suppression is covered in TestPipelinePhoneFalsePositives below.
+    """
+
+    def test_valid_formats(self):
+        self.assertTrue(validate_phone_us("212-555-0199"))
+        self.assertTrue(validate_phone_us("(212) 555-0199"))
+        self.assertTrue(validate_phone_us("+1 212 555 0199"))
+
+    def test_rejects_invalid_area_code(self):
+        # NANPA: area code must start 2-9. 123, 000 both rejected.
+        self.assertFalse(validate_phone_us("123-456-7890"))
+        self.assertFalse(validate_phone_us("000-000-0000"))
+
+    def test_rejects_n11_service_codes(self):
+        self.assertFalse(validate_phone_us("411-555-0100"))
+        self.assertFalse(validate_phone_us("911-555-0100"))
+
+
+class TestPhoneIntlValidator(unittest.TestCase):
+    def test_valid_numbers(self):
+        self.assertTrue(validate_phone_intl("+442071838750"))  # UK
+        self.assertTrue(validate_phone_intl("+33142868282"))  # FR
+
+    def test_rejects_tz_offsets(self):
+        # Git log timezone offsets — the exact false positive from prod findings.
+        self.assertFalse(validate_phone_intl("+0300"))
+        self.assertFalse(validate_phone_intl("+0530"))
+        self.assertFalse(validate_phone_intl("-0800"))
 
 
 if __name__ == "__main__":

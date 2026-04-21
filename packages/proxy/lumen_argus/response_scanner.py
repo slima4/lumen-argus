@@ -42,7 +42,7 @@ _FALLBACK_INJECTION_PATTERNS = [
     ("inst_tag", re.compile(r"\[INST\]", re.I)),
     ("execute_command", re.compile(r"execute\s+the\s+following\s+(command|code|script)", re.I)),
     ("exfil_curl", re.compile(r"curl\s+[^|]*\|\s*bash", re.I)),
-    ("exfil_webhook", re.compile(r"(fetch|XMLHttpRequest|sendBeacon)\s*\(", re.I)),
+    ("exfil_webhook", re.compile(r"(fetch|XMLHttpRequest|sendBeacon)\s*\(\s*['\"`]?https?://", re.I)),
 ]
 
 

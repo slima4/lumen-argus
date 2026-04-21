@@ -29,7 +29,14 @@ from lumen_argus.allowlist import AllowlistMatcher
 from lumen_argus.detectors import BaseDetector
 from lumen_argus.detectors.accelerator import AhoCorasickAccelerator
 from lumen_argus.models import Finding, ScanField
-from lumen_argus.validators import validate_iban, validate_ip_not_private, validate_luhn, validate_ssn
+from lumen_argus.validators import (
+    validate_iban,
+    validate_ip_not_private,
+    validate_luhn,
+    validate_phone_intl,
+    validate_phone_us,
+    validate_ssn,
+)
 
 log = logging.getLogger("argus.detectors.rules")
 
@@ -51,6 +58,8 @@ register_validator("ssn_range", validate_ssn)
 register_validator("luhn", validate_luhn)
 register_validator("exclude_private_ips", validate_ip_not_private)
 register_validator("iban_mod97", validate_iban)
+register_validator("phone_us", validate_phone_us)
+register_validator("phone_intl", validate_phone_intl)
 
 
 class RulesDetector(BaseDetector):

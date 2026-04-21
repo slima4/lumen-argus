@@ -956,6 +956,7 @@ source = { editable = "packages/proxy" }
 dependencies = [
     { name = "aiohttp" },
     { name = "lumen-argus-core" },
+    { name = "phonenumbers" },
     { name = "pyahocorasick" },
     { name = "pyyaml" },
 ]
@@ -970,6 +971,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.13" },
     { name = "crossfire-rules", extras = ["re2"], marker = "extra == 'rules-analysis'", specifier = ">=0.2.1" },
     { name = "lumen-argus-core", editable = "packages/core" },
+    { name = "phonenumbers", specifier = ">=9.0.28" },
     { name = "pyahocorasick", specifier = ">=2.3" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
@@ -1488,6 +1490,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/03/4f/2750f7f6f025a1507cd3b7218691671eecfd0bbebebe8b39aa0fe1d360b8/pefile-2024.8.26.tar.gz", hash = "sha256:3ff6c5d8b43e8c37bb6e6dd5085658d658a7a0bdcd20b6a07b1fcfc1c4e9d632", size = 76008, upload-time = "2024-08-26T20:58:38.155Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/16/12b82f791c7f50ddec566873d5bdd245baa1491bac11d15ffb98aecc8f8b/pefile-2024.8.26-py3-none-any.whl", hash = "sha256:76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f", size = 74766, upload-time = "2024-08-26T21:01:02.632Z" },
+]
+
+[[package]]
+name = "phonenumbers"
+version = "9.0.28"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/db/72/97fd1961e3d6f8323b1396669c346557a8581874e2c2a478a83dc5d616e7/phonenumbers-9.0.28.tar.gz", hash = "sha256:f1d810aaa43fbf3a5cb1ee54733218f8333a2a92c85c4d579a810403d6260a8c", size = 2298779, upload-time = "2026-04-13T14:19:50.741Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/bd/5e55cea252bf21402a2d5f2479edd7e24a4c9ebbe59f197080d0d4cd9093/phonenumbers-9.0.28-py2.py3-none-any.whl", hash = "sha256:ee8caabab4fd554efb6119e7b95cb69da40e0f04050611730eed839d93f39920", size = 2585077, upload-time = "2026-04-13T14:16:09.853Z" },
 ]
 
 [[package]]

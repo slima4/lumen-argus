@@ -29,6 +29,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "aiohttp>=3.13",
     "pyahocorasick>=2.3",
+    "phonenumbers>=9.0.28",
 ]
 
 [project.optional-dependencies]

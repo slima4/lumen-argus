@@ -63,10 +63,17 @@ class TestProprietaryDetector(unittest.TestCase):
         types = [f.type for f in findings]
         self.assertIn("confidential_keyword", types)
 
-    def test_draft_keyword_warning(self):
-        findings = self._scan("DRAFT: v2 API design")
+    def test_unreleased_keyword_warning(self):
+        findings = self._scan("UNRELEASED: v2 API design")
         types = [f.type for f in findings]
         self.assertIn("sensitive_keyword", types)
+
+    def test_draft_keyword_no_longer_fires(self):
+        # DRAFT is too ambiguous in LLM-code contexts (GitHub PR status,
+        # email subjects) — dropped from DEFAULT_KEYWORDS_WARNING.
+        findings = self._scan("DRAFT: v2 API design")
+        types = [f.type for f in findings]
+        self.assertNotIn("sensitive_keyword", types)
 
     def test_normal_text_no_findings(self):
         findings = self._scan("def calculate_sum(a, b):\n    return a + b")
