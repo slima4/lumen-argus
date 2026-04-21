@@ -51,7 +51,9 @@ include = ["lumen_argus*"]
 [tool.setuptools.package-data]
 "lumen_argus" = ["py.typed"]
 "lumen_argus.dashboard" = ["static/**/*"]
-"lumen_argus.rules" = ["*.json"]
+# LICENSE-*.txt + NOTICE ship inside the package so Gitleaks' MIT
+# attribution travels with the rule content in pip-installed wheels.
+"lumen_argus.rules" = ["*.json", "NOTICE", "LICENSE-*.txt"]
 
 [tool.uv.sources]
 lumen-argus-core = { workspace = true }

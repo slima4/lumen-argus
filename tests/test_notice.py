@@ -54,5 +54,47 @@ class TestNoticeFilePresent(unittest.TestCase):
             )
 
 
+class TestProxyPackageAttribution(unittest.TestCase):
+    """Attribution files must ship INSIDE the proxy wheel (next to community.json)
+    so Gitleaks' MIT clause is honored for pip-installed users, not only for
+    repo readers. These guards fail if the files are missing or if the
+    pyproject package-data config stops including them."""
+
+    RULES_DIR = REPO_ROOT / "packages" / "proxy" / "lumen_argus" / "rules"
+    PYPROJECT = REPO_ROOT / "packages" / "proxy" / "pyproject.toml"
+
+    def test_package_notice_exists(self):
+        self.assertTrue((self.RULES_DIR / "NOTICE").is_file())
+
+    def test_package_gitleaks_license_exists(self):
+        path = self.RULES_DIR / "LICENSE-gitleaks.txt"
+        self.assertTrue(path.is_file())
+        self.assertIn("MIT License", path.read_text())
+
+    def test_pyproject_ships_attribution(self):
+        # Parse the pyproject so we assert against the *actual* package-data
+        # config, not a substring that could live in a comment or unrelated
+        # string and give a false pass.
+        import tomllib
+
+        cfg = tomllib.loads(self.PYPROJECT.read_text())
+        rules_data = cfg["tool"]["setuptools"]["package-data"]["lumen_argus.rules"]
+        self.assertIn("NOTICE", rules_data, "package-data missing NOTICE entry")
+        self.assertIn("LICENSE-*.txt", rules_data, "package-data missing LICENSE-*.txt entry")
+
+    def test_package_notice_names_same_gitleaks_rules_as_root(self):
+        import json
+
+        community = json.loads((self.RULES_DIR / "community.json").read_text())
+        gitleaks_rules = {r["name"] for r in community["rules"] if "gitleaks" in r.get("tags", [])}
+        pkg_notice = (self.RULES_DIR / "NOTICE").read_text()
+        for name in gitleaks_rules:
+            self.assertIn(
+                name,
+                pkg_notice,
+                f"rule {name!r} tagged gitleaks but missing from proxy package NOTICE",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

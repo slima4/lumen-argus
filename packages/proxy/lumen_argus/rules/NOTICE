@@ -1,0 +1,23 @@
+lumen-argus-proxy — third-party rule-content attribution
+=========================================================
+
+The rules in this directory (community.json) include patterns adapted from
+Gitleaks (https://github.com/gitleaks/gitleaks), licensed under the MIT
+License. The upstream license text is reproduced in LICENSE-gitleaks.txt
+alongside this notice.
+
+Adapted rules carry the "gitleaks" tag in community.json so they can be
+enumerated programmatically. As of 0.1.0 the set is:
+
+  digitalocean_access_token, digitalocean_pat, digitalocean_refresh_token,
+  cloudflare_api_key, cloudflare_global_api_key, cloudflare_origin_ca_key,
+  linear_api_key, linear_client_secret,
+  notion_api_token,
+  atlassian_api_token,
+  kubernetes_secret_yaml,
+  shopify_access_token, shopify_private_app_token,
+  hubspot_api_key,
+  telegram_bot_token
+
+For full project-level attribution including runtime dependencies, see
+the NOTICE.md at the lumen-argus repository root.
