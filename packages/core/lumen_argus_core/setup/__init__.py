@@ -1,1 +1,1 @@
-"""Workstation setup subpackage — domain-split from ``setup_wizard``."""
+"""Workstation setup — env vars, IDE, OpenCode, shell hook, forward proxy, protection, undo, orchestrator."""

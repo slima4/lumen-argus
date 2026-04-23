@@ -7,7 +7,7 @@ route MCP servers through lumen-argus for DLP scanning:
 - **HTTP/WS servers**: ``lumen-argus mcp --upstream <original-url>``
   (converts URL-based server to stdio bridge — AI tool manages lifecycle)
 
-All file modifications follow the same patterns as setup_wizard.py:
+All file modifications follow the same patterns as ``setup.manifest``:
 timestamped backups, append-only manifest, idempotent operations.
 """
 

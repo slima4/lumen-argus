@@ -24,7 +24,7 @@ from lumen_argus_core.time_utils import now_iso
 log = logging.getLogger("argus.setup.env_file")
 
 # Underscore-prefixed names are re-exported here explicitly because
-# :mod:`setup_wizard` reaches them via the module handle (e.g.
+# :mod:`setup.protection` and :mod:`setup.orchestrator` reach them via the module handle (e.g.
 # ``_env_file._ENV_FILE``) so tests only patch one location.
 __all__ = [
     "_ARGUS_DIR",

@@ -355,7 +355,8 @@ def _run_setup(args: argparse.Namespace) -> None:
         dispatch_mcp_setup(args)
         return
 
-    from lumen_argus_core.setup_wizard import run_setup, undo_setup
+    from lumen_argus_core.setup.orchestrator import run_setup
+    from lumen_argus_core.setup.undo import undo_setup
 
     if args.undo:
         reverted = undo_setup()
@@ -473,7 +474,7 @@ def _run_enroll(args: argparse.Namespace) -> None:
         if unenroll():
             # Also undo tool configuration and protection
             from lumen_argus_core.setup.protection import disable_protection
-            from lumen_argus_core.setup_wizard import undo_setup
+            from lumen_argus_core.setup.undo import undo_setup
             from lumen_argus_core.watch import uninstall_service
 
             undo_setup()
@@ -511,8 +512,8 @@ def _run_enroll(args: argparse.Namespace) -> None:
     # Enrollment provides a relay for liveness, so the env file body
     # uses the self-healing guard (managed_by=TRAY).
     from lumen_argus_core.env_template import ManagedBy
+    from lumen_argus_core.setup.orchestrator import run_setup
     from lumen_argus_core.setup.protection import enable_protection
-    from lumen_argus_core.setup_wizard import run_setup
 
     proxy_url = state["proxy_url"]
     print("\nConfiguring AI tools for %s..." % proxy_url)

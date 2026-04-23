@@ -7,11 +7,11 @@ data files the agent itself writes to ``~/.lumen-argus/``.
 Scope (what this module owns):
 
 * Tool configs (AI CLI env vars, IDE settings, OpenCode providers) —
-  delegated to :func:`lumen_argus_core.setup_wizard.undo_setup`.
+  delegated to :func:`lumen_argus_core.setup.undo.undo_setup`.
 * MCP wrappers — delegated to
   :func:`lumen_argus_core.mcp_setup.undo_mcp_setup`.
 * Shell env file + OpenCode overrides + launchctl vars — delegated to
-  :func:`lumen_argus_core.setup_wizard.disable_protection`.
+  :func:`lumen_argus_core.setup.protection.disable_protection`.
 * Agent-written state files (``env``, ``enrollment.json``,
   ``relay.json``) — removed here.
 
@@ -61,7 +61,7 @@ from lumen_argus_core.enrollment import ENROLLMENT_FILE
 from lumen_argus_core.mcp_setup import undo_mcp_setup
 from lumen_argus_core.setup._paths import _ENV_FILE, _ENV_LOCK
 from lumen_argus_core.setup.protection import disable_protection
-from lumen_argus_core.setup_wizard import undo_setup
+from lumen_argus_core.setup.undo import undo_setup
 
 log = logging.getLogger("argus.agent.uninstall")
 

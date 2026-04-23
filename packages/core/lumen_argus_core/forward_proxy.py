@@ -20,9 +20,10 @@ from typing import Protocol, runtime_checkable
 log = logging.getLogger("argus.core.forward_proxy")
 
 # Shared path for forward-proxy shell aliases. Written by
-# ``setup_wizard._write_aliases`` and read by ``detect._check_forward_proxy_aliases``;
-# lives here because this module is already the neutral forward-proxy seam
-# (detect ↔ setup_wizard have a circular-import hazard).
+# ``setup.forward_proxy._write_aliases`` and read by
+# ``detect._check_forward_proxy_aliases``; lives here because this module is
+# already the neutral forward-proxy seam (detect ↔ setup.forward_proxy have
+# a circular-import hazard).
 ALIASES_PATH = os.path.expanduser("~/.lumen-argus/forward-proxy-aliases.sh")
 
 

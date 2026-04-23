@@ -13,7 +13,7 @@ from lumen_argus_core.setup.ide import update_ide_settings
 from lumen_argus_core.setup.protection import disable_protection, enable_protection, protection_status
 from lumen_argus_core.setup.shell_hook import install_shell_hook
 from lumen_argus_core.setup.source_block import install_source_block
-from lumen_argus_core.setup_wizard import undo_setup
+from lumen_argus_core.setup.undo import undo_setup
 
 
 class TestSourceBlock(unittest.TestCase):
@@ -645,7 +645,7 @@ class TestUndoSetup(unittest.TestCase):
         manifest = os.path.join(self.tmpdir, "manifest.json")
         backup_dir = os.path.join(self.tmpdir, "backups")
         with (
-            patch("lumen_argus_core.setup_wizard._SHELL_PROFILES", mock_profiles),
+            patch("lumen_argus_core.setup.undo._SHELL_PROFILES", mock_profiles),
             patch("lumen_argus_core.setup.manifest._MANIFEST_PATH", manifest),
             patch("lumen_argus_core.setup.manifest._BACKUP_DIR", backup_dir),
             patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
@@ -671,7 +671,7 @@ class TestUndoSetup(unittest.TestCase):
         manifest = os.path.join(self.tmpdir, "manifest.json")
         backup_dir = os.path.join(self.tmpdir, "backups")
         with (
-            patch("lumen_argus_core.setup_wizard._SHELL_PROFILES", mock_profiles),
+            patch("lumen_argus_core.setup.undo._SHELL_PROFILES", mock_profiles),
             patch("lumen_argus_core.setup.manifest._MANIFEST_PATH", manifest),
             patch("lumen_argus_core.setup.manifest._BACKUP_DIR", backup_dir),
             patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
@@ -693,7 +693,7 @@ class TestUndoSetup(unittest.TestCase):
         manifest = os.path.join(self.tmpdir, "manifest.json")
         backup_dir = os.path.join(self.tmpdir, "backups")
         with (
-            patch("lumen_argus_core.setup_wizard._SHELL_PROFILES", mock_profiles),
+            patch("lumen_argus_core.setup.undo._SHELL_PROFILES", mock_profiles),
             patch("lumen_argus_core.setup.manifest._MANIFEST_PATH", manifest),
             patch("lumen_argus_core.setup.manifest._BACKUP_DIR", backup_dir),
             patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
@@ -750,7 +750,7 @@ class TestInstallShellHook(unittest.TestCase):
         backup_dir = os.path.join(self.tmpdir, "backups")
         env_file = os.path.join(self.tmpdir, "env")
         with (
-            patch("lumen_argus_core.setup_wizard._SHELL_PROFILES", mock_profiles),
+            patch("lumen_argus_core.setup.undo._SHELL_PROFILES", mock_profiles),
             patch("lumen_argus_core.setup.manifest._MANIFEST_PATH", manifest),
             patch("lumen_argus_core.setup.manifest._BACKUP_DIR", backup_dir),
             patch("lumen_argus_core.setup.env_file._ENV_FILE", env_file),

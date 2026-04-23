@@ -4,7 +4,7 @@ Discovers installed AI coding tools via binary lookup, package managers,
 IDE extensions, and app bundles. Checks proxy configuration status in
 shell profiles and IDE settings.
 
-All detection is read-only — never modifies files. Setup is in setup_wizard.py.
+All detection is read-only — never modifies files. Setup lives in ``lumen_argus_core.setup``.
 """
 
 import json
@@ -620,7 +620,7 @@ def _check_opencode_config(proxy_url: str, detected: DetectedClient) -> None:
 # Forward-proxy alias detection
 # ---------------------------------------------------------------------------
 
-# Matches an active `alias <binary>=` line written by setup_wizard; the
+# Matches an active `alias <binary>=` line written by ``setup.forward_proxy``; the
 # "(disabled)" comment marker left by undo_setup does not match.
 _FORWARD_PROXY_ALIAS_RE = re.compile(r"^alias\s+([A-Za-z0-9_-]+)\s*=", re.MULTILINE)
 

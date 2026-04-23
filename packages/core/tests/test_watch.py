@@ -128,7 +128,7 @@ class TestScanOnce(unittest.TestCase):
             patch("lumen_argus_core.watch._STATE_DIR", self.tmpdir),
             patch("lumen_argus_core.watch._STATE_FILE", self.state_file),
             patch("lumen_argus_core.detect.detect_installed_clients", return_value=mock_report),
-            patch("lumen_argus_core.setup_wizard.run_setup") as mock_setup,
+            patch("lumen_argus_core.setup.orchestrator.run_setup") as mock_setup,
         ):
             scan_once(proxy_url="http://localhost:8080", auto_configure=True)
         mock_setup.assert_called_once_with(

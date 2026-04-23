@@ -114,11 +114,11 @@ def scan_once(
         log.info("new tools detected: %s", ", ".join(new_ids))
 
         if auto_configure:
-            from lumen_argus_core import setup_wizard as _setup_mod
+            from lumen_argus_core.setup.orchestrator import run_setup
 
             for cid in new_ids:
                 log.info("auto-configuring %s", cid)
-                _setup_mod.run_setup(
+                run_setup(
                     proxy_url=proxy_url,
                     client_id=cid,
                     non_interactive=non_interactive,
