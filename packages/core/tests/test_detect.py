@@ -987,5 +987,109 @@ class TestCheckConfigFileDotPath(unittest.TestCase):
         self.assertEqual(value, "http://localhost:8080")
 
 
+class TestForwardProxyAliasDetection(unittest.TestCase):
+    def setUp(self):
+        from lumen_argus_core import detect
+
+        self._tmp = tempfile.mkdtemp()
+        self._aliases_path = os.path.join(self._tmp, "forward-proxy-aliases.sh")
+        self._patch = patch.object(detect, "_FORWARD_PROXY_ALIASES_PATH", self._aliases_path)
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _client(self):
+        return ClientDef(
+            id="copilot_cli",
+            display_name="GitHub Copilot CLI",
+            category="cli",
+            provider="multi",
+            ua_prefixes=("copilot/",),
+            proxy_config=ProxyConfig(
+                config_type=ProxyConfigType.MANUAL,
+                setup_instructions="",
+                forward_proxy=True,
+            ),
+            website="",
+            detect_binary=("copilot",),
+        )
+
+    def test_alias_present_sets_configured(self):
+        from lumen_argus_core.detect import _check_forward_proxy_aliases
+
+        with open(self._aliases_path, "w") as f:
+            f.write(
+                "# lumen-argus forward proxy aliases\n"
+                "alias copilot='HTTPS_PROXY=http://localhost:9090 "
+                'NODE_EXTRA_CA_CERTS="$HOME/.lumen-argus/ca/ca-cert.pem" copilot\'\n'
+            )
+        detected = DetectedClient(client_id="copilot_cli", installed=True)
+        _check_forward_proxy_aliases(self._client(), detected)
+        self.assertTrue(detected.proxy_configured)
+        self.assertEqual(detected.proxy_config_location, self._aliases_path)
+
+    def test_aliases_file_missing_leaves_unconfigured(self):
+        from lumen_argus_core.detect import _check_forward_proxy_aliases
+
+        detected = DetectedClient(client_id="copilot_cli", installed=True)
+        _check_forward_proxy_aliases(self._client(), detected)
+        self.assertFalse(detected.proxy_configured)
+        self.assertEqual(detected.proxy_config_location, "")
+
+    def test_other_tool_alias_does_not_match(self):
+        from lumen_argus_core.detect import _check_forward_proxy_aliases
+
+        with open(self._aliases_path, "w") as f:
+            f.write("alias warp='HTTPS_PROXY=http://localhost:9090 warp'\n")
+        detected = DetectedClient(client_id="copilot_cli", installed=True)
+        _check_forward_proxy_aliases(self._client(), detected)
+        self.assertFalse(detected.proxy_configured)
+
+    def test_disabled_stub_leaves_unconfigured(self):
+        """undo_setup rewrites the file to a comment marker — must not match."""
+        from lumen_argus_core.detect import _check_forward_proxy_aliases
+
+        with open(self._aliases_path, "w") as f:
+            f.write("# lumen-argus forward proxy aliases (disabled)\n")
+        detected = DetectedClient(client_id="copilot_cli", installed=True)
+        _check_forward_proxy_aliases(self._client(), detected)
+        self.assertFalse(detected.proxy_configured)
+
+    def test_detect_single_client_dispatches_to_aliases_check(self):
+        from lumen_argus_core.detect import _detect_single_client
+
+        with open(self._aliases_path, "w") as f:
+            f.write("alias copilot='HTTPS_PROXY=http://localhost:9090 copilot'\n")
+
+        installed = DetectedClient(
+            client_id="copilot_cli",
+            display_name="GitHub Copilot CLI",
+            installed=True,
+            install_method="binary",
+            install_path="/usr/local/bin/copilot",
+        )
+        with (
+            patch("lumen_argus_core.detect._scan_binary", return_value=installed),
+            patch("lumen_argus_core.detect._scan_pip_package", return_value=None),
+            patch("lumen_argus_core.detect._scan_npm_package", return_value=None),
+            patch("lumen_argus_core.detect._scan_brew_package", return_value=None),
+            patch("lumen_argus_core.detect._scan_vscode_extension", return_value=None),
+            patch("lumen_argus_core.detect._scan_app_bundle", return_value=None),
+            patch("lumen_argus_core.detect._scan_jetbrains_plugin", return_value=None),
+            patch("lumen_argus_core.detect._scan_neovim_plugin", return_value=None),
+        ):
+            result = _detect_single_client(
+                self._client(),
+                shell_env={},
+                proxy_url="http://localhost:8080",
+                include_versions=False,
+            )
+        self.assertTrue(result.proxy_configured)
+        self.assertEqual(result.proxy_config_location, self._aliases_path)
+        self.assertTrue(result.forward_proxy)
+
+
 if __name__ == "__main__":
     unittest.main()

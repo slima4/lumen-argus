@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from lumen_argus_core.detect import _SHELL_PROFILES, _strip_jsonc_comments, detect_installed_clients, load_jsonc
 from lumen_argus_core.env_template import ManagedBy, parse_header_managed_by, render_body
+from lumen_argus_core.forward_proxy import ALIASES_PATH as _ALIASES_PATH
 from lumen_argus_core.platform_env import clear_launchctl_env_vars
 from lumen_argus_core.time_utils import now_iso
 
@@ -1136,7 +1137,6 @@ def undo_setup() -> int:
 # ---------------------------------------------------------------------------
 
 _FORWARD_PROXY_PORT = 9090
-_ALIASES_PATH = os.path.join(_ARGUS_DIR, "forward-proxy-aliases.sh")
 _ALIASES_SOURCE_LINE = (
     '[ -f "$HOME/.lumen-argus/forward-proxy-aliases.sh" ] && '
     'source "$HOME/.lumen-argus/forward-proxy-aliases.sh"  %s type=forward-proxy' % MANAGED_TAG

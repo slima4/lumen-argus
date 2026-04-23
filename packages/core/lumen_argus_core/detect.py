@@ -24,6 +24,7 @@ from lumen_argus_core.detect_models import (
     MCPServerEntry,
     get_vscode_variants,
 )
+from lumen_argus_core.forward_proxy import ALIASES_PATH as _FORWARD_PROXY_ALIASES_PATH
 from lumen_argus_core.scanners import (
     detect_version as _detect_version,
 )
@@ -520,6 +521,9 @@ def _detect_single_client(
 
     # MANUAL and UNSUPPORTED: proxy_configured stays False
 
+    if pc.forward_proxy and not detected.proxy_configured:
+        _check_forward_proxy_aliases(client, detected)
+
     # Forward proxy flag — propagate from client registry
     detected.forward_proxy = pc.forward_proxy
 
@@ -609,6 +613,35 @@ def _check_opencode_config(proxy_url: str, detected: DetectedClient) -> None:
             detected.proxy_url = base_url
             detected.proxy_config_location = expanded
             detected.proxy_configured = True
+            return
+
+
+# ---------------------------------------------------------------------------
+# Forward-proxy alias detection
+# ---------------------------------------------------------------------------
+
+# Matches an active `alias <binary>=` line written by setup_wizard; the
+# "(disabled)" comment marker left by undo_setup does not match.
+_FORWARD_PROXY_ALIAS_RE = re.compile(r"^alias\s+([A-Za-z0-9_-]+)\s*=", re.MULTILINE)
+
+
+def _check_forward_proxy_aliases(client: ClientDef, detected: DetectedClient) -> None:
+    """Mark a forward-proxy tool as configured when its alias line is present."""
+    if not os.path.isfile(_FORWARD_PROXY_ALIASES_PATH):
+        return
+    try:
+        with open(_FORWARD_PROXY_ALIASES_PATH, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError as e:
+        log.debug("could not read %s: %s", _FORWARD_PROXY_ALIASES_PATH, e)
+        return
+
+    tool_binary = client.id.replace("_cli", "")
+    for match in _FORWARD_PROXY_ALIAS_RE.finditer(content):
+        if match.group(1) == tool_binary:
+            detected.proxy_configured = True
+            detected.proxy_config_location = _FORWARD_PROXY_ALIASES_PATH
+            log.debug("forward-proxy alias detected for %s", client.id)
             return
 
 
