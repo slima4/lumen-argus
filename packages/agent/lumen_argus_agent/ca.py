@@ -25,18 +25,15 @@ _ARGUS_DIR = os.path.expanduser("~/.lumen-argus")
 _CA_DIR = os.path.join(_ARGUS_DIR, "ca")
 _CA_CERT_PATH = os.path.join(_CA_DIR, "ca-cert.pem")
 _CA_KEY_PATH = os.path.join(_CA_DIR, "ca-key.pem")
-# Combined cert+key in one PEM — required by mitmproxy's confdir format.
-# mitmproxy expects a file named "mitmproxy-ca.pem" containing key+cert.
-_CA_COMBINED_PATH = os.path.join(_CA_DIR, "mitmproxy-ca.pem")
 
 # mitmproxy default CA location (used as fallback)
 _MITMPROXY_CA_DIR = os.path.expanduser("~/.mitmproxy")
 _MITMPROXY_CA_CERT = os.path.join(_MITMPROXY_CA_DIR, "mitmproxy-ca-cert.pem")
 
-# CA certificate parameters
+# CA Common Name — used by _is_trusted_macos() to look up the cert in the
+# System keychain. Must stay in sync with whatever CN mitmproxy stamps
+# onto the CA it generates inside ``_CA_DIR``.
 _CA_CN = "lumen-argus Forward Proxy CA"
-_CA_ORG = "lumen-argus"
-_CA_EXPIRY_DAYS = 3650  # ~10 years
 
 
 # ---------------------------------------------------------------------------
@@ -224,95 +221,6 @@ def _extract_cert_from_combined(combined_path: str, cert_path: str) -> None:
     with os.fdopen(fd, "w") as f:
         f.write(cert_pem)
     log.info("extracted public cert to %s", cert_path)
-
-
-# ---------------------------------------------------------------------------
-# CA generation (legacy — kept for standalone use without mitmproxy)
-# ---------------------------------------------------------------------------
-
-
-def _generate_ca() -> None:
-    """Generate a self-signed CA certificate and private key.
-
-    Uses the ``cryptography`` library (already installed as a mitmproxy
-    transitive dependency).
-    """
-    import datetime
-
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
-
-    # Generate RSA key
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-
-    # Build CA certificate
-    subject = issuer = x509.Name(
-        [
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, _CA_ORG),
-            x509.NameAttribute(NameOID.COMMON_NAME, _CA_CN),
-        ]
-    )
-
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(issuer)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now)
-        .not_valid_after(now + datetime.timedelta(days=_CA_EXPIRY_DAYS))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-        .add_extension(
-            x509.KeyUsage(
-                digital_signature=True,
-                key_cert_sign=True,
-                crl_sign=True,
-                content_commitment=False,
-                key_encipherment=False,
-                data_encipherment=False,
-                key_agreement=False,
-                encipher_only=False,
-                decipher_only=False,
-            ),
-            critical=True,
-        )
-        .add_extension(
-            x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-
-    # Write to disk
-    os.makedirs(_CA_DIR, mode=0o700, exist_ok=True)
-
-    # Write private key (restrictive permissions)
-    key_pem = key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.TraditionalOpenSSL,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-    fd = os.open(_CA_KEY_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(key_pem)
-
-    # Write certificate
-    cert_pem = cert.public_bytes(serialization.Encoding.PEM)
-    fd = os.open(_CA_CERT_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-    with os.fdopen(fd, "wb") as f:
-        f.write(cert_pem)
-
-    # Write combined cert+key PEM for mitmproxy confdir compatibility.
-    # mitmproxy expects key first, then cert, in a single PEM file.
-    fd = os.open(_CA_COMBINED_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(key_pem)
-        f.write(cert_pem)
-
-    log.info("CA certificate generated: %s", _CA_CERT_PATH)
 
 
 # ---------------------------------------------------------------------------

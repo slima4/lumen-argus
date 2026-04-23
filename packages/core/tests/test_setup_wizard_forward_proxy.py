@@ -79,15 +79,17 @@ class TestForwardProxyDispatch(unittest.TestCase):
         with redirect_stdout(buf), self.assertRaises(forward_proxy.ForwardProxyUnavailable) as ctx:
             setup_wizard._setup_forward_proxy(
                 self._target(),
-                "http://localhost:8080",
                 "",
                 non_interactive=True,
                 dry_run=True,
             )
         # Message must name the agent binary so the CLI surface forwards it.
         self.assertIn("lumen-argus-agent", str(ctx.exception))
-        # Human-readable pointer printed before the exception.
-        self.assertIn("lumen-argus-agent setup --client copilot_cli", buf.getvalue())
+        # Human-readable pointer printed before the exception. Uses the
+        # positional form that both lumen-argus and lumen-argus-agent
+        # argparse parsers actually accept (no --client flag exists).
+        self.assertIn("lumen-argus-agent setup copilot_cli", buf.getvalue())
+        self.assertNotIn("--client", buf.getvalue())
 
     def test_adapter_present_dispatches_ca_calls(self) -> None:
         adapter = _RecordingAdapter()
@@ -97,8 +99,7 @@ class TestForwardProxyDispatch(unittest.TestCase):
         with redirect_stdout(buf):
             changes = setup_wizard._setup_forward_proxy(
                 self._target(),
-                "http://localhost:8080",
-                "",
+                profile_path="",
                 non_interactive=True,
                 dry_run=True,
             )
@@ -125,8 +126,7 @@ class TestForwardProxyDispatch(unittest.TestCase):
         with redirect_stdout(buf):
             setup_wizard._setup_forward_proxy(
                 self._target(),
-                "http://localhost:8080",
-                "",
+                profile_path="",
                 non_interactive=True,
                 dry_run=False,
             )
