@@ -18,16 +18,33 @@ import json
 import logging
 import os
 import platform
-import re
 import shutil
-import tempfile
-from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
 from lumen_argus_core.detect import _SHELL_PROFILES, _strip_jsonc_comments, detect_installed_clients, load_jsonc
-from lumen_argus_core.env_template import ManagedBy, parse_header_managed_by, render_body
+from lumen_argus_core.env_template import ManagedBy
 from lumen_argus_core.forward_proxy import ALIASES_PATH as _ALIASES_PATH
 from lumen_argus_core.platform_env import clear_launchctl_env_vars
+from lumen_argus_core.setup import env_file as _env_file
+from lumen_argus_core.setup._models import SetupChange
+from lumen_argus_core.setup._paths import (
+    _SOURCE_BLOCK_BEGIN,
+    _SOURCE_BLOCK_END,
+    MANAGED_TAG,
+)
+from lumen_argus_core.setup.env_file import (
+    add_env_to_shell_profile,
+    read_env_file,
+    write_env_file,
+)
+from lumen_argus_core.setup.manifest import (
+    _atomic_write_json,
+    _backup_file,
+    _detect_shell_profile,
+    _save_manifest,
+    clear_manifest,
+    load_manifest,
+)
 from lumen_argus_core.time_utils import now_iso
 
 if TYPE_CHECKING:
@@ -35,453 +52,6 @@ if TYPE_CHECKING:
     from lumen_argus_core.forward_proxy import ForwardProxySetupAdapter
 
 log = logging.getLogger("argus.setup")
-
-# Tag added to managed lines for identification and undo
-MANAGED_TAG = "# lumen-argus:managed"
-
-# Source block markers in shell profiles
-_SOURCE_BLOCK_BEGIN = "# lumen-argus:begin"
-_SOURCE_BLOCK_END = "# lumen-argus:end"
-
-# Env file — the tray app toggles this
-_ARGUS_DIR = os.path.expanduser("~/.lumen-argus")
-_ENV_FILE = os.path.join(_ARGUS_DIR, "env")
-_ENV_LOCK = os.path.join(_ARGUS_DIR, ".env.lock")
-
-# Backup directory
-_SETUP_DIR = os.path.join(_ARGUS_DIR, "setup")
-_BACKUP_DIR = os.path.join(_SETUP_DIR, "backups")
-_MANIFEST_PATH = os.path.join(_SETUP_DIR, "manifest.json")
-
-
-# ---------------------------------------------------------------------------
-# Data model
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class SetupChange:
-    """Record of a single configuration change."""
-
-    timestamp: str
-    client_id: str
-    method: str  # "shell_profile" | "ide_settings" | "env_file"
-    file: str
-    detail: str  # what was added/changed
-    backup_path: str = ""
-
-
-# ---------------------------------------------------------------------------
-# Shell profile modification
-# ---------------------------------------------------------------------------
-
-
-def _detect_shell_profile() -> str:
-    """Detect the current user's primary shell profile file."""
-    # On Windows, use PowerShell profile
-    if platform.system() == "Windows":
-        from lumen_argus_core.detect import _get_powershell_profiles
-
-        ps_profiles = _get_powershell_profiles()
-        if ps_profiles:
-            # Prefer PowerShell 7 profile, fallback to Windows PowerShell 5.1
-            for p in ps_profiles:
-                if os.path.isfile(p):
-                    log.debug("detected PowerShell profile: %s", p)
-                    return p
-            # No existing profile — use PowerShell 7 path (will be created)
-            log.debug("using PowerShell 7 profile path: %s", ps_profiles[0])
-            return ps_profiles[0]
-
-    shell = os.path.basename(os.environ.get("SHELL", ""))
-    profiles = _SHELL_PROFILES.get(shell, _SHELL_PROFILES.get("bash", ("~/.bashrc",)))
-    profile = profiles[0] if profiles else "~/.bashrc"
-    expanded = os.path.expanduser(profile)
-    log.debug("detected shell: %s → profile: %s", shell or "unknown", profile)
-    return expanded
-
-
-def _backup_file(file_path: str) -> str:
-    """Create a timestamped backup of a file. Returns backup path."""
-    os.makedirs(_BACKUP_DIR, exist_ok=True)
-    basename = os.path.basename(file_path).replace(".", "_")
-    timestamp = now_iso().replace(":", "-").replace("T", "_")
-    backup_name = "%s.%s" % (basename, timestamp)
-    backup_path = os.path.join(_BACKUP_DIR, backup_name)
-    try:
-        shutil.copy2(file_path, backup_path)
-        log.info("backup created: %s → %s", file_path, backup_path)
-    except OSError as e:
-        log.error("backup failed for %s: %s", file_path, e, exc_info=True)
-        raise
-    return backup_path
-
-
-def _atomic_write_json(path: str, data: dict[str, object]) -> None:
-    """Write JSON to a file atomically via write-to-temp-then-rename."""
-    dir_name = os.path.dirname(path)
-    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-            f.write("\n")
-        os.replace(tmp_path, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
-def _save_manifest(changes: list[SetupChange]) -> None:
-    """Save setup changes manifest to disk."""
-    os.makedirs(_SETUP_DIR, exist_ok=True)
-    existing = []
-    if os.path.exists(_MANIFEST_PATH):
-        try:
-            with open(_MANIFEST_PATH, "r", encoding="utf-8") as f:
-                existing = json.load(f).get("changes", [])
-        except (json.JSONDecodeError, OSError) as e:
-            log.warning("could not read existing manifest: %s", e)
-
-    existing.extend(asdict(c) for c in changes)
-
-    try:
-        with open(_MANIFEST_PATH, "w", encoding="utf-8") as f:
-            json.dump({"changes": existing}, f, indent=2)
-        log.debug("manifest updated: %d total changes", len(existing))
-    except OSError as e:
-        log.error("could not write manifest: %s", e, exc_info=True)
-
-
-# ---------------------------------------------------------------------------
-# Source block in shell profile
-# ---------------------------------------------------------------------------
-
-
-def _has_source_block(profile_path: str) -> bool:
-    """Check if the shell profile already has the lumen-argus source block."""
-    if not os.path.isfile(profile_path):
-        return False
-    try:
-        with open(profile_path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
-        return _SOURCE_BLOCK_BEGIN in content
-    except OSError:
-        return False
-
-
-def _source_block_lines(profile_path: str) -> str:
-    """Generate the source block for a shell profile."""
-    if platform.system() == "Windows" and profile_path.endswith(".ps1"):
-        # TODO: write_env_file() produces Unix `export` syntax — needs a
-        # separate env.ps1 with `$env:` syntax for PowerShell support.
-        env_path = "$env:USERPROFILE\\.lumen-argus\\env.ps1"
-        return '%s\nif (Test-Path "%s") { . "%s" }\n%s\n' % (_SOURCE_BLOCK_BEGIN, env_path, env_path, _SOURCE_BLOCK_END)
-    return '%s\n[ -f "$HOME/.lumen-argus/env" ] && source "$HOME/.lumen-argus/env"\n%s\n' % (
-        _SOURCE_BLOCK_BEGIN,
-        _SOURCE_BLOCK_END,
-    )
-
-
-def install_source_block(profile_path: str = "", dry_run: bool = False) -> SetupChange | None:
-    """Install the source block in a shell profile.
-
-    The source block is idempotent — written once, never touched again.
-    Returns SetupChange if installed, None if already present.
-    """
-    if not profile_path:
-        profile_path = _detect_shell_profile()
-
-    if _has_source_block(profile_path):
-        log.debug("source block already present in %s", profile_path)
-        return None
-
-    block = _source_block_lines(profile_path)
-
-    if dry_run:
-        log.info("[dry-run] would add source block to %s", profile_path)
-        return SetupChange(
-            timestamp=now_iso(),
-            client_id="__source_block__",
-            method="shell_profile",
-            file=profile_path,
-            detail=block.strip(),
-        )
-
-    # Backup before modification
-    backup_path = ""
-    if os.path.isfile(profile_path):
-        try:
-            backup_path = _backup_file(profile_path)
-        except OSError as e:
-            log.error("cannot proceed without backup for %s: %s", profile_path, e)
-            return None
-
-    try:
-        with open(profile_path, "a", encoding="utf-8") as f:
-            f.write("\n%s" % block)
-        log.info("source block installed in %s", profile_path)
-    except OSError as e:
-        log.error("could not write to %s: %s", profile_path, e, exc_info=True)
-        return None
-
-    return SetupChange(
-        timestamp=now_iso(),
-        client_id="__source_block__",
-        method="shell_profile",
-        file=profile_path,
-        detail=block.strip(),
-        backup_path=backup_path,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Env file operations (~/.lumen-argus/env)
-# ---------------------------------------------------------------------------
-
-
-class _env_file_lock:
-    """Context manager for exclusive access to the env file.
-
-    Uses ``fcntl.flock`` on Unix to prevent concurrent read-modify-write
-    races between the CLI and tray app.  No-op on Windows (the env file
-    is Unix-only anyway).
-    """
-
-    def __init__(self) -> None:
-        self._fd: int | None = None
-
-    def __enter__(self) -> "_env_file_lock":
-        os.makedirs(_ARGUS_DIR, mode=0o700, exist_ok=True)
-        try:
-            import fcntl
-
-            self._fd = os.open(_ENV_LOCK, os.O_CREAT | os.O_RDWR, 0o600)
-            fcntl.flock(self._fd, fcntl.LOCK_EX)
-        except (ImportError, OSError):
-            # Windows or lock failure — proceed without lock
-            self._fd = None
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        if self._fd is not None:
-            try:
-                import fcntl
-
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
-            except (ImportError, OSError):
-                pass
-            os.close(self._fd)
-            self._fd = None
-
-
-# Parser for managed env file lines. Accepts two shapes:
-#   export VAR=value  # lumen-argus:managed client=<id>   (canonical)
-#   export VAR='value'  # lumen-argus:managed             (orphan — no client tag)
-#
-# Orphans surface here because third-party writers (e.g. an older tray app
-# build) can append to ~/.lumen-argus/env directly without going through
-# add_env_to_env_file(). We still need to see them so protection_status()
-# reports the truth and add_env_to_env_file() can evict them when a
-# canonical write targets the same variable.
-#
-# ``read_env_file`` strips each line before matching, so the regex anchors
-# against the already-trimmed export line — indented tray-body exports
-# (rendered with two leading spaces inside the ``if ...; then`` block)
-# arrive here stripped and match the same pattern as column-zero CLI-body
-# exports.
-_MANAGED_LINE_RE = re.compile(r"^export\s+(\w+)=(\S+)\s+#\s+lumen-argus:managed(?:\s+client=(\S+))?\s*$")
-
-
-def read_env_file() -> list[tuple[str, str, str]]:
-    """Read the env file and return list of (var_name, value, client_id) tuples.
-
-    Values with surrounding single or double quotes are unquoted. Lines
-    written without a ``client=<id>`` suffix surface with an empty client_id,
-    marking them as orphans that no known client owns.
-    """
-    if not os.path.isfile(_ENV_FILE):
-        return []
-    entries: list[tuple[str, str, str]] = []
-    try:
-        with open(_ENV_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                m = _MANAGED_LINE_RE.match(line)
-                if not m:
-                    continue
-                var_name = m.group(1)
-                value = _strip_quotes(m.group(2))
-                client_id = m.group(3) or ""
-                entries.append((var_name, value, client_id))
-    except OSError as e:
-        log.warning("could not read env file: %s", e)
-    return entries
-
-
-def _strip_quotes(value: str) -> str:
-    """Strip a single matching pair of surrounding single or double quotes."""
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-        return value[1:-1]
-    return value
-
-
-def _read_managed_by_from_disk() -> ManagedBy | None:
-    """Return the mode recorded in the current env file, if any.
-
-    The first line carries the header — see ``env_template``.  We only
-    need that byte-range, so we stop reading after one line.
-    """
-    if not os.path.isfile(_ENV_FILE):
-        return None
-    try:
-        with open(_ENV_FILE, "r", encoding="utf-8") as f:
-            return parse_header_managed_by(f.readline())
-    except OSError as e:
-        log.warning("could not read env file header: %s", e)
-        return None
-
-
-def write_env_file(
-    entries: list[tuple[str, str, str]],
-    *,
-    managed_by: ManagedBy | None = None,
-) -> None:
-    """Write env vars to ~/.lumen-argus/env atomically.
-
-    Uses write-to-temp-then-rename to prevent corruption if the process
-    is killed mid-write (SIGKILL, OOM).  File gets 0o600 permissions
-    because it is sourced by the shell — a writable env file is an
-    arbitrary code execution vector.
-
-    Body format is owned by ``env_template.render_body``.  Mode is
-    "sticky": if the caller does not specify ``managed_by``, the mode
-    recorded on the existing file is preserved so that low-level
-    mutators (``add_env_to_env_file``) never silently strip the
-    liveness guard from an enrolled machine's env file.  A fresh
-    machine with no existing file falls back to ``ManagedBy.CLI``.
-
-    Args:
-        entries: list of (var_name, value, client_id) tuples.
-        managed_by: explicit mode override.  ``None`` means "keep the
-            mode already recorded on disk".
-    """
-    import tempfile
-
-    if managed_by is None:
-        managed_by = _read_managed_by_from_disk() or ManagedBy.CLI
-
-    os.makedirs(_ARGUS_DIR, mode=0o700, exist_ok=True)
-    body = render_body(entries, MANAGED_TAG, managed_by=managed_by)
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=_ARGUS_DIR, prefix=".env.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(body)
-            os.chmod(tmp_path, 0o600)
-            os.rename(tmp_path, _ENV_FILE)
-        except BaseException:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
-        log.info("env file written (%s): %d var(s)", managed_by.value, len(entries))
-    except OSError as e:
-        log.error("could not write env file (%s): %s", managed_by.value, e, exc_info=True)
-
-
-def add_env_to_env_file(
-    var_name: str,
-    value: str,
-    client_id: str,
-    dry_run: bool = False,
-) -> SetupChange | None:
-    """Add an env var to ~/.lumen-argus/env.
-
-    Uses file locking to prevent concurrent read-modify-write races
-    between CLI and tray app.
-
-    Returns SetupChange if added, None if already present.
-    """
-    export_line = "export %s=%s  %s client=%s" % (var_name, value, MANAGED_TAG, client_id)
-
-    if dry_run:
-        existing = read_env_file()
-        for ev, val, cid in existing:
-            if ev == var_name and val == value and cid == client_id:
-                return None
-        log.info("[dry-run] would add to env file: %s", export_line)
-        return SetupChange(
-            timestamp=now_iso(),
-            client_id=client_id,
-            method="env_file",
-            file=_ENV_FILE,
-            detail=export_line,
-        )
-
-    with _env_file_lock():
-        existing = read_env_file()
-
-        # Check if already set with same value
-        for ev, val, cid in existing:
-            if ev == var_name and val == value and cid == client_id:
-                log.info("already in env file: %s=%s (client=%s)", var_name, value, client_id)
-                return None
-
-        # Remove any existing entry for this var+client before adding.
-        # Also evict orphan entries (cid == "") for the same var — those are
-        # unattributable lines left behind by a non-conformant writer. Letting
-        # them coexist produces duplicate `export VAR=...` lines where only
-        # the last one wins in the shell, masking whichever value we just
-        # set. For the COPILOT_PROVIDER_BASE_URL incident, this is what would
-        # have auto-healed the orphan on the next setup.
-        filtered = [
-            (ev, val, cid) for ev, val, cid in existing if not (ev == var_name and (cid == client_id or cid == ""))
-        ]
-        evicted_orphans = sum(1 for ev, _, cid in existing if ev == var_name and cid == "")
-        if evicted_orphans:
-            log.info(
-                "evicted %d orphan env file entr%s for %s (unowned, non-conformant writer)",
-                evicted_orphans,
-                "y" if evicted_orphans == 1 else "ies",
-                var_name,
-            )
-        filtered.append((var_name, value, client_id))
-        write_env_file(filtered)
-
-    return SetupChange(
-        timestamp=now_iso(),
-        client_id=client_id,
-        method="env_file",
-        file=_ENV_FILE,
-        detail=export_line,
-    )
-
-
-def add_env_to_shell_profile(
-    var_name: str,
-    value: str,
-    client_id: str,
-    profile_path: str = "",
-    dry_run: bool = False,
-) -> SetupChange | None:
-    """Add an env var for a client — writes to env file and ensures source block.
-
-    Returns SetupChange if successful, None if already present.
-    """
-    if not profile_path:
-        profile_path = _detect_shell_profile()
-
-    # Ensure source block exists in the shell profile
-    install_source_block(profile_path, dry_run=dry_run)
-
-    # Write the env var to ~/.lumen-argus/env
-    return add_env_to_env_file(var_name, value, client_id, dry_run=dry_run)
 
 
 # ---------------------------------------------------------------------------
@@ -532,7 +102,7 @@ def enable_protection(
     log.info("protection enabled (%s): %d env var(s) for %s", managed_by.value, len(entries), proxy_url)
     return {
         "enabled": True,
-        "env_file": _ENV_FILE,
+        "env_file": _env_file._ENV_FILE,
         "env_vars_set": len(entries),
         "managed_by": managed_by.value,
     }
@@ -580,7 +150,7 @@ def disable_protection() -> dict[str, object]:
 
     return {
         "enabled": False,
-        "env_file": _ENV_FILE,
+        "env_file": _env_file._ENV_FILE,
         "env_vars_set": 0,
         "managed_by": None,
         "launchctl_vars_cleared": cleared,
@@ -598,10 +168,10 @@ def protection_status() -> dict[str, object]:
     """
     entries = read_env_file()
     enabled = len(entries) > 0
-    mode = _read_managed_by_from_disk() if enabled else None
+    mode = _env_file._read_managed_by_from_disk() if enabled else None
     return {
         "enabled": enabled,
-        "env_file": _ENV_FILE,
+        "env_file": _env_file._ENV_FILE,
         "env_vars_set": len(entries),
         "managed_by": mode.value if mode is not None else None,
     }
@@ -1076,36 +646,34 @@ def undo_setup() -> int:
             log.error("could not clean %s: %s", profile, e, exc_info=True)
 
     # Strategy 2: Truncate the env file
-    if os.path.isfile(_ENV_FILE):
+    env_file_path = _env_file._ENV_FILE
+    if os.path.isfile(env_file_path):
         try:
-            with open(_ENV_FILE, "r", encoding="utf-8") as f:
+            with open(env_file_path, "r", encoding="utf-8") as f:
                 content = f.read().strip()
             if content:
-                with open(_ENV_FILE, "w", encoding="utf-8") as f:
+                with open(env_file_path, "w", encoding="utf-8") as f:
                     f.write("")
-                log.info("env file cleared: %s", _ENV_FILE)
+                log.info("env file cleared: %s", env_file_path)
                 reverted += 1
         except OSError as e:
             log.error("could not clear env file: %s", e, exc_info=True)
 
     # Strategy 3: Restore IDE settings from manifest backups
-    if os.path.exists(_MANIFEST_PATH):
-        try:
-            with open(_MANIFEST_PATH, "r", encoding="utf-8") as f:
-                manifest = json.load(f)
-            for change in manifest.get("changes", []):
-                if change.get("method") == "ide_settings" and change.get("backup_path"):
-                    backup = change["backup_path"]
-                    target = os.path.expanduser(change["file"])
-                    if os.path.exists(backup):
+    manifest_changes = load_manifest()
+    if manifest_changes:
+        for change in manifest_changes:
+            if change.get("method") == "ide_settings" and change.get("backup_path"):
+                backup = change["backup_path"]
+                target = os.path.expanduser(change["file"])
+                if os.path.exists(backup):
+                    try:
                         shutil.copy2(backup, target)
                         log.info("restored %s from backup", change["file"])
                         reverted += 1
-            # Clear manifest after undo
-            os.remove(_MANIFEST_PATH)
-            log.info("manifest cleared")
-        except (json.JSONDecodeError, OSError) as e:
-            log.error("could not process manifest for undo: %s", e, exc_info=True)
+                    except OSError as e:
+                        log.error("could not restore %s: %s", change["file"], e, exc_info=True)
+        clear_manifest()
 
     # Strategy 4: Clear forward proxy aliases file
     if os.path.isfile(_ALIASES_PATH):
@@ -1376,7 +944,7 @@ def _write_aliases(content: str, dry_run: bool) -> None:
     if dry_run:
         print("  [dry-run] Would write aliases to %s" % _ALIASES_PATH)
         return
-    os.makedirs(_ARGUS_DIR, mode=0o700, exist_ok=True)
+    os.makedirs(_env_file._ARGUS_DIR, mode=0o700, exist_ok=True)
     fd = os.open(_ALIASES_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(content)
@@ -1489,7 +1057,7 @@ def run_setup(
                 if change:
                     changes.append(change)
                     if not dry_run:
-                        print("  Added to %s" % _ENV_FILE)
+                        print("  Added to %s" % _env_file._ENV_FILE)
                 else:
                     print("  Skipped (already set)")
 

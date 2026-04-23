@@ -24,7 +24,8 @@ from lumen_argus_core.detect import detect_mcp_servers, load_jsonc
 from lumen_argus_core.detect_models import MCPServerEntry
 from lumen_argus_core.fleet_policies import FleetPolicies, load_fleet_policies
 from lumen_argus_core.mcp_configs import GLOBAL_MCP_SOURCES, PROJECT_MCP_SOURCES
-from lumen_argus_core.setup_wizard import SetupChange, _backup_file, _save_manifest
+from lumen_argus_core.setup._models import SetupChange
+from lumen_argus_core.setup.manifest import _backup_file, _save_manifest
 from lumen_argus_core.time_utils import now_iso
 
 log = logging.getLogger("argus.setup.mcp")

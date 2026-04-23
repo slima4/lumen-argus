@@ -7,16 +7,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from lumen_argus_core.setup._paths import _SOURCE_BLOCK_BEGIN, _SOURCE_BLOCK_END, MANAGED_TAG
+from lumen_argus_core.setup.source_block import install_source_block
 from lumen_argus_core.setup_wizard import (
-    _SOURCE_BLOCK_BEGIN,
-    _SOURCE_BLOCK_END,
-    MANAGED_TAG,
     add_env_to_env_file,
     add_env_to_shell_profile,
     disable_protection,
     enable_protection,
     install_shell_hook,
-    install_source_block,
     protection_status,
     read_env_file,
     undo_setup,
@@ -38,7 +36,7 @@ class TestSourceBlock(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_installs_source_block(self):
-        with patch("lumen_argus_core.setup_wizard._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
+        with patch("lumen_argus_core.setup.manifest._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
             change = install_source_block(self.profile)
         self.assertIsNotNone(change)
         with open(self.profile) as f:
@@ -48,7 +46,7 @@ class TestSourceBlock(unittest.TestCase):
         self.assertIn(".lumen-argus/env", content)
 
     def test_idempotent(self):
-        with patch("lumen_argus_core.setup_wizard._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
+        with patch("lumen_argus_core.setup.manifest._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
             install_source_block(self.profile)
             change = install_source_block(self.profile)
         self.assertIsNone(change)
@@ -77,8 +75,8 @@ class TestEnvFile(unittest.TestCase):
             ("ANTHROPIC_BASE_URL", "http://localhost:8080", "claude_code"),
         ]
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             write_env_file(entries)
             result = read_env_file()
@@ -89,19 +87,19 @@ class TestEnvFile(unittest.TestCase):
     def test_read_empty_file(self):
         with open(self.env_file, "w") as f:
             f.write("")
-        with patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file):
+        with patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file):
             result = read_env_file()
         self.assertEqual(result, [])
 
     def test_read_nonexistent_file(self):
-        with patch("lumen_argus_core.setup_wizard._ENV_FILE", os.path.join(self.tmpdir, "nonexistent")):
+        with patch("lumen_argus_core.setup.env_file._ENV_FILE", os.path.join(self.tmpdir, "nonexistent")):
             result = read_env_file()
         self.assertEqual(result, [])
 
     def test_add_env_to_env_file(self):
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             change = add_env_to_env_file("OPENAI_BASE_URL", "http://localhost:8080", "aider")
         self.assertIsNotNone(change)
@@ -114,8 +112,8 @@ class TestEnvFile(unittest.TestCase):
 
     def test_add_env_skips_duplicate(self):
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             add_env_to_env_file("OPENAI_BASE_URL", "http://localhost:8080", "aider")
             change = add_env_to_env_file("OPENAI_BASE_URL", "http://localhost:8080", "aider")
@@ -124,8 +122,8 @@ class TestEnvFile(unittest.TestCase):
     def test_add_env_replaces_same_var_client(self):
         """Updating value for same var+client should replace, not duplicate."""
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             add_env_to_env_file("OPENAI_BASE_URL", "http://localhost:8080", "aider")
             add_env_to_env_file("OPENAI_BASE_URL", "http://localhost:9090", "aider")
@@ -136,8 +134,8 @@ class TestEnvFile(unittest.TestCase):
 
     def test_add_env_dry_run(self):
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             change = add_env_to_env_file("OPENAI_BASE_URL", "http://localhost:8080", "aider", dry_run=True)
         self.assertIsNotNone(change)
@@ -146,8 +144,8 @@ class TestEnvFile(unittest.TestCase):
     def test_env_file_tagged_lines(self):
         """Env file lines should have managed tags with client IDs."""
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             add_env_to_env_file("OPENAI_BASE_URL", "http://localhost:8080", "aider")
             add_env_to_env_file("ANTHROPIC_BASE_URL", "http://localhost:8080", "claude_code")
@@ -170,20 +168,20 @@ class TestEnvFile(unittest.TestCase):
     def test_read_env_file_parses_orphan_without_client_tag(self):
         """Lines with `# lumen-argus:managed` but no `client=<id>` are parsed as orphans."""
         self._write_raw("export OPENAI_BASE_URL=http://127.0.0.1:8070  # lumen-argus:managed\n")
-        with patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file):
+        with patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file):
             result = read_env_file()
         self.assertEqual(result, [("OPENAI_BASE_URL", "http://127.0.0.1:8070", "")])
 
     def test_read_env_file_strips_single_quotes(self):
         """Orphans often come with surrounding single quotes; value must be unquoted."""
         self._write_raw("export ANTHROPIC_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n")
-        with patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file):
+        with patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file):
             result = read_env_file()
         self.assertEqual(result, [("ANTHROPIC_BASE_URL", "http://127.0.0.1:8070", "")])
 
     def test_read_env_file_strips_double_quotes(self):
         self._write_raw('export GEMINI_BASE_URL="http://127.0.0.1:8070"  # lumen-argus:managed\n')
-        with patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file):
+        with patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file):
             result = read_env_file()
         self.assertEqual(result, [("GEMINI_BASE_URL", "http://127.0.0.1:8070", "")])
 
@@ -193,7 +191,7 @@ class TestEnvFile(unittest.TestCase):
             "export OPENAI_BASE_URL=http://localhost:8080  # lumen-argus:managed client=aider\n"
             "export COPILOT_PROVIDER_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n"
         )
-        with patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file):
+        with patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file):
             result = read_env_file()
         self.assertEqual(len(result), 2)
         self.assertIn(("OPENAI_BASE_URL", "http://localhost:8080", "aider"), result)
@@ -206,15 +204,15 @@ class TestEnvFile(unittest.TestCase):
             "export BAZ=qux  # some other comment\n"
             "export OPENAI_BASE_URL=http://localhost:8080  # lumen-argus:managed client=aider\n"
         )
-        with patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file):
+        with patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file):
             result = read_env_file()
         self.assertEqual(result, [("OPENAI_BASE_URL", "http://localhost:8080", "aider")])
 
     def test_write_env_file_preserves_orphan_format_round_trip(self):
         """Round-trip of an orphan must not gain a bogus empty `client=` suffix."""
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             write_env_file([("CUSTOM_VAR", "http://example.com", "")])
             with open(self.env_file) as f:
@@ -229,8 +227,8 @@ class TestEnvFile(unittest.TestCase):
         """Writing a canonical entry must remove any orphan for the same var."""
         self._write_raw("export ANTHROPIC_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n")
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             change = add_env_to_env_file("ANTHROPIC_BASE_URL", "http://localhost:8080", "claude_code")
             result = read_env_file()
@@ -246,8 +244,8 @@ class TestEnvFile(unittest.TestCase):
         """Orphans for unrelated vars must not be touched by a canonical write."""
         self._write_raw("export COPILOT_PROVIDER_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n")
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             add_env_to_env_file("ANTHROPIC_BASE_URL", "http://localhost:8080", "claude_code")
             result = read_env_file()
@@ -268,8 +266,8 @@ class TestEnvFile(unittest.TestCase):
             "export ANTHROPIC_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n"
         )
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             add_env_to_env_file("ANTHROPIC_BASE_URL", "http://localhost:8080", "aider")
             result = read_env_file()
@@ -293,9 +291,9 @@ class TestAddEnvToShellProfile(unittest.TestCase):
 
     def test_adds_source_block_and_env_var(self):
         with (
-            patch("lumen_argus_core.setup_wizard._BACKUP_DIR", os.path.join(self.tmpdir, "backups")),
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.manifest._BACKUP_DIR", os.path.join(self.tmpdir, "backups")),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             change = add_env_to_shell_profile("OPENAI_BASE_URL", "http://localhost:8080", "aider", self.profile)
         self.assertIsNotNone(change)
@@ -310,9 +308,9 @@ class TestAddEnvToShellProfile(unittest.TestCase):
 
     def test_skips_if_already_set(self):
         with (
-            patch("lumen_argus_core.setup_wizard._BACKUP_DIR", os.path.join(self.tmpdir, "backups")),
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.manifest._BACKUP_DIR", os.path.join(self.tmpdir, "backups")),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             add_env_to_shell_profile("OPENAI_BASE_URL", "http://localhost:8080", "aider", self.profile)
             change = add_env_to_shell_profile("OPENAI_BASE_URL", "http://localhost:8080", "aider", self.profile)
@@ -320,8 +318,8 @@ class TestAddEnvToShellProfile(unittest.TestCase):
 
     def test_dry_run(self):
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             change = add_env_to_shell_profile(
                 "OPENAI_BASE_URL", "http://localhost:8080", "aider", self.profile, dry_run=True
@@ -353,8 +351,8 @@ class TestProtection(unittest.TestCase):
 
     def test_enable_writes_all_env_vars(self):
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             result = enable_protection("http://localhost:8080")
         self.assertTrue(result["enabled"])
@@ -370,8 +368,8 @@ class TestProtection(unittest.TestCase):
         safe default for anyone running the binary from a terminal.
         """
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             result = enable_protection("http://localhost:8080")
             with open(self.env_file) as f:
@@ -387,8 +385,8 @@ class TestProtection(unittest.TestCase):
         from lumen_argus_core.env_template import ManagedBy
 
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             result = enable_protection("http://localhost:8080", managed_by=ManagedBy.TRAY)
             with open(self.env_file) as f:
@@ -411,8 +409,8 @@ class TestProtection(unittest.TestCase):
         from lumen_argus_core.setup_wizard import add_env_to_env_file, write_env_file
 
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             # Seed the file in tray mode (as an enrollment flow would).
             write_env_file(
@@ -434,8 +432,8 @@ class TestProtection(unittest.TestCase):
         from lumen_argus_core.setup_wizard import write_env_file
 
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             write_env_file([("ANTHROPIC_BASE_URL", "http://localhost:8080", "claude_code")])
             with open(self.env_file) as f:
@@ -452,8 +450,8 @@ class TestProtection(unittest.TestCase):
         from lumen_argus_core.env_template import ManagedBy
 
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             enable_protection("http://localhost:8080", managed_by=ManagedBy.TRAY)
             result = protection_status()
@@ -462,8 +460,8 @@ class TestProtection(unittest.TestCase):
 
     def test_status_managed_by_is_none_when_disabled(self):
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             result = protection_status()
         self.assertFalse(result["enabled"])
@@ -471,8 +469,8 @@ class TestProtection(unittest.TestCase):
 
     def test_disable_truncates_env_file(self):
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             enable_protection("http://localhost:8080")
             result = disable_protection()
@@ -498,8 +496,8 @@ class TestProtection(unittest.TestCase):
             return list(names)
 
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
             patch("lumen_argus_core.setup_wizard.clear_launchctl_env_vars", fake_clear),
         ):
             enable_protection("http://localhost:8080")
@@ -525,8 +523,8 @@ class TestProtection(unittest.TestCase):
             return list(names)
 
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
             patch("lumen_argus_core.setup_wizard.clear_launchctl_env_vars", fake_clear),
         ):
             result = disable_protection()
@@ -536,8 +534,8 @@ class TestProtection(unittest.TestCase):
 
     def test_status_enabled(self):
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             enable_protection("http://localhost:8080")
             result = protection_status()
@@ -546,8 +544,8 @@ class TestProtection(unittest.TestCase):
 
     def test_status_disabled(self):
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             result = protection_status()
         self.assertFalse(result["enabled"])
@@ -555,8 +553,8 @@ class TestProtection(unittest.TestCase):
 
     def test_enable_disable_cycle(self):
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             enable_protection()
             self.assertTrue(protection_status()["enabled"])
@@ -580,8 +578,8 @@ class TestProtection(unittest.TestCase):
                 "export OPENAI_BASE_URL='http://127.0.0.1:8070'  # lumen-argus:managed\n"
             )
         with (
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
-            patch("lumen_argus_core.setup_wizard._ARGUS_DIR", self.tmpdir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.env_file._ARGUS_DIR", self.tmpdir),
         ):
             result = protection_status()
         self.assertTrue(result["enabled"])
@@ -599,7 +597,7 @@ class TestUpdateIdeSettings(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_adds_key(self):
-        with patch("lumen_argus_core.setup_wizard._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
+        with patch("lumen_argus_core.setup.manifest._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
             change = update_ide_settings(self.settings_file, "http.proxy", "http://localhost:8080", "copilot")
         self.assertIsNotNone(change)
         with open(self.settings_file) as f:
@@ -623,7 +621,7 @@ class TestUpdateIdeSettings(unittest.TestCase):
     def test_handles_jsonc_comments(self):
         with open(self.settings_file, "w") as f:
             f.write('// VS Code settings\n{"editor.fontSize": 14}\n')
-        with patch("lumen_argus_core.setup_wizard._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
+        with patch("lumen_argus_core.setup.manifest._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
             change = update_ide_settings(self.settings_file, "http.proxy", "http://localhost:8080", "copilot")
         self.assertIsNotNone(change)
 
@@ -655,9 +653,9 @@ class TestUndoSetup(unittest.TestCase):
         backup_dir = os.path.join(self.tmpdir, "backups")
         with (
             patch("lumen_argus_core.setup_wizard._SHELL_PROFILES", mock_profiles),
-            patch("lumen_argus_core.setup_wizard._MANIFEST_PATH", manifest),
-            patch("lumen_argus_core.setup_wizard._BACKUP_DIR", backup_dir),
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.manifest._MANIFEST_PATH", manifest),
+            patch("lumen_argus_core.setup.manifest._BACKUP_DIR", backup_dir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
         ):
             reverted = undo_setup()
 
@@ -681,9 +679,9 @@ class TestUndoSetup(unittest.TestCase):
         backup_dir = os.path.join(self.tmpdir, "backups")
         with (
             patch("lumen_argus_core.setup_wizard._SHELL_PROFILES", mock_profiles),
-            patch("lumen_argus_core.setup_wizard._MANIFEST_PATH", manifest),
-            patch("lumen_argus_core.setup_wizard._BACKUP_DIR", backup_dir),
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.manifest._MANIFEST_PATH", manifest),
+            patch("lumen_argus_core.setup.manifest._BACKUP_DIR", backup_dir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
         ):
             reverted = undo_setup()
 
@@ -703,9 +701,9 @@ class TestUndoSetup(unittest.TestCase):
         backup_dir = os.path.join(self.tmpdir, "backups")
         with (
             patch("lumen_argus_core.setup_wizard._SHELL_PROFILES", mock_profiles),
-            patch("lumen_argus_core.setup_wizard._MANIFEST_PATH", manifest),
-            patch("lumen_argus_core.setup_wizard._BACKUP_DIR", backup_dir),
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", self.env_file),
+            patch("lumen_argus_core.setup.manifest._MANIFEST_PATH", manifest),
+            patch("lumen_argus_core.setup.manifest._BACKUP_DIR", backup_dir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", self.env_file),
         ):
             reverted = undo_setup()
 
@@ -728,7 +726,7 @@ class TestInstallShellHook(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_installs_hook(self):
-        with patch("lumen_argus_core.setup_wizard._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
+        with patch("lumen_argus_core.setup.manifest._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
             change = install_shell_hook(self.profile)
         self.assertIsNotNone(change)
         with open(self.profile) as f:
@@ -751,7 +749,7 @@ class TestInstallShellHook(unittest.TestCase):
 
     def test_undo_removes_hook(self):
         """Hook lines should be removed by undo_setup since they contain MANAGED_TAG."""
-        with patch("lumen_argus_core.setup_wizard._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
+        with patch("lumen_argus_core.setup.manifest._BACKUP_DIR", os.path.join(self.tmpdir, "backups")):
             install_shell_hook(self.profile)
 
         mock_profiles = {"zsh": (self.profile,)}
@@ -760,9 +758,9 @@ class TestInstallShellHook(unittest.TestCase):
         env_file = os.path.join(self.tmpdir, "env")
         with (
             patch("lumen_argus_core.setup_wizard._SHELL_PROFILES", mock_profiles),
-            patch("lumen_argus_core.setup_wizard._MANIFEST_PATH", manifest),
-            patch("lumen_argus_core.setup_wizard._BACKUP_DIR", backup_dir),
-            patch("lumen_argus_core.setup_wizard._ENV_FILE", env_file),
+            patch("lumen_argus_core.setup.manifest._MANIFEST_PATH", manifest),
+            patch("lumen_argus_core.setup.manifest._BACKUP_DIR", backup_dir),
+            patch("lumen_argus_core.setup.env_file._ENV_FILE", env_file),
         ):
             reverted = undo_setup()
         self.assertGreater(reverted, 0)
