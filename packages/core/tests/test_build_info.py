@@ -7,6 +7,8 @@ import importlib
 import sys
 import types
 import unittest
+from typing import ClassVar
+from unittest import mock
 
 from lumen_argus_core import build_info as bi
 
@@ -35,13 +37,30 @@ class TestComputeBuildId(unittest.TestCase):
 
 
 class TestGetBuildInfoFallback(unittest.TestCase):
-    """When _build_info is absent (dev runs) the helper falls back cleanly."""
+    """When _build_info is absent (dev runs) the helper falls back cleanly.
+
+    The real ``_build_info`` modules are generated at PyInstaller build time
+    and gitignored, but developers who have ever run a local build have them
+    left on disk — we cannot rely on ``sys.modules.pop`` alone because
+    ``importlib.import_module`` will re-import from the filesystem. Re-point
+    the service→module map at names that cannot resolve, so the ImportError
+    branch runs deterministically whatever the local state.
+    """
+
+    _STUB_MODULE_MAP: ClassVar[dict[str, str]] = {
+        "lumen-argus": "lumen_argus._build_info_missing_for_test",
+        "lumen-argus-agent": "lumen_argus_agent._build_info_missing_for_test",
+    }
 
     def setUp(self):
         bi.compute_build_id.cache_clear()
-        # Ensure no stale _build_info modules linger from other tests.
-        for mod in ("lumen_argus._build_info", "lumen_argus_agent._build_info"):
+        self._module_patch = mock.patch.object(bi, "_SERVICE_MODULE", self._STUB_MODULE_MAP)
+        self._module_patch.start()
+        for mod in self._STUB_MODULE_MAP.values():
             sys.modules.pop(mod, None)
+
+    def tearDown(self):
+        self._module_patch.stop()
 
     def test_proxy_fallback(self):
         info = bi.get_build_info("lumen-argus", "9.9.9")
@@ -57,6 +76,8 @@ class TestGetBuildInfoFallback(unittest.TestCase):
         self.assertEqual(info["version"], "0.1.0")
 
     def test_unknown_service_fallback(self):
+        # Services not in _SERVICE_MODULE skip the import attempt entirely
+        # and hit the fallback directly.
         info = bi.get_build_info("something-else", "1.0.0")
         self.assertEqual(info["service"], "something-else")
         self.assertEqual(info["version"], "1.0.0")
