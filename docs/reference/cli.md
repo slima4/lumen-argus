@@ -117,7 +117,7 @@ lumen-argus engine --port 8090 --dashboard-port 8082
 Toggle proxy routing on/off. Used by the tray app for the "Enable/Disable Protection" toggle.
 
 ```bash
-lumen-argus protection <enable|disable|status> [OPTIONS]
+lumen-argus-agent protection <enable|disable|status> [OPTIONS]
 ```
 
 | Arg/Flag | Type | Description |
@@ -316,7 +316,7 @@ When running in CI/CD or container environments, `detect` automatically identifi
 Configure detected AI tools to route through the proxy.
 
 ```bash
-lumen-argus setup [CLIENT] [OPTIONS]
+lumen-argus-agent setup [CLIENT] [OPTIONS]
 ```
 
 ### Arguments
@@ -341,44 +341,44 @@ lumen-argus setup [CLIENT] [OPTIONS]
 
 ```bash
 # Interactive setup wizard
-lumen-argus setup
+lumen-argus-agent setup
 
 # Configure specific tool
-lumen-argus setup aider
+lumen-argus-agent setup aider
 
 # Forward proxy setup for Copilot CLI (step-by-step: CA, alias, shell profile).
 # CA generation requires mitmproxy, which lives in the agent package — run
 # this command via the agent CLI, not the proxy CLI. Invoking it via
-# `lumen-argus setup copilot_cli` from a proxy-only install emits a clean
+# `lumen-argus-agent setup copilot_cli` from a proxy-only install emits a clean
 # pointer to `lumen-argus-agent setup copilot_cli`.
 lumen-argus-agent setup copilot_cli
 
 # Preview changes
-lumen-argus setup --dry-run
+lumen-argus-agent setup --dry-run
 
 # Auto-configure without prompts
-lumen-argus setup --non-interactive
+lumen-argus-agent setup --non-interactive
 
 # Undo all changes
-lumen-argus setup --undo
+lumen-argus-agent setup --undo
 
 # Wrap MCP servers through scanning proxy (interactive)
-lumen-argus setup --mcp
+lumen-argus-agent setup --mcp
 
 # Wrap all MCP servers without prompting
-lumen-argus setup --mcp --non-interactive
+lumen-argus-agent setup --mcp --non-interactive
 
 # Wrap a specific MCP server
-lumen-argus setup --mcp --server filesystem --source claude_desktop
+lumen-argus-agent setup --mcp --server filesystem --source claude_desktop
 
 # Preview MCP wrapping
-lumen-argus setup --mcp --dry-run
+lumen-argus-agent setup --mcp --dry-run
 
 # Unwrap all MCP servers
-lumen-argus setup --mcp --undo
+lumen-argus-agent setup --mcp --undo
 
 # Unwrap a specific MCP server
-lumen-argus setup --mcp --undo --server filesystem
+lumen-argus-agent setup --mcp --undo --server filesystem
 ```
 
 ### What setup modifies
@@ -395,7 +395,7 @@ lumen-argus setup --mcp --undo --server filesystem
 Background daemon that periodically scans for newly installed AI tools. Optionally auto-configures them.
 
 ```bash
-lumen-argus watch [OPTIONS]
+lumen-argus-agent watch [OPTIONS]
 ```
 
 ### Flags
@@ -413,16 +413,16 @@ lumen-argus watch [OPTIONS]
 
 ```bash
 # Run foreground watch loop
-lumen-argus watch
+lumen-argus-agent watch
 
 # Install as system service with auto-configure
-lumen-argus watch --install --auto-configure
+lumen-argus-agent watch --install --auto-configure
 
 # Check status
-lumen-argus watch --status
+lumen-argus-agent watch --status
 
 # Remove service
-lumen-argus watch --uninstall
+lumen-argus-agent watch --uninstall
 ```
 
 ---

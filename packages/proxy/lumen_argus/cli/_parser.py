@@ -33,9 +33,6 @@ def build_parser() -> tuple[argparse.ArgumentParser, argparse._SubParsersAction[
     _add_rules_parser(subparsers)
     _add_clients_parser(subparsers)
     _add_detect_parser(subparsers)
-    _add_setup_parser(subparsers)
-    _add_protection_parser(subparsers)
-    _add_watch_parser(subparsers)
     _add_mcp_parser(subparsers)
 
     return parser, subparsers
@@ -205,54 +202,6 @@ def _add_detect_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         help="Shell hook mode: print warning if unconfigured tools found, exit silently otherwise",
     )
     detect_parser.add_argument("--proxy-url", type=str, default="http://localhost:8080", help="Expected proxy URL")
-
-
-def _add_setup_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    setup_parser = subparsers.add_parser("setup", help="Configure AI tools to route through proxy")
-    setup_parser.add_argument("client", nargs="?", default="", help="Configure specific client (e.g., 'aider')")
-    setup_parser.add_argument("--proxy-url", type=str, default="http://localhost:8080", help="Proxy URL to configure")
-    setup_parser.add_argument("--undo", action="store_true", help="Remove all proxy configuration")
-    setup_parser.add_argument("--dry-run", action="store_true", help="Show changes without applying")
-    setup_parser.add_argument("--non-interactive", action="store_true", help="Auto-configure without prompting")
-    setup_parser.add_argument("--mcp", action="store_true", help="Wrap MCP servers through scanning proxy")
-    setup_parser.add_argument("--server", type=str, default="", help="MCP server name (with --mcp)")
-    setup_parser.add_argument(
-        "--source", type=str, default="", help="Source tool ID (with --mcp, e.g. 'claude_desktop')"
-    )
-
-
-def _add_protection_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    from lumen_argus_core.env_template import ManagedBy
-
-    protection_parser = subparsers.add_parser("protection", help="Toggle proxy routing (enable/disable/status)")
-    protection_parser.add_argument(
-        "action", choices=["enable", "disable", "status"], help="Enable, disable, or check protection status"
-    )
-    protection_parser.add_argument(
-        "--proxy-url", type=str, default="http://localhost:8080", help="Proxy URL (for enable)"
-    )
-    protection_parser.add_argument(
-        "--managed-by",
-        choices=[m.value for m in ManagedBy],
-        default=ManagedBy.CLI.value,
-        help=(
-            "Lifecycle owner of the env file (default: cli). "
-            "Pass 'tray' when invoked by the desktop app or the enrollment flow "
-            "to emit the self-healing liveness guard."
-        ),
-    )
-
-
-def _add_watch_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    watch_parser = subparsers.add_parser("watch", help="Background daemon to detect and configure new AI tools")
-    watch_parser.add_argument("--proxy-url", type=str, default="http://localhost:8080", help="Proxy URL to configure")
-    watch_parser.add_argument("--interval", type=int, default=300, help="Scan interval in seconds (default: 300)")
-    watch_parser.add_argument(
-        "--auto-configure", action="store_true", help="Auto-configure new tools without prompting"
-    )
-    watch_parser.add_argument("--install", action="store_true", help="Install as system service (launchd/systemd)")
-    watch_parser.add_argument("--uninstall", action="store_true", help="Remove system service")
-    watch_parser.add_argument("--status", action="store_true", help="Show watch daemon status")
 
 
 def _add_mcp_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

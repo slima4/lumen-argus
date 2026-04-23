@@ -94,7 +94,7 @@ lumen-argus sits between your AI tool and the provider, scanning every outbound 
 - **Minimal dependencies** — aiohttp, pyyaml, pyahocorasick, phonenumbers — everything else is stdlib
 - **Relay + engine split** — fault-isolated two-process architecture; relay forwards when engine crashes (fail-open/closed)
 - **Hot-reload** — update config via SIGHUP, no downtime
-- **Protection toggle** — `lumen-argus protection enable/disable/status`
+- **Protection toggle** — `lumen-argus-agent protection enable/disable/status`
 - **Docker ready** — single command, data persists across upgrades
 
 ### Developer Experience
@@ -139,10 +139,10 @@ lumen-argus detect
 lumen-argus detect --mcp
 
 # Auto-configure all detected tools (env vars, IDE settings, forward proxy)
-lumen-argus setup
+lumen-argus-agent setup
 
 # Wrap MCP servers through scanning proxy (stdio + HTTP/WS)
-lumen-argus setup --mcp
+lumen-argus-agent setup --mcp
 
 # Setup for tools that need forward proxy (Copilot CLI, Warp) is owned by
 # the agent CLI — CA generation requires the mitmproxy-backed agent package.
@@ -158,10 +158,10 @@ GEMINI_BASE_URL=http://localhost:8080 gemini
 
 ```bash
 # Run as a foreground watch daemon
-lumen-argus watch --auto-configure
+lumen-argus-agent watch --auto-configure
 
 # Or install as a system service (launchd/systemd)
-lumen-argus watch --install --auto-configure
+lumen-argus-agent watch --install --auto-configure
 ```
 
 **Shell hook** — warn about unconfigured tools on every new shell:
@@ -170,7 +170,7 @@ lumen-argus watch --install --auto-configure
 # Add to your .zshrc / .bashrc (runs in <100ms)
 eval "$(lumen-argus detect --check-quiet 2>/dev/null)"
 # Or install automatically:
-lumen-argus setup  # offers to install the hook
+lumen-argus-agent setup  # offers to install the hook
 ```
 
 **Agent relay** — local identity enrichment proxy (recommended for multi-agent setups):
@@ -208,9 +208,9 @@ lumen-argus relay --port 8080 --engine http://localhost:8090 --fail-mode open
 lumen-argus serve --engine-port 8090 --fail-mode open
 
 # Toggle protection on/off
-lumen-argus protection enable
-lumen-argus protection disable
-lumen-argus protection status
+lumen-argus-agent protection enable
+lumen-argus-agent protection disable
+lumen-argus-agent protection status
 ```
 
 **Docker:**

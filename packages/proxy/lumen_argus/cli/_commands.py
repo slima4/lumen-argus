@@ -84,49 +84,7 @@ def run_clients(args: argparse.Namespace) -> None:
             config_info = "Not supported"
         print("  %-20s %-5s %-18s %s" % (c["display_name"], c["category"], provider, config_info))
     print("\nRun 'lumen-argus detect' to scan for installed tools.")
-    print("Run 'lumen-argus setup' to auto-configure detected tools.")
-
-
-def run_setup(args: argparse.Namespace) -> None:
-    """Execute the 'setup' subcommand — configure tools to use proxy."""
-    if getattr(args, "mcp", False):
-        from lumen_argus_core.mcp_setup import dispatch_mcp_setup
-
-        dispatch_mcp_setup(args)
-        return
-
-    from lumen_argus_core.setup_wizard import run_setup, undo_setup
-
-    if args.undo:
-        reverted = undo_setup()
-        if reverted:
-            print("Reverted %d change(s). Proxy configuration removed." % reverted)
-        else:
-            print("Nothing to undo.")
-        return
-
-    run_setup(
-        proxy_url=args.proxy_url,
-        client_id=args.client,
-        non_interactive=args.non_interactive,
-        dry_run=args.dry_run,
-    )
-
-
-def run_protection(args: argparse.Namespace) -> None:
-    """Execute the 'protection' subcommand — toggle proxy routing."""
-    from lumen_argus_core.env_template import ManagedBy
-    from lumen_argus_core.setup_wizard import disable_protection, enable_protection, protection_status
-
-    if args.action == "enable":
-        result = enable_protection(proxy_url=args.proxy_url, managed_by=ManagedBy(args.managed_by))
-        print(json.dumps(result, indent=2))
-    elif args.action == "disable":
-        result = disable_protection()
-        print(json.dumps(result, indent=2))
-    elif args.action == "status":
-        result = protection_status()
-        print(json.dumps(result, indent=2))
+    print("Run 'lumen-argus-agent setup' to auto-configure detected tools.")
 
 
 def run_mcp(args: argparse.Namespace, extensions: ExtensionRegistry | None = None) -> None:

@@ -82,7 +82,7 @@ class MCPDetectionReport:
 # ---------------------------------------------------------------------------
 
 
-def format_mcp_table(report: MCPDetectionReport, setup_command: str = "lumen-argus setup --mcp") -> str:
+def format_mcp_table(report: MCPDetectionReport, setup_command: str = "lumen-argus-agent setup --mcp") -> str:
     """Format MCP detection results as a human-readable table.
 
     Shared by proxy and agent CLIs to avoid duplication.

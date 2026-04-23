@@ -9,16 +9,46 @@ import argparse
 import logging
 import sys
 
-from lumen_argus.cli._commands import run_clients, run_logs, run_mcp, run_protection, run_scan, run_setup
+from lumen_argus.cli._commands import run_clients, run_logs, run_mcp, run_scan
 from lumen_argus.cli._detect_cmd import run_detect
 from lumen_argus.cli._parser import build_parser
 from lumen_argus.cli._relay_cmd import run_relay
 from lumen_argus.cli._rules_cmd import run_rules
-from lumen_argus.cli._watch_cmd import run_watch
 from lumen_argus.config import load_config
 from lumen_argus.extensions import ExtensionRegistry
 
 log = logging.getLogger("argus.cli")
+
+# Subcommands moved to the workstation agent. Rejected with a pointer rather
+# than argparse's generic "invalid choice", so operators know exactly which
+# binary owns the concern now.
+_REMOVED_SUBCOMMANDS: dict[str, str] = {
+    "setup": "lumen-argus-agent setup",
+    "protection": "lumen-argus-agent protection",
+    "watch": "lumen-argus-agent watch",
+}
+
+
+def _reject_removed_subcommand(argv: list[str] | None) -> None:
+    """Exit early with a helpful pointer if the user invoked a migrated subcommand.
+
+    The proxy is a server binary; workstation-side concerns (env-file writes,
+    shell-profile mutation, service daemons) live in ``lumen-argus-agent``.
+    Pre-empts argparse so the user sees the new command verbatim.
+    """
+    effective = sys.argv[1:] if argv is None else argv
+    if not effective:
+        return
+    cmd = effective[0]
+    replacement = _REMOVED_SUBCOMMANDS.get(cmd)
+    if replacement is None:
+        return
+    log.warning("proxy CLI rejected removed subcommand %r — use %r", cmd, replacement)
+    print(
+        "lumen-argus: '%s' is a workstation concern — use '%s' instead." % (cmd, replacement),
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 
 def _setup_minimal_logging() -> None:
@@ -31,6 +61,8 @@ def _setup_minimal_logging() -> None:
 
 def main(argv: list[str] | None = None) -> None:
     """Main entry point."""
+    _reject_removed_subcommand(argv)
+
     parser, subparsers = build_parser()
 
     # Register plugin CLI commands (Pro adds "enroll", "enrollment", etc.)
@@ -73,9 +105,6 @@ def main(argv: list[str] | None = None) -> None:
         "mcp": lambda: run_mcp(args, extensions=extensions),
         "clients": lambda: run_clients(args),
         "detect": lambda: run_detect(args),
-        "setup": lambda: run_setup(args),
-        "watch": lambda: run_watch(args),
-        "protection": lambda: run_protection(args),
         "relay": lambda: run_relay(args),
         "logs": lambda: run_logs(args),
     }

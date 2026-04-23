@@ -31,7 +31,7 @@ def run_detect(args: argparse.Namespace) -> None:
             # Output a shell-visible warning (stderr so it doesn't interfere with eval)
             sys.stderr.write(
                 "\033[33m[lumen-argus]\033[0m %d unconfigured tool(s): %s"
-                " — run 'lumen-argus setup'\n" % (len(unconfigured), names)
+                " — run 'lumen-argus-agent setup'\n" % (len(unconfigured), names)
             )
         return
 
@@ -75,7 +75,7 @@ def _print_audit(report: "DetectionReport") -> None:
             print("  [FAIL] %-20s%s  NOT PROXIED — %s" % (c.display_name, ver, c.setup_instructions))
     print("\nSummary: %d/%d tools routed through proxy" % (report.total_configured, report.total_detected))
     if report.total_configured < report.total_detected:
-        print("Action required: run 'lumen-argus setup' to configure uncovered tools.")
+        print("Action required: run 'lumen-argus-agent setup' to configure uncovered tools.")
 
 
 def _print_standard(report: "DetectionReport", proxy_url: str) -> None:
@@ -104,11 +104,11 @@ def _print_standard(report: "DetectionReport", proxy_url: str) -> None:
 
     print("\n%d/%d configured for proxy (%s)" % (report.total_configured, report.total_detected, proxy_url))
     if report.total_configured < report.total_detected:
-        print("Run 'lumen-argus setup' to configure remaining tools.")
+        print("Run 'lumen-argus-agent setup' to configure remaining tools.")
 
 
 def _print_mcp(mcp_report: "MCPDetectionReport") -> None:
     """MCP server detection output."""
     from lumen_argus_core.detect_models import format_mcp_table
 
-    print(format_mcp_table(mcp_report, setup_command="lumen-argus setup --mcp"))
+    print(format_mcp_table(mcp_report, setup_command="lumen-argus-agent setup --mcp"))

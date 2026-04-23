@@ -5,7 +5,7 @@ block in ``~/.zshrc`` / ``~/.bashrc``.  Two body shapes exist — the
 caller picks one explicitly via ``managed_by``:
 
 * ``ManagedBy.CLI`` — unconditional ``export`` lines.  The user ran
-  ``lumen-argus protection enable`` from a terminal and owns the
+  ``lumen-argus-agent protection enable`` from a terminal and owns the
   lifecycle (uninstall = ``protection disable`` or ``setup --undo``).
   No liveness guard because there is no "silent removal" failure mode
   to defend against.

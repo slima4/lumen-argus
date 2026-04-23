@@ -554,7 +554,7 @@ def _print_summary(changes: list[SetupChange], dry_run: bool) -> None:
     prefix = "[dry-run] " if dry_run else ""
     print("\n%s%d MCP server(s) %s." % (prefix, len(changes), "would be wrapped" if dry_run else "wrapped"))
     if not dry_run:
-        print("Run 'lumen-argus setup --mcp --undo' to restore original configuration.")
+        print("Run 'lumen-argus-agent setup --mcp --undo' to restore original configuration.")
 
     # Warn about JSONC comment loss
     has_comments = False

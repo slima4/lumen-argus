@@ -23,14 +23,14 @@ callers can verify the file they are looking at is the one they wrote.
 
 Once a mode is recorded in the file header, downstream mutators that
 do not know the mode (`setup`, `add_env_to_env_file`, etc.) preserve
-it.  Running `lumen-argus setup` on an enrolled machine will not strip
+it.  Running `lumen-argus-agent setup` on an enrolled machine will not strip
 the liveness guard — a write with no explicit `--managed-by` reads the
 existing header and keeps the same shape.  Changing the mode requires
 an explicit `protection enable --managed-by …`.
 
 ### Status contract
 
-`lumen-argus protection status` returns a JSON document with the
+`lumen-argus-agent protection status` returns a JSON document with the
 following keys:
 
 | Key | Type | Meaning |
@@ -224,12 +224,12 @@ canonical entry for the same variable is written.
 | Tools reach provider directly in tray mode even with tray app running | `.app-path` missing or stale | Launch the tray app once — it rewrites `.app-path` |
 | Tools reach provider directly after enrollment | `relay.json` missing or PID dead | `lumen-argus-agent relay` (or restart the relay launchd service) |
 | `echo $ANTHROPIC_BASE_URL` empty in a new terminal right after install | New terminals inherit env at login; the source block runs at shell startup | Open a new terminal *after* the source block was added, or source `~/.lumen-argus/env` manually |
-| `echo $ANTHROPIC_BASE_URL` empty but the CLI proxy is running | Env file was written with `--managed-by tray` but nothing wrote `.app-path` / `relay.json` | Re-run `lumen-argus protection enable` (default `--managed-by cli` — unconditional exports) |
-| Env file exists but is empty | `protection disable` truncated it | `lumen-argus protection enable` |
+| `echo $ANTHROPIC_BASE_URL` empty but the CLI proxy is running | Env file was written with `--managed-by tray` but nothing wrote `.app-path` / `relay.json` | Re-run `lumen-argus-agent protection enable` (default `--managed-by cli` — unconditional exports) |
+| Env file exists but is empty | `protection disable` truncated it | `lumen-argus-agent protection enable` |
 
 ## Related
 
 -   Layer 3 of the [clean-uninstall spec](https://github.com/lumen-argus/lumen-argus) covers the five-layer design that this env file participates in.
 -   [Client detection and setup](../guide/client-detection.md) explains how the env file is populated from the client registry.
--   [CLI reference](cli.md) documents `lumen-argus protection {enable,disable,status}` and `lumen-argus-agent uninstall`.
+-   [CLI reference](cli.md) documents `lumen-argus-agent protection {enable,disable,status}` and `lumen-argus-agent uninstall`.
 -   `lumen-argus-agent uninstall` is the clean removal path that combines `protection disable` with full config revert and data-file cleanup; see the CLI reference for its structured JSON output.

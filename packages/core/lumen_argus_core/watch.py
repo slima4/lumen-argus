@@ -270,7 +270,7 @@ def generate_systemd_unit(
     exec_start = "%s %s" % (binary, args)
 
     return """[Unit]
-Description=lumen-argus watch daemon — monitors for new AI tools
+Description=lumen-argus-agent watch daemon — monitors for new AI tools
 After=network.target
 
 [Service]

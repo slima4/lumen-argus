@@ -53,7 +53,7 @@ that tool.
       [+] GitHub Copilot  1.200.0     vscode_ext proxied
 
     2/3 configured for proxy (http://localhost:8080)
-    Run 'lumen-argus setup' to configure remaining tools.
+    Run 'lumen-argus-agent setup' to configure remaining tools.
     ```
 
 === "Audit"
@@ -69,7 +69,7 @@ that tool.
       [OK]   GitHub Copilot 1.200.0 Proxied (settings.json)
 
     Summary: 2/3 tools routed through proxy
-    Action required: run 'lumen-argus setup' to configure uncovered tools.
+    Action required: run 'lumen-argus-agent setup' to configure uncovered tools.
     ```
 
 === "JSON"
@@ -117,16 +117,16 @@ Once you've detected MCP servers with `--mcp`, you can wrap them through
 
 ```bash
 # Interactive — prompts for each server
-lumen-argus setup --mcp
+lumen-argus-agent setup --mcp
 
 # Wrap all detected stdio servers without prompting
-lumen-argus setup --mcp --non-interactive
+lumen-argus-agent setup --mcp --non-interactive
 
 # Wrap a specific server
-lumen-argus setup --mcp --server filesystem --source claude_desktop
+lumen-argus-agent setup --mcp --server filesystem --source claude_desktop
 
 # Undo — restore original config
-lumen-argus setup --mcp --undo
+lumen-argus-agent setup --mcp --undo
 ```
 
 Wrapping rewrites the config file so `{"command": "npx", "args": [...]}` becomes
@@ -190,7 +190,7 @@ env:
 ## Setting Up Tools
 
 ```bash
-lumen-argus setup
+lumen-argus-agent setup
 ```
 
 The setup wizard:
@@ -208,7 +208,7 @@ The setup wizard uses a **two-layer approach** for toggleable protection:
 **1. Shell profile** — a source block is written once and never touched again:
 
 ```bash
-# In your .zshrc / .bashrc (written by lumen-argus setup):
+# In your .zshrc / .bashrc (written by lumen-argus-agent setup):
 # lumen-argus:begin
 [ -f "$HOME/.lumen-argus/env" ] && source "$HOME/.lumen-argus/env"
 # lumen-argus:end
@@ -255,19 +255,19 @@ removal. The env file is secured with `0o600` permissions (owner-only) because i
 
 ```bash
 # Interactive (default) — prompts for each tool
-lumen-argus setup
+lumen-argus-agent setup
 
 # Configure a specific tool only
-lumen-argus setup aider
+lumen-argus-agent setup aider
 
 # Non-interactive — auto-configure everything
-lumen-argus setup --non-interactive
+lumen-argus-agent setup --non-interactive
 
 # Dry run — show what would change, don't touch files
-lumen-argus setup --dry-run
+lumen-argus-agent setup --dry-run
 
 # Custom proxy URL
-lumen-argus setup --proxy-url http://localhost:9090
+lumen-argus-agent setup --proxy-url http://localhost:9090
 ```
 
 ### Backups and undo
@@ -278,7 +278,7 @@ Every file modification creates a timestamped backup in
 To revert everything:
 
 ```bash
-lumen-argus setup --undo
+lumen-argus-agent setup --undo
 ```
 
 This removes source blocks and managed lines from shell profiles, truncates the env file, restores IDE settings from backups, and clears forward proxy aliases.
@@ -291,7 +291,7 @@ offers step-by-step forward proxy configuration.
 
 Forward-proxy setup is owned by the agent CLI (`lumen-argus-agent setup`) —
 CA generation depends on mitmproxy, which ships with the agent package.
-Running `lumen-argus setup copilot_cli` from a proxy-only install prints a
+Running `lumen-argus-agent setup copilot_cli` from a proxy-only install prints a
 clear pointer to the correct command:
 
 ```
@@ -331,7 +331,7 @@ This runs in under 100ms and only prints a warning to stderr if unconfigured
 tools are found:
 
 ```
-[lumen-argus] 1 unconfigured tool(s): Aider — run 'lumen-argus setup'
+[lumen-argus] 1 unconfigured tool(s): Aider — run 'lumen-argus-agent setup'
 ```
 
 If all tools are configured, it produces no output.
@@ -349,13 +349,13 @@ optionally auto-configures new tools:
 
 ```bash
 # Run in the foreground (Ctrl+C to stop)
-lumen-argus watch
+lumen-argus-agent watch
 
 # Auto-configure new tools without prompting
-lumen-argus watch --auto-configure
+lumen-argus-agent watch --auto-configure
 
 # Custom scan interval (default: 300 seconds)
-lumen-argus watch --interval 600
+lumen-argus-agent watch --interval 600
 ```
 
 ### How it works
@@ -374,35 +374,35 @@ system service that starts on login:
 
     ```bash
     # Install
-    lumen-argus watch --install --auto-configure
+    lumen-argus-agent watch --install --auto-configure
 
     # Start
     launchctl load ~/Library/LaunchAgents/io.lumen-argus.watch.plist
 
     # Check status
-    lumen-argus watch --status
+    lumen-argus-agent watch --status
 
     # Stop and remove
     launchctl unload ~/Library/LaunchAgents/io.lumen-argus.watch.plist
-    lumen-argus watch --uninstall
+    lumen-argus-agent watch --uninstall
     ```
 
 === "Linux (systemd)"
 
     ```bash
     # Install
-    lumen-argus watch --install --auto-configure
+    lumen-argus-agent watch --install --auto-configure
 
     # Enable and start
     systemctl --user daemon-reload
     systemctl --user enable --now lumen-argus-watch
 
     # Check status
-    lumen-argus watch --status
+    lumen-argus-agent watch --status
 
     # Stop and remove
     systemctl --user stop lumen-argus-watch
-    lumen-argus watch --uninstall
+    lumen-argus-agent watch --uninstall
     ```
 
 Logs go to `~/.lumen-argus/logs/watch.log` (launchd) or the journal (systemd).
@@ -415,13 +415,13 @@ The `protection` command provides a VPN-like toggle for the tray app (or CLI):
 
 ```bash
 # Enable — write all tool env vars to ~/.lumen-argus/env
-lumen-argus protection enable
+lumen-argus-agent protection enable
 
 # Disable — truncate the env file (tools connect directly to providers)
-lumen-argus protection disable
+lumen-argus-agent protection disable
 
 # Check status (JSON output for tray app consumption)
-lumen-argus protection status
+lumen-argus-agent protection status
 ```
 
 Output:
