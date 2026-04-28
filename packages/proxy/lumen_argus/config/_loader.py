@@ -130,8 +130,8 @@ def load_config(
                 _warn(w)
             _apply_config(config, data)
             log.debug("loaded config from %s", global_path)
-        except Exception as e:
-            log.error("failed to parse %s: %s (using defaults)", global_path, e)
+        except Exception:
+            log.error("failed to parse %s (using defaults)", global_path, exc_info=True)
 
     # Load project config (can only be more restrictive)
     if project_path:
@@ -146,7 +146,7 @@ def load_config(
             for w in _validate_config(data, str(proj)):
                 _warn(w)
             _apply_project_config(config, data)
-        except Exception as e:
-            log.error("failed to parse %s: %s (using defaults)", proj, e)
+        except Exception:
+            log.error("failed to parse %s (using defaults)", proj, exc_info=True)
 
     return config

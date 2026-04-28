@@ -105,8 +105,8 @@ async def run_http_bridge(
                 sys.stdout.buffer.write(resp_data + b"\n")
                 sys.stdout.buffer.flush()
 
-    except Exception as e:
-        log.error("mcp http bridge error: %s", e)
+    except Exception:
+        log.error("mcp http bridge error", exc_info=True)
     finally:
         await transport.close()
 

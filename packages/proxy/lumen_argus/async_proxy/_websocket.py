@@ -241,13 +241,13 @@ async def _handle_websocket(request: web.Request, server: "AsyncArgusProxy") -> 
                 # Capture actual close code from upstream or client
                 close_code = ws_upstream.close_code or ws_client.close_code or 1000
 
-    except aiohttp.ClientError as e:
-        log.error("ws upstream connection failed for %s: %s", target_url, e)
+    except aiohttp.ClientError:
+        log.error("ws upstream connection failed for %s", target_url, exc_info=True)
         close_code = 1011
         if not ws_client.closed:
             await ws_client.close(code=1011, message=b"Upstream connection failed")
-    except Exception as e:
-        log.error("ws relay error for %s: %s", target_url, e)
+    except Exception:
+        log.error("ws relay error for %s", target_url, exc_info=True)
         close_code = 1011
         if not ws_client.closed:
             await ws_client.close(code=1011, message=b"Internal error")

@@ -92,21 +92,28 @@ class TestPipelineJSExtensionHook(unittest.TestCase):
 
 
 class TestCoreJSSharedActionConstant(unittest.TestCase):
-    def test_core_js_defines_action_constant(self) -> None:
+    def test_core_js_uses_actions_placeholder(self) -> None:
+        # Raw source must keep the placeholder — no hardcoded JS literal
         text = (STATIC_DIR / "js" / "core.js").read_text(encoding="utf-8")
-        self.assertIn("const ACTIONS=['log','alert','redact','block']", text)
+        self.assertIn("const ACTIONS={{ACTIONS_JSON}}", text)
 
-    def test_js_actions_match_python_actions(self) -> None:
+    def test_rendered_html_substitutes_python_actions(self) -> None:
+        from lumen_argus.dashboard.html import COMMUNITY_DASHBOARD_HTML
         from lumen_argus.models import ACTIONS as PY_ACTIONS
 
-        text = (STATIC_DIR / "js" / "core.js").read_text(encoding="utf-8")
-        m = re.search(r"const ACTIONS=\[([^\]]+)\]", text)
-        self.assertIsNotNone(m, "ACTIONS literal not found in core.js")
-        js_actions = tuple(s.strip().strip("'\"") for s in m.group(1).split(","))
+        # Placeholder must be gone after render
+        self.assertNotIn("{{ACTIONS_JSON}}", COMMUNITY_DASHBOARD_HTML)
+
+        # JSON-encoded Python ACTIONS appears in the rendered JS
+        m = re.search(r"const ACTIONS=(\[[^\]]+\])", COMMUNITY_DASHBOARD_HTML)
+        self.assertIsNotNone(m, "ACTIONS literal not found in rendered HTML")
+        import json as _json
+
+        rendered_actions = tuple(_json.loads(m.group(1)))
         self.assertEqual(
-            js_actions,
+            rendered_actions,
             PY_ACTIONS,
-            "JS ACTIONS must mirror lumen_argus.models.ACTIONS exactly",
+            "Rendered JS ACTIONS must mirror lumen_argus.models.ACTIONS exactly",
         )
 
 

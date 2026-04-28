@@ -3,9 +3,9 @@ const SEV_VALID={critical:1,high:1,warning:1,info:1};
 const VALID_PAGES={dashboard:1,findings:1,audit:1,settings:1};
 const _registeredPages={};
 
-/* Shared with rules.js, pipeline.js (extensible via registerPipelineAction),
-   findings.js f-action filter. Mirrors lumen_argus.models.ACTIONS. */
-const ACTIONS=['log','alert','redact','block'];
+/* Mirrors lumen_argus.models.ACTIONS. Used by rules.js, pipeline.js
+   (extensible via registerPipelineAction), findings.js f-action filter. */
+const ACTIONS={{ACTIONS_JSON}};
 
 function csrfToken(){const m=document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);return m?m[1]:'';}
 function csrfHeaders(extra){const h={'X-CSRF-Token':csrfToken()};if(extra)for(const k in extra)h[k]=extra[k];return h;}

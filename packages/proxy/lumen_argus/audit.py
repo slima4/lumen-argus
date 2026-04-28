@@ -62,8 +62,8 @@ class AuditLogger:
             with self._lock:
                 self._file.write(line + "\n")
                 self._file.flush()
-        except OSError as e:
-            log.error("audit log write failed: %s", e)
+        except OSError:
+            log.error("audit log write failed", exc_info=True)
 
     def close(self) -> None:
         """Flush and close the log file. Safe to call multiple times."""
@@ -90,6 +90,6 @@ class AuditLogger:
                 if age_days > self._retention_days:
                     entry.unlink()
                     log.info("audit log rotation: deleted %s (%d days old)", entry.name, age_days)
-            except (ValueError, OSError) as e:
-                log.error("audit log cleanup failed for %s: %s", entry.name, e)
+            except (ValueError, OSError):
+                log.error("audit log cleanup failed for %s", entry.name, exc_info=True)
                 continue

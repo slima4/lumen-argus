@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from lumen_argus.extensions import ExtensionRegistry
 
 from lumen_argus.dashboard.api_helpers import (
-    COMMUNITY_ACTIONS,
     broadcast_sse,
     json_response,
     parse_json_body,
@@ -21,6 +20,7 @@ from lumen_argus.dashboard.api_helpers import (
     require_store,
 )
 from lumen_argus.log_utils import sanitize_user_input
+from lumen_argus.models import ACTIONS
 
 log = logging.getLogger("argus.dashboard.api")
 
@@ -95,11 +95,9 @@ def handle_rule_create(
         log.warning("POST /api/v1/rules: invalid regex for '%s': %s", data.get("name"), e)
         return json_response(400, {"error": "invalid regex: %s" % e})
     action = data.get("action", "")
-    if action and action not in COMMUNITY_ACTIONS:
+    if action and action not in ACTIONS:
         log.warning("POST /api/v1/rules: invalid action '%s' for '%s'", action, data.get("name"))
-        return json_response(
-            400, {"error": "invalid action: %s (allowed: %s)" % (action, ", ".join(COMMUNITY_ACTIONS))}
-        )
+        return json_response(400, {"error": "invalid action: %s (allowed: %s)" % (action, ", ".join(ACTIONS))})
     data["source"] = "dashboard"
     data["tier"] = "custom"
     data["created_by"] = "dashboard"
@@ -127,11 +125,9 @@ def handle_rule_update(
     if isinstance(data, tuple):
         return data
     action = data.get("action")
-    if action is not None and action != "" and action not in COMMUNITY_ACTIONS:
+    if action is not None and action != "" and action not in ACTIONS:
         log.warning("PUT /api/v1/rules/%s: invalid action '%s'", rule_name, action)
-        return json_response(
-            400, {"error": "invalid action: %s (allowed: %s)" % (action, ", ".join(COMMUNITY_ACTIONS))}
-        )
+        return json_response(400, {"error": "invalid action: %s (allowed: %s)" % (action, ", ".join(ACTIONS))})
     data["updated_by"] = "dashboard"
     result = store.update_rule(rule_name, data)
     if result is None:
@@ -162,11 +158,9 @@ def handle_rules_bulk_update(
         log.warning("POST /api/v1/rules/bulk-update: update is missing or empty")
         return json_response(400, {"error": "update must be a non-empty object"})
     action = update.get("action")
-    if action is not None and action != "" and action not in COMMUNITY_ACTIONS:
+    if action is not None and action != "" and action not in ACTIONS:
         log.warning("POST /api/v1/rules/bulk-update: invalid action '%s'", action)
-        return json_response(
-            400, {"error": "invalid action: %s (allowed: %s)" % (action, ", ".join(COMMUNITY_ACTIONS))}
-        )
+        return json_response(400, {"error": "invalid action: %s (allowed: %s)" % (action, ", ".join(ACTIONS))})
     update["updated_by"] = "dashboard"
     result = store.rules.bulk_update(names, update)
     log.info(

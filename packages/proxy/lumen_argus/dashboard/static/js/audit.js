@@ -29,7 +29,7 @@ function renderAuditTable(entries,total){
     const td3=document.createElement('td');td3.textContent=e.model||'';
     const td4=document.createElement('td');td4.className='col-loc';td4.textContent=e.endpoint||'';td4.title=e.endpoint||'';
     const td5=document.createElement('td');
-    const actionColors={pass:'info',alert:'warning',block:'critical'};
+    const actionColors={pass:'info',log:'info',alert:'warning',redact:'warning',block:'critical'};
     const badge=document.createElement('span');
     badge.className='badge '+(actionColors[e.action]||'info');
     const dot=document.createElement('span');dot.className='badge-dot';badge.appendChild(dot);

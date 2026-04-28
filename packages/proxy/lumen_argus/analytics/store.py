@@ -276,8 +276,8 @@ class AnalyticsStore:
                 try:
                     self.cleanup(retention_days)
                     self.cleanup_ws_connections(retention_days)
-                except Exception as e:
-                    log.error("analytics cleanup failed: %s", e)
+                except Exception:
+                    log.error("analytics cleanup failed", exc_info=True)
 
         t = threading.Thread(target=_cleanup_loop, daemon=True, name="analytics-cleanup")
         t.start()

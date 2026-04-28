@@ -182,8 +182,8 @@ def do_reload(
         rd = server.pipeline._rules_detector
         rule_count = rd.rule_count if rd and hasattr(rd, "rule_count") else 0
         log.info("reload complete: %d rules, stages=[%s]", rule_count, ", ".join(stages) or "none")
-    except Exception as e:
-        log.error("config reload failed: %s", e)
+    except Exception:
+        log.error("config reload failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -227,8 +227,6 @@ def _reload_port_bind(server: Any, old: Any, new_config: Any) -> None:
     )
     try:
         future.result(timeout=10)
-    except OSError as e:
-        log.error("proxy rebind failed: %s", e)
     except Exception:
         log.error("proxy rebind failed", exc_info=True)
 

@@ -179,7 +179,7 @@ async def run_stdio_proxy(
             tg.create_task(_relay_stderr())
     except* Exception as eg:
         for exc in eg.exceptions:
-            log.error("mcp relay error: %s", exc)
+            log.error("mcp relay error", exc_info=exc)
 
     await proc.wait()
     exit_code = proc.returncode or 1

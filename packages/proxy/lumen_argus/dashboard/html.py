@@ -5,13 +5,20 @@ Assembled from separate static files at import time:
   static/style.css  — all CSS
   static/js/         — per-page JS modules concatenated in order
 
+JS sources may use the {{ACTIONS_JSON}} placeholder; it is replaced with the
+JSON encoding of ``lumen_argus.models.ACTIONS`` so Python remains the single
+source of truth for the action set.
+
 All dynamic content rendered via textContent/DOM APIs (XSS-safe).
 The only innerHTML usage is for static SVG icon constants defined
 in the JS source code — these are hardcoded strings, never user data.
 No external dependencies, no build step, no CDN.
 """
 
+import json
 import os
+
+from lumen_argus.models import ACTIONS
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -47,9 +54,11 @@ def _build_dashboard_html() -> str:
     template = _read_static("base.html")
     css = _read_static("style.css")
     js = "\n".join(_read_static(m) for m in _JS_MODULES)
-    html = template.replace("{{STYLE}}", css).replace("{{SCRIPT}}", js)
+    actions_json = json.dumps(list(ACTIONS), separators=(",", ":"))
+    html = template.replace("{{STYLE}}", css).replace("{{SCRIPT}}", js).replace("{{ACTIONS_JSON}}", actions_json)
     assert "{{STYLE}}" not in html, "Unreplaced {{STYLE}} placeholder"
     assert "{{SCRIPT}}" not in html, "Unreplaced {{SCRIPT}} placeholder"
+    assert "{{ACTIONS_JSON}}" not in html, "Unreplaced {{ACTIONS_JSON}} placeholder"
     return html
 
 

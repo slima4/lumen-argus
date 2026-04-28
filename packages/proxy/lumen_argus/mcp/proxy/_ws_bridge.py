@@ -126,7 +126,7 @@ async def run_ws_bridge(
             for task in _done:
                 exc = task.exception()
                 if exc:
-                    log.error("mcp ws relay error: %s", exc)
+                    log.error("mcp ws relay error", exc_info=exc)
 
     log.info("mcp: WebSocket bridge closed")
     return 0

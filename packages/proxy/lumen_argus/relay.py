@@ -334,8 +334,8 @@ class ArgusRelay:
                 ssl=None if use_ssl else False,
                 extra_headers=extra_headers,
             )
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            log.error("#%d direct upstream failed: %s", request_id, e)
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            log.error("#%d direct upstream failed", request_id, exc_info=True)
             return web.json_response(
                 {"error": {"type": "upstream_error", "message": "upstream provider unreachable"}},
                 status=502,

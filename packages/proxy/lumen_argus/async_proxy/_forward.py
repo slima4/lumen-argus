@@ -515,7 +515,7 @@ async def _do_forward(
                     except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as retry_err:
                         log.debug("#%d retry %d failed: %s", request_id, _attempt + 1, retry_err)
                         continue
-            log.error("#%d upstream connection error: %s", request_id, e)
+            log.error("#%d upstream connection error", request_id, exc_info=True)
             server.display.show_error(request_id, str(e))
             server.stats.record(provider, len(body), scan_result)
             return web.json_response(
@@ -523,7 +523,7 @@ async def _do_forward(
                 status=502,
             )
         except aiohttp.ClientError as e:
-            log.error("#%d upstream error: %s", request_id, e)
+            log.error("#%d upstream error", request_id, exc_info=True)
             server.display.show_error(request_id, str(e))
             server.stats.record(provider, len(body), scan_result)
             return web.json_response(
@@ -574,7 +574,7 @@ async def _do_forward(
         log.debug("#%d client disconnected", request_id)
         return web.Response(status=499)
     except Exception as e:
-        log.error("#%d request error: %s", request_id, e)
+        log.error("#%d request error", request_id, exc_info=True)
         server.display.show_error(request_id, str(e))
         server.stats.record(provider, len(body), scan_result)
         return web.json_response(
