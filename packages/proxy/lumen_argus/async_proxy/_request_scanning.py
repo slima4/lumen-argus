@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
+from lumen_argus._logging import log_hook_fail_open
 from lumen_argus.actions import build_block_response, should_forward, try_strip_blocked_history
 from lumen_argus.async_proxy._audit import _log_audit
 from lumen_argus.models import Finding, ScanResult, SessionContext
@@ -62,7 +63,7 @@ async def scan_request_body(
                 )
             return scan_result
         except Exception:
-            log.error("#%d scan failed — forwarding request (fail-open)", request_id, exc_info=True)
+            log_hook_fail_open("scan", request_id=request_id)
             return ScanResult(
                 action="pass",
                 findings=[
@@ -130,7 +131,7 @@ def scan_mcp_request(
         _mcp_method = detect_mcp_method(body)
         _mcp_info = detect_mcp_request(body) if _mcp_method == "tools/call" else None
     except Exception:
-        log.error("#%d MCP detection failed (fail-open)", request_id, exc_info=True)
+        log_hook_fail_open("MCP detection", request_id=request_id)
 
     if not _mcp_info:
         return scan_result, _mcp_info, _mcp_method, None
@@ -211,7 +212,7 @@ def scan_mcp_request(
     try:
         mcp_findings = server.mcp_scanner.scan_arguments(tool_name, _mcp_info["arguments"])
     except Exception:
-        log.error("#%d MCP argument scan failed (fail-open)", request_id, exc_info=True)
+        log_hook_fail_open("MCP argument scan", request_id=request_id)
         mcp_findings = []
     if mcp_findings:
         scan_result.findings.extend(mcp_findings)
@@ -335,7 +336,7 @@ def evaluate_block_policy(
                     len(body),
                 )
             except Exception:
-                log.error("#%d redaction hook failed, forwarding unmodified", request_id, exc_info=True)
+                log_hook_fail_open("redaction hook", request_id=request_id)
         else:
             log.warning(
                 "#%d redact action but no redact hook registered — forwarding unmodified",

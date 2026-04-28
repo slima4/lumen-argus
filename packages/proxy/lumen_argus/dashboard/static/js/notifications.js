@@ -1,5 +1,7 @@
 /* notifications.js — notification channels page (source-aware) */
 let notifTypes={};let editingChannelId=null;
+/* Trigger options are intentionally a subset of ACTIONS — `redact` is a
+   transformation, not a meaningful notification trigger, so it's omitted. */
 const _eventOptions=[{value:'block',label:'Block'},{value:'alert',label:'Alert'},{value:'log',label:'Log'}];
 function _buildEventChips(container,selected){
   container.replaceChildren();

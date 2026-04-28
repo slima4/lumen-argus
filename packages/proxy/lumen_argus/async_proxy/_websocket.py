@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import aiohttp
 from aiohttp import web
 
+from lumen_argus._logging import log_hook_fail_open
 from lumen_argus.models import Finding
 
 if TYPE_CHECKING:
@@ -158,7 +159,7 @@ async def _handle_websocket(request: web.Request, server: "AsyncArgusProxy") -> 
                                 try:
                                     findings = server.ws_scanner.scan_outbound_frame(msg.data)
                                 except Exception:
-                                    log.error("ws outbound scan failed (fail-open)", exc_info=True)
+                                    log_hook_fail_open("ws outbound scan")
                                     findings = []
                             else:
                                 findings = []
@@ -190,7 +191,7 @@ async def _handle_websocket(request: web.Request, server: "AsyncArgusProxy") -> 
                                 try:
                                     findings = server.ws_scanner.scan_inbound_frame(msg.data)
                                 except Exception:
-                                    log.error("ws inbound scan failed (fail-open)", exc_info=True)
+                                    log_hook_fail_open("ws inbound scan")
                                     findings = []
                             else:
                                 findings = []

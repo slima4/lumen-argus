@@ -1,4 +1,11 @@
 /* findings.js — filterable paginated table, detail panel, export */
+(function _populateActionFilter(){
+  const sel=document.getElementById('f-action');if(!sel)return;
+  ACTIONS.forEach(function(a){
+    const o=document.createElement('option');o.value=a;o.textContent=titlecase(a);
+    sel.appendChild(o);
+  });
+})();
 function _sessLabel(s){
   if(!s||!s.session_id)return '';
   const wd=s.working_directory||'';

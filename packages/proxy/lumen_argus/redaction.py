@@ -1,6 +1,11 @@
 """Redaction action — replace matched sensitive substrings with typed placeholders."""
 
-from lumen_argus.models import Finding, SessionContext
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lumen_argus.models import Finding, SessionContext
 
 
 def redact_request_body(body: bytes, findings: list[Finding], _session: SessionContext) -> bytes:

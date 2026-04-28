@@ -22,8 +22,9 @@ const _rulesHtml=''
 +'<option value="high">High</option><option value="warning" selected>Warning</option>'
 +'<option value="info">Info</option></select></div>'
 +'<div class="form-row"><label>Action</label>'
-+'<select id="rf-action"><option value="">Default</option><option value="log">Log</option>'
-+'<option value="alert">Alert</option><option value="redact">Redact</option><option value="block">Block</option></select></div>'
++'<select id="rf-action"><option value="">Default</option>'
++ACTIONS.map(function(a){return '<option value="'+a+'">'+titlecase(a)+'</option>'}).join('')
++'</select></div>'
 +'<div class="form-row"><label>Description</label><input id="rf-desc" placeholder="Human-readable description"></div>'
 +'<div class="form-row"><label>Tags</label><input id="rf-tags" placeholder="cloud, credentials (comma-separated)"></div>'
 +'<div class="form-row"><label>Test</label>'
@@ -191,7 +192,8 @@ function _ruleCard(r){
   /* Action select */
   const actSel=document.createElement('select');actSel.className='rule-action-sel';
   actSel.dataset.action=r.action||'';
-  [['','Default'],['log','Log'],['alert','Alert'],['redact','Redact'],['block','Block']].forEach(function(opt){
+  const actOpts=[['','Default']].concat(ACTIONS.map(function(a){return [a,titlecase(a)]}));
+  actOpts.forEach(function(opt){
     const o=document.createElement('option');o.value=opt[0];o.textContent=opt[1];
     if((r.action||'')===opt[0])o.selected=true;actSel.appendChild(o);
   });

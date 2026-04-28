@@ -1,11 +1,11 @@
 /* pipeline.js — Pipeline configuration page.
    Displays scanning stages grouped by direction (request, response, protocol).
    Stage toggles, sub-detector toggles, default action selector.
-   Plugins extend the action set via registerPipelineAction(name). */
+   Base action set is ACTIONS (core.js); plugins extend via
+   registerPipelineAction(name). */
 
-const _BASE_PIPELINE_ACTIONS=['log','alert','redact','block'];
 const _extraPipelineActions=[];
-let _pipelineActionOpts=_BASE_PIPELINE_ACTIONS.slice();
+let _pipelineActionOpts=ACTIONS.slice();
 
 function registerPipelineAction(name){
   if(_extraPipelineActions.indexOf(name)===-1)_extraPipelineActions.push(name);
@@ -13,7 +13,7 @@ function registerPipelineAction(name){
 
 function loadPipeline(){
   fetch('/api/v1/pipeline').then(function(r){return r.json()}).then(function(data){
-    _pipelineActionOpts=_BASE_PIPELINE_ACTIONS.concat(_extraPipelineActions);
+    _pipelineActionOpts=ACTIONS.concat(_extraPipelineActions);
 
     const el=document.getElementById('page-pipeline');el.replaceChildren();
 

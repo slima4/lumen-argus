@@ -12,6 +12,7 @@ import logging
 import time
 from typing import Any
 
+from lumen_argus._logging import log_hook_fail_open
 from lumen_argus.mcp.scanner import MCPScanner
 
 log = logging.getLogger("argus.mcp")
@@ -69,8 +70,8 @@ async def _run_approval_gate(
         return None
     try:
         return await gate.request_approval(tool_name, arguments, server_id, session_id, identity, client_name, policy)
-    except Exception as exc:
-        log.error("mcp: approval gate raised %s — tool call allowed (fail-open)", exc)
+    except Exception:
+        log_hook_fail_open("mcp: approval gate")
         return None
 
 

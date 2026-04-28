@@ -86,7 +86,28 @@ class TestPipelineJSExtensionHook(unittest.TestCase):
     def test_pipeline_js_exposes_register_pipeline_action(self) -> None:
         text = (STATIC_DIR / "js" / "pipeline.js").read_text(encoding="utf-8")
         self.assertIn("registerPipelineAction", text)
-        self.assertIn("_BASE_PIPELINE_ACTIONS=['log','alert','redact','block']", text)
+        # Base action set is now sourced from core.js ACTIONS
+        self.assertIn("ACTIONS.slice()", text)
+        self.assertIn("ACTIONS.concat(_extraPipelineActions)", text)
+
+
+class TestCoreJSSharedActionConstant(unittest.TestCase):
+    def test_core_js_defines_action_constant(self) -> None:
+        text = (STATIC_DIR / "js" / "core.js").read_text(encoding="utf-8")
+        self.assertIn("const ACTIONS=['log','alert','redact','block']", text)
+
+    def test_js_actions_match_python_actions(self) -> None:
+        from lumen_argus.models import ACTIONS as PY_ACTIONS
+
+        text = (STATIC_DIR / "js" / "core.js").read_text(encoding="utf-8")
+        m = re.search(r"const ACTIONS=\[([^\]]+)\]", text)
+        self.assertIsNotNone(m, "ACTIONS literal not found in core.js")
+        js_actions = tuple(s.strip().strip("'\"") for s in m.group(1).split(","))
+        self.assertEqual(
+            js_actions,
+            PY_ACTIONS,
+            "JS ACTIONS must mirror lumen_argus.models.ACTIONS exactly",
+        )
 
 
 class TestSettingsJSExtensionHook(unittest.TestCase):

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
+from lumen_argus._logging import log_hook_fail_open
 from lumen_argus.actions import build_block_response
 from lumen_argus.async_proxy._audit import _log_audit
 from lumen_argus.models import ScanResult, SessionContext
@@ -107,11 +108,7 @@ async def stream_sse_response(
                 try:
                     chunk = chunk_hook(chunk, session)
                 except Exception:
-                    log.error(
-                        "#%d response chunk hook failed, forwarding unmodified",
-                        request_id,
-                        exc_info=True,
-                    )
+                    log_hook_fail_open("response chunk hook", request_id=request_id)
             try:
                 await response.write(chunk)
             except (ConnectionResetError, ConnectionAbortedError):
