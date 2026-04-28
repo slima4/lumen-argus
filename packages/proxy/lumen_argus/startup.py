@@ -135,6 +135,24 @@ def build_pipeline_config(cfg: Any) -> dict[str, Any]:
     }
 
 
+def register_default_hooks(extensions: ExtensionRegistry) -> None:
+    """Register community defaults for hooks plugins may override.
+
+    Each registration uses a non-clobbering guard so a plugin (e.g. Pro)
+    can register its own hook from ``register()`` before ``run_server``
+    runs, and that registration wins.
+    """
+    from lumen_argus.notifiers import WEBHOOK_CHANNEL_TYPE, build_notifier
+    from lumen_argus.redaction import redact_request_body
+
+    if not extensions.get_notifier_builder():
+        extensions.set_notifier_builder(build_notifier)
+    if not extensions.get_channel_types():
+        extensions.register_channel_types(WEBHOOK_CHANNEL_TYPE)
+    if not extensions.get_redact_hook():
+        extensions.set_redact_hook(redact_request_body)
+
+
 def run_server(
     config: Config,
     args: argparse.Namespace,
@@ -205,13 +223,7 @@ def run_server(
         display = TerminalDisplay(no_color=args.no_color)
     audit = AuditLogger(log_dir=audit_log_dir, retention_days=config.audit.retention_days)
 
-    # Register community notification defaults
-    from lumen_argus.notifiers import WEBHOOK_CHANNEL_TYPE, build_notifier
-
-    if not extensions.get_notifier_builder():
-        extensions.set_notifier_builder(build_notifier)
-    if not extensions.get_channel_types():
-        extensions.register_channel_types(WEBHOOK_CHANNEL_TYPE)
+    register_default_hooks(extensions)
 
     for pname, pver in extensions.loaded_plugins():
         log.info("plugin: %s v%s", pname, pver)
