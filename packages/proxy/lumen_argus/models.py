@@ -10,7 +10,6 @@ SEVERITY_SET: frozenset[str] = frozenset(SEVERITIES)
 SEVERITY_ORDER: dict[str, int] = {s: i for i, s in enumerate(SEVERITIES)}
 
 # Canonical policy actions, ordered from lowest to highest priority.
-# "redact" is Pro-only -- community downgrades to "alert".
 ACTIONS = ("log", "alert", "redact", "block")
 ACTION_SET: frozenset[str] = frozenset(ACTIONS)
 

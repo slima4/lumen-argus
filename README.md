@@ -596,7 +596,7 @@ custom_rules:
 | **log** | Record in audit log, allow request |
 | **alert** | Log + print to terminal, allow request |
 | **block** | Reject with HTTP 400 (`invalid_request_error`). If findings are only in conversation history, strips those messages and forwards the cleaned request (logged as `strip`). |
-| **redact** | Replace sensitive values in request body (plugin-provided; downgraded to `alert` if no plugin registers an `evaluate` hook). |
+| **redact** | Replace sensitive values in the request body with `[REDACTED:{type}]` placeholders before forwarding. Irreversible substitution. |
 
 Highest-severity action wins: `block > redact > alert > log`.
 

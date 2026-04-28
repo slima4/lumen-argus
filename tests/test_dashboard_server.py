@@ -1177,7 +1177,6 @@ class TestConfigOverrides(StoreTestCase):
             self.store.set_config_override("proxy.retries", "-1")
 
     def test_action_validation_accepts_redact(self):
-        """Redact is accepted — policy engine downgrades to alert on community."""
         self.store.set_config_override("default_action", "redact")
         self.assertEqual(self.store.get_config_overrides()["default_action"], "redact")
 

@@ -35,7 +35,6 @@ from lumen_argus.models import Finding, ScanField
 log = logging.getLogger("argus.scanner")
 
 # Exit codes by action severity (highest wins).
-# "redact" maps to "alert" in Community Edition (PolicyEngine downgrades it).
 _EXIT_CODES = {"block": 1, "redact": 2, "alert": 2, "log": 3}
 
 

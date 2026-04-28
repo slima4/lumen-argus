@@ -153,8 +153,7 @@ class ExtensionRegistry:
         If set, called INSTEAD of PolicyEngine.evaluate() — the hook
         fully replaces policy evaluation. The hook receives the findings
         list and the policy instance for access to config (overrides,
-        default_action), but should NOT call policy.evaluate() because
-        Community Edition downgrades "redact" to "alert" inside it.
+        default_action).
 
         The hook must return an ActionDecision with action and findings.
         On exception, falls back to default policy.evaluate().

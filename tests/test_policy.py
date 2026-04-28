@@ -96,6 +96,90 @@ class TestPolicyEngine(unittest.TestCase):
         decision = engine.evaluate(findings)
         self.assertEqual(decision.action, "block")
 
+    def test_redact_action_preserved(self):
+        engine = PolicyEngine(default_action="alert")
+        findings = [
+            Finding(
+                detector="secrets",
+                type="aws_access_key",
+                severity="critical",
+                location="messages[0]",
+                value_preview="AKIA****",
+                matched_value="AKIA...",
+                action="redact",
+            ),
+        ]
+        decision = engine.evaluate(findings)
+        self.assertEqual(decision.action, "redact")
+
+    def test_redact_beats_alert(self):
+        engine = PolicyEngine(default_action="log")
+        findings = [
+            Finding(
+                detector="pii",
+                type="email",
+                severity="warning",
+                location="messages[0]",
+                value_preview="john****",
+                matched_value="john@example.com",
+                action="alert",
+            ),
+            Finding(
+                detector="secrets",
+                type="api_key",
+                severity="critical",
+                location="messages[1]",
+                value_preview="sk-****",
+                matched_value="sk-abc...",
+                action="redact",
+            ),
+        ]
+        decision = engine.evaluate(findings)
+        self.assertEqual(decision.action, "redact")
+
+    def test_block_beats_redact(self):
+        engine = PolicyEngine(default_action="log")
+        findings = [
+            Finding(
+                detector="secrets",
+                type="api_key",
+                severity="critical",
+                location="messages[0]",
+                value_preview="sk-****",
+                matched_value="sk-abc...",
+                action="redact",
+            ),
+            Finding(
+                detector="secrets",
+                type="private_key",
+                severity="critical",
+                location="messages[1]",
+                value_preview="----****",
+                matched_value="-----BEGIN...",
+                action="block",
+            ),
+        ]
+        decision = engine.evaluate(findings)
+        self.assertEqual(decision.action, "block")
+
+    def test_default_redact_via_override(self):
+        engine = PolicyEngine(
+            default_action="alert",
+            action_overrides={"secrets": "redact"},
+        )
+        findings = [
+            Finding(
+                detector="secrets",
+                type="aws_access_key",
+                severity="critical",
+                location="messages[0]",
+                value_preview="AKIA****",
+                matched_value="AKIA...",
+            ),
+        ]
+        decision = engine.evaluate(findings)
+        self.assertEqual(decision.action, "redact")
+
     def test_all_findings_preserved(self):
         engine = PolicyEngine(default_action="alert")
         findings = [

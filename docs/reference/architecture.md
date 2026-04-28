@@ -289,7 +289,7 @@ Actions are resolved using a strict priority order:
 | Priority | Action | Description |
 |----------|--------|-------------|
 | 4 | `block` | Reject with HTTP 400 (`invalid_request_error`) regardless of streaming mode. If findings are only in conversation history, strips affected messages and forwards the cleaned request (logged as `strip`). |
-| 3 | `redact` | Replace matched values in the request body before forwarding. **(plugin-provided)** |
+| 3 | `redact` | Replace matched values in the request body with `[REDACTED:{type}]` placeholders before forwarding. |
 | 2 | `alert` | Forward the request but log and display a warning. |
 | 1 | `log` | Forward the request and record the finding silently. |
 | 0 | `pass` | No findings -- forward without action. |
@@ -300,8 +300,8 @@ The winning action is the **highest priority** across all findings in a request.
 
 Each detector can have its own action via `detectors.<name>.action` in the config. If not set, the `default_action` applies.
 
-!!! note "`redact` is plugin-provided"
-    Community ships with `log`, `alert`, `block`. The `redact` action requires a plugin that registers an `evaluate` hook — without one, a configured `redact` action is automatically downgraded to `alert` by the policy engine.
+!!! note "Redact implementation"
+    Community runs irreversible substitution via `redaction.redact_request_body`, registered as the default `redact_hook`. Plugins can replace this hook (e.g. with reversible UUID-marker restoration) by registering their own `redact_hook` from their entry point.
 
 ### History stripping
 

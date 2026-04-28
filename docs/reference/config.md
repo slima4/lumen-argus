@@ -80,8 +80,8 @@ detectors:
     action: alert
 ```
 
-!!! note "Redact action in Community Edition"
-    In the Community Edition, the `redact` action is automatically downgraded to `alert`. Full redaction requires a Pro license.
+!!! note "Redact action"
+    Community Edition runs irreversible substitution: matched values are replaced in the request body with `[REDACTED:{type}]` placeholders before forwarding. Reversible UUID-marker restoration on response chunks requires a Pro license.
 
 ---
 
