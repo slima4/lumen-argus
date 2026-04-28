@@ -454,7 +454,7 @@ Plugins extend the dashboard through Python extension hooks (`register_dashboard
 | `GET /api/v1/pipeline` | Pipeline stage configuration with stats |
 | `PUT /api/v1/pipeline` | Save stage toggles, detector actions, encoding settings |
 | `GET /api/v1/rules` | Paginated rules (filter by tier, detector, severity, enabled, tag, search) |
-| `POST /api/v1/rules` | Create custom rule (action: log/alert/block; plugins may register additional actions) |
+| `POST /api/v1/rules` | Create custom rule (action: log/alert/redact/block) |
 | `GET /api/v1/rules/stats` | Rule counts by tier, detector, enabled, tags |
 | `GET /api/v1/rules/:name` | Single rule detail |
 | `PUT /api/v1/rules/:name` | Update rule (action, enabled, severity, etc.) |
@@ -542,7 +542,7 @@ proxy:
   connect_timeout: 10
   max_connections: 50
 
-default_action: alert     # log | alert | block
+default_action: alert     # log | alert | redact | block
 
 detectors:
   secrets:

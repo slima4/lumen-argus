@@ -86,7 +86,7 @@ class TestPipelineJSExtensionHook(unittest.TestCase):
     def test_pipeline_js_exposes_register_pipeline_action(self) -> None:
         text = (STATIC_DIR / "js" / "pipeline.js").read_text(encoding="utf-8")
         self.assertIn("registerPipelineAction", text)
-        self.assertIn("_BASE_PIPELINE_ACTIONS=['log','alert','block']", text)
+        self.assertIn("_BASE_PIPELINE_ACTIONS=['log','alert','redact','block']", text)
 
 
 class TestSettingsJSExtensionHook(unittest.TestCase):

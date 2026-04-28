@@ -164,11 +164,10 @@ class TestRulesAPI(StoreTestCase):
         status, _body = self._api("/api/v1/rules", "POST", rule_data)
         self.assertEqual(status, 409)
 
-    def test_create_rejects_redact_action(self):
+    def test_create_allows_redact_action(self):
         rule_data = json.dumps({"name": "x", "pattern": "test", "action": "redact"}).encode()
-        status, body = self._api("/api/v1/rules", "POST", rule_data)
-        self.assertEqual(status, 400)
-        self.assertIn("invalid action", json.loads(body)["error"])
+        status, _body = self._api("/api/v1/rules", "POST", rule_data)
+        self.assertEqual(status, 201)
 
     def test_create_allows_alert_action(self):
         rule_data = json.dumps({"name": "x", "pattern": "test", "action": "alert"}).encode()
@@ -199,11 +198,11 @@ class TestRulesAPI(StoreTestCase):
         status, _body = self._api("/api/v1/rules/nonexistent", "PUT", json.dumps({"enabled": False}).encode())
         self.assertEqual(status, 404)
 
-    def test_update_rejects_redact_action(self):
+    def test_update_allows_redact_action(self):
         data = json.dumps({"action": "redact"}).encode()
         status, body = self._api("/api/v1/rules/aws_key", "PUT", data)
-        self.assertEqual(status, 400)
-        self.assertIn("invalid action", json.loads(body)["error"])
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["action"], "redact")
 
     def test_update_allows_block(self):
         data = json.dumps({"action": "block"}).encode()
@@ -329,6 +328,14 @@ class TestBulkUpdateAPI(StoreTestCase):
         self.assertEqual(status, 400)
         data = json.loads(body)
         self.assertIn("invalid action", data["error"])
+        self.assertIn("redact", data["error"])
+
+    def test_bulk_allows_redact_action(self):
+        status, body = self._bulk({"names": ["rule_a", "rule_b"], "update": {"action": "redact"}})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data["updated"], 2)
+        self.assertEqual(self.store.rules.get_by_name("rule_a")["action"], "redact")
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ proxy:
   # ca_bundle: "/path/to/ca-certs.pem"  # custom CA for corporate proxies
   # verify_ssl: false     # disable TLS verification (dev only)
 
-# Global default action: log | alert | block
+# Global default action: log | alert | redact | block
 default_action: alert
 
 detectors:

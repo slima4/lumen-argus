@@ -18,10 +18,11 @@ if TYPE_CHECKING:
     from lumen_argus.extensions import ExtensionRegistry
 
 from lumen_argus.log_utils import sanitize_user_input
+from lumen_argus.models import ACTIONS
 
 log = logging.getLogger("argus.dashboard.api")
 
-COMMUNITY_ACTIONS = ("log", "alert", "block")
+COMMUNITY_ACTIONS = ACTIONS
 
 SENSITIVE_FIELDS = frozenset(
     {

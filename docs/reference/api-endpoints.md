@@ -83,7 +83,7 @@ Total proxied requests, labeled by the resolved action.
 
 | Label | Values |
 |-------|--------|
-| `action` | `pass`, `log`, `alert`, `block` |
+| `action` | `pass`, `log`, `alert`, `redact`, `block` |
 
 ```
 # HELP lumen_argus_requests_total Total proxied requests by action
@@ -267,7 +267,7 @@ The dashboard runs on a separate port (default `8081`) and provides a REST API f
 | `enabled` | Filter by status (`true` or `false`) |
 | `tag` | Filter by tag (exact match in JSON tags array) |
 
-`POST /api/v1/rules` and `PUT /api/v1/rules/:name` validate the `action` field against the registered action set. Community ships with `log`, `alert`, `block` (plus the empty-string default); plugins register additional actions via the dashboard JS `registerPipelineAction(name)` hook.
+`POST /api/v1/rules` and `PUT /api/v1/rules/:name` validate the `action` field against the registered action set. Community ships with `log`, `alert`, `redact`, `block` (plus the empty-string default); plugins can register additional actions via the dashboard JS `registerPipelineAction(name)` hook.
 
 `GET /api/v1/rules` search supports comma-separated terms for OR matching (e.g., `?search=generic_secret,env_file_assignment` returns rules matching either name).
 

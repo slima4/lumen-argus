@@ -373,7 +373,7 @@ Aggregated result of scanning a request.
 |-------|------|-------------|
 | `findings` | `list[Finding]` | All findings from the scan |
 | `scan_duration_ms` | `float` | Total time spent scanning in milliseconds |
-| `action` | `str` | Highest-priority resolved action: `pass`, `log`, `alert`, or `block` |
+| `action` | `str` | Highest-priority resolved action: `pass`, `log`, `alert`, `redact`, or `block` |
 | `stage_timings` | `dict[str, float]` | Per-stage timing breakdown in ms: `extraction`, `encoding_decode`, `fingerprint`, `outbound_dlp` |
 
 ### `SessionContext`

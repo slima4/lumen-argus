@@ -3,7 +3,7 @@
    Stage toggles, sub-detector toggles, default action selector.
    Plugins extend the action set via registerPipelineAction(name). */
 
-const _BASE_PIPELINE_ACTIONS=['log','alert','block'];
+const _BASE_PIPELINE_ACTIONS=['log','alert','redact','block'];
 const _extraPipelineActions=[];
 let _pipelineActionOpts=_BASE_PIPELINE_ACTIONS.slice();
 
