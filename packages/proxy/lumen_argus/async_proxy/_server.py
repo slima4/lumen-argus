@@ -45,6 +45,7 @@ class AsyncArgusProxy:
         retries: int = 1,
         max_body_size: int = 50 * 1024 * 1024,
         redact_hook: Any = None,
+        response_chunk_hook: Any = None,
         ssl_context: ssl.SSLContext | None = None,
         max_connections: int = 50,
     ):
@@ -62,6 +63,7 @@ class AsyncArgusProxy:
         self.retries = retries
         self.max_body_size = max_body_size
         self.redact_hook = redact_hook
+        self.response_chunk_hook = response_chunk_hook
         self._ssl_context = ssl_context
         self.max_connections = max_connections
         self._active_requests = 0

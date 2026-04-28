@@ -88,6 +88,8 @@ async def stream_sse_response(
     resp_headers: dict[str, str],
     request_id: int,
     should_accumulate: bool,
+    session: SessionContext,
+    chunk_hook: Any = None,
 ) -> tuple[web.StreamResponse, int, str]:
     response = web.StreamResponse(
         status=upstream_resp.status,
@@ -101,6 +103,15 @@ async def stream_sse_response(
         async for chunk in upstream_resp.content.iter_any():
             if not chunk:
                 continue
+            if chunk_hook is not None:
+                try:
+                    chunk = chunk_hook(chunk, session)
+                except Exception:
+                    log.error(
+                        "#%d response chunk hook failed, forwarding unmodified",
+                        request_id,
+                        exc_info=True,
+                    )
             try:
                 await response.write(chunk)
             except (ConnectionResetError, ConnectionAbortedError):

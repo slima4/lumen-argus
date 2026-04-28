@@ -456,8 +456,9 @@ def register(registry):
 |------|-----------|-------------|
 | `pre_request` | `(request_id: int) -> None` | Called at the start of each request. Use for correlation ID setup. |
 | `post_scan` | `(result: ScanResult, body: bytes, provider: str, session=ctx) -> None` | Called after each scan completes. Use for notifications or SSE push. Accept `**kwargs` for forward compat. |
-| `evaluate` | `(findings: list[Finding], policy: PolicyEngine) -> ActionDecision` | Replaces the default policy evaluation. Plugins use this to support additional actions such as `redact`. Falls back to default on exception. |
-| `redact` | `(body: bytes, findings: list[Finding]) -> bytes` | Transforms the request body to replace matched values before forwarding. |
+| `evaluate` | `(findings: list[Finding], policy: PolicyEngine) -> ActionDecision` | Replaces the default policy evaluation. Plugins use this for richer policy logic (e.g. ABAC, per-tenant overrides). Falls back to default on exception. |
+| `redact` | `(body: bytes, findings: list[Finding], session: SessionContext) -> bytes` | Transforms the request body to replace matched values before forwarding. Community ships an irreversible default; plugins can replace it (e.g. with reversible session-keyed restoration). |
+| `response_chunk` | `(chunk: bytes, session: SessionContext) -> bytes` | Rewrites each upstream SSE chunk on the streaming response path. Default unset (passthrough). Used by reversible-redaction plugins to restore session-keyed markers. Exceptions are logged and the original chunk is forwarded (fail-open). |
 | `config_reload` | `(pipeline: ScannerPipeline) -> None` | Called after SIGHUP config reload. Use for plugin re-initialization. |
 | `response_scan` | `(text: str, provider: str, model: str, session) -> (action, findings)` | Buffered response scanning. Runs INSTEAD of async scan when set. Return `("block", findings)` to reject response with 400. |
 

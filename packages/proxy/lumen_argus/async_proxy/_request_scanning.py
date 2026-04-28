@@ -324,7 +324,7 @@ def evaluate_block_policy(
         if server.redact_hook is not None:
             try:
                 original_len = len(body)
-                body = server.redact_hook(body, scan_result.findings)
+                body = server.redact_hook(body, scan_result.findings, session)
                 types = ", ".join(f.type for f in scan_result.findings)
                 log.info(
                     "#%d REDACT %d finding(s) (%s), body %d→%d bytes",
@@ -334,11 +334,11 @@ def evaluate_block_policy(
                     original_len,
                     len(body),
                 )
-            except Exception as e:
-                log.error("#%d redaction hook failed, forwarding unmodified: %s", request_id, e)
+            except Exception:
+                log.error("#%d redaction hook failed, forwarding unmodified", request_id, exc_info=True)
         else:
             log.warning(
-                "#%d redact action but no redact hook registered — forwarding unmodified (Pro redaction not loaded?)",
+                "#%d redact action but no redact hook registered — forwarding unmodified",
                 request_id,
             )
 

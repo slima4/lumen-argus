@@ -284,6 +284,7 @@ def run_server(
             retries=config.proxy.retries,
             max_body_size=config.proxy.max_body_size,
             redact_hook=extensions.get_redact_hook(),
+            response_chunk_hook=extensions.get_response_chunk_hook(),
             ssl_context=ssl_context,
             max_connections=config.proxy.max_connections,
         )

@@ -449,6 +449,8 @@ async def _do_forward(
                         resp_headers,
                         request_id,
                         _should_accumulate,
+                        session,
+                        server.response_chunk_hook,
                     )
 
                 else:

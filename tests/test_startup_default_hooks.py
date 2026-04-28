@@ -18,7 +18,7 @@ class TestRegisterDefaultHooks(unittest.TestCase):
     def test_plugin_redact_hook_not_clobbered(self):
         ext = ExtensionRegistry()
 
-        def plugin_hook(body: bytes, findings: list) -> bytes:
+        def plugin_hook(body: bytes, findings: list, session: object) -> bytes:
             return body
 
         ext.set_redact_hook(plugin_hook)

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from lumen_argus.analytics.store import AnalyticsStore
 
 from lumen_argus.detectors import BaseDetector
-from lumen_argus.models import Finding
+from lumen_argus.models import Finding, SessionContext
 
 log = logging.getLogger("argus.extensions")
 
@@ -47,13 +47,20 @@ class CliCommandDef:
 class ExtensionRegistry:
     """Discovers and loads extensions via Python entry points."""
 
-    # Type for redact hook: (body: bytes, findings: list[Finding]) -> bytes
-    RedactHook = Callable[[bytes, list[Finding]], bytes]
+    # Type for redact hook: (body, findings, session) -> redacted_body.
+    # Session lets reversible redaction implementations (Pro) key per-session
+    # value→marker mappings; community's irreversible default ignores it.
+    RedactHook = Callable[[bytes, list[Finding], SessionContext], bytes]
+    # Type for response chunk hook: (chunk, session) -> rewritten_chunk.
+    # Invoked once per SSE chunk on the upstream response. Plugins use this
+    # to rewrite streamed bytes (e.g. restore session-keyed UUID markers).
+    ResponseChunkHook = Callable[[bytes, SessionContext], bytes]
 
     def __init__(self) -> None:
         self._detectors: list[BaseDetector] = []
         self._notifiers: list[Any] = []
         self._redact_hook: ExtensionRegistry.RedactHook | None = None
+        self._response_chunk_hook: ExtensionRegistry.ResponseChunkHook | None = None
         self._post_scan_hook: Callable[..., Any] | None = None
         self._config_reload_hook: Callable[..., Any] | None = None
         self._evaluate_hook: Callable[..., Any] | None = None
@@ -122,12 +129,26 @@ class ExtensionRegistry:
         self._notifiers.append(notifier)
 
     def set_redact_hook(self, hook: "ExtensionRegistry.RedactHook") -> None:
-        """Register a redaction callback: (body, findings) -> redacted_body."""
+        """Register a redaction callback: (body, findings, session) -> redacted_body."""
         self._redact_hook = hook
 
     def get_redact_hook(self) -> "ExtensionRegistry.RedactHook | None":
         """Return the registered redaction hook, or None."""
         return self._redact_hook
+
+    def set_response_chunk_hook(self, hook: "ExtensionRegistry.ResponseChunkHook") -> None:
+        """Register a streamed-response chunk rewriter: (chunk, session) -> rewritten_chunk.
+
+        Invoked once per upstream SSE chunk. Exceptions raised by the hook
+        are caught and logged; the original chunk is forwarded unmodified
+        (fail-open). Plugins use this to restore session-keyed markers
+        introduced by their ``set_redact_hook`` implementation.
+        """
+        self._response_chunk_hook = hook
+
+    def get_response_chunk_hook(self) -> "ExtensionRegistry.ResponseChunkHook | None":
+        """Return the registered response chunk hook, or None."""
+        return self._response_chunk_hook
 
     def set_post_scan_hook(self, hook: Callable[..., Any]) -> None:
         """Register: hook(scan_result, body, provider, session=ctx) after each scan.

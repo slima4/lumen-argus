@@ -1,9 +1,9 @@
 """Redaction action — replace matched sensitive substrings with typed placeholders."""
 
-from lumen_argus.models import Finding
+from lumen_argus.models import Finding, SessionContext
 
 
-def redact_request_body(body: bytes, findings: list[Finding]) -> bytes:
+def redact_request_body(body: bytes, findings: list[Finding], _session: SessionContext) -> bytes:
     """Replace ``matched_value`` strings of redact-action findings with ``[REDACTED:{type}]``.
 
     Longest matches first to avoid corrupting overlapping substrings.
