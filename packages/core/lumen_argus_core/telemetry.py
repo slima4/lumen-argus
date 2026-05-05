@@ -11,6 +11,7 @@ import logging
 import platform
 import urllib.error
 import urllib.request
+from typing import Any
 
 from lumen_argus_core.enrollment import (
     EnrollmentError,
@@ -178,40 +179,80 @@ def _refresh_policy_silent(dashboard_url: str) -> None:
         log.warning("policy refresh raised unexpectedly", exc_info=True)
 
 
-def _relay_url_or(fallback: str) -> str:
-    """Return the relay URL if the agent relay is running, otherwise fallback.
+def _relay_state_or_fallback() -> dict[str, Any] | None:
+    """Read relay.json for the heartbeat path. Read-only — never mutates.
 
-    Reads ~/.lumen-argus/relay.json directly (no agent package import —
-    core must not depend on agent).  Validates PID liveness to avoid
-    stale state.
+    Returns the parsed state dict, or ``None`` if the file is missing or
+    unreadable. File lifecycle is owned by the agent's
+    ``load_relay_state``; the heartbeat must not race the agent on
+    removals.
     """
     import os
 
     state_path = os.path.join(os.path.expanduser("~"), ".lumen-argus", "relay.json")
     try:
-        with open(state_path, encoding="utf-8") as f:
-            state = json.load(f)
-        pid = state.get("pid", 0)
-        if pid:
-            try:
-                os.kill(pid, 0)
-            except OSError:
-                log.debug("relay state file has stale pid=%d — using fallback", pid)
-                return fallback
-        bind = state.get("bind")
-        port = state.get("port")
-        if not bind or not port:
-            log.warning("relay state file missing bind/port — using fallback")
-            return fallback
-        url = "http://%s:%d" % (bind, port)
-        log.debug("heartbeat detection using relay url=%s (pid=%d)", url, pid)
-        return url
+        from lumen_argus_core.relay_state import read_relay_state_file
+
+        return read_relay_state_file(state_path)
     except FileNotFoundError:
         log.debug("no relay state file — using proxy url for detection")
+        return None
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        log.warning("failed to read relay state: %s — using fallback", exc, exc_info=True)
+        return None
+
+
+def _relay_url_or(fallback: str) -> str:
+    """Return the relay URL if the agent relay is running, otherwise fallback.
+
+    Validates PID liveness AND probes ``/health`` for the per-process
+    ``boot_token`` to defeat PID recycling (#77). Read-only: file lifecycle
+    stays owned by the agent's ``load_relay_state``.
+
+    Composes the same pure helpers used by the agent (defined in
+    :mod:`lumen_argus_core.relay_state`) so any future tightening of the
+    schema or probe semantics applies to both call sites.
+    """
+    import os
+
+    from lumen_argus_core.relay_state import (
+        PROBE_MATCH,
+        loopback_host_for,
+        probe_loopback_health,
+        validate_relay_state,
+    )
+
+    state = _relay_state_or_fallback()
+    if state is None:
         return fallback
-    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-        log.warning("failed to read relay state: %s — using fallback", exc)
+
+    fields = validate_relay_state(state)
+    if isinstance(fields, str):
+        log.info("relay state rejected by heartbeat: %s — using fallback", fields)
         return fallback
+    pid, port, bind, boot_token = fields
+
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        log.debug("relay state file has stale pid=%d — using fallback", pid)
+        return fallback
+
+    probe_host = loopback_host_for(bind)
+    outcome = probe_loopback_health(probe_host, port, boot_token, timeout=0.5)
+    if outcome != PROBE_MATCH:
+        log.info(
+            "relay /health probe outcome=%s (pid=%d host=%s port=%d) — using fallback",
+            outcome,
+            pid,
+            probe_host,
+            port,
+        )
+        return fallback
+
+    url = "http://%s:%d" % (bind, port)
+    log.debug("heartbeat detection using relay url=%s (pid=%d)", url, pid)
+    return url
 
 
 def _check_watch_daemon() -> bool:

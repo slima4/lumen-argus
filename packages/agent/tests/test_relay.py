@@ -394,6 +394,18 @@ class TestAgentRelayHealth(AioHTTPTestCase):
         self.assertEqual(data["fail_mode"], "open")
         self.assertFalse(data["enrolled"])
         self.assertIn("uptime", data)
+        # boot_token (#77): 16 random bytes → 32 hex chars. Don't pin
+        # the value — assert presence and shape only.
+        self.assertIn("boot_token", data)
+        self.assertEqual(len(data["boot_token"]), 32)
+        self.assertTrue(all(c in "0123456789abcdef" for c in data["boot_token"]))
+
+    @unittest_run_loop
+    async def test_health_boot_token_stable_across_requests(self):
+        """boot_token is per-process; identical on every /health hit."""
+        r1 = await (await self.client.get("/health")).json()
+        r2 = await (await self.client.get("/health")).json()
+        self.assertEqual(r1["boot_token"], r2["boot_token"])
 
     @unittest_run_loop
     async def test_upstream_state_reflects_recorded_outcomes(self):
@@ -587,6 +599,24 @@ class TestAgentRelayForwarding(AioHTTPTestCase):
         self.assertEqual(received["messages"][0]["content"], "test")
 
     @unittest_run_loop
+    async def test_boot_token_does_not_leak_upstream(self):
+        """boot_token (#77) is loopback-only; never appears in any forwarded header or body."""
+        body = {"model": "claude-sonnet-4-20250514", "messages": [{"role": "user", "content": "x"}]}
+        await self.client.post("/v1/messages", json=body)
+
+        token = self._relay.boot_token
+        self.assertEqual(len(token), 32)  # sanity — token actually exists
+
+        for header_set in self._upstream_headers:
+            for k, v in header_set.items():
+                self.assertNotIn(token, v, "boot_token leaked in header %s" % k)
+                # Defence-in-depth: header name must not carry it either.
+                self.assertNotIn(token, k)
+
+        for body_bytes in self._upstream_bodies:
+            self.assertNotIn(token.encode(), body_bytes, "boot_token leaked in upstream body")
+
+    @unittest_run_loop
     async def test_sse_streaming(self):
         resp = await self.client.post(
             "/v1/messages/stream",
@@ -683,18 +713,25 @@ class TestRelayStateFile(unittest.TestCase):
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def test_write_and_load(self):
+        from unittest.mock import patch
+
         from lumen_argus_agent.relay import _write_relay_state, load_relay_state
 
         config = RelayConfig(port=9999, bind="0.0.0.0", upstream_url="http://proxy:8080", fail_mode="closed")
-        _write_relay_state(config)
+        _write_relay_state(config, "abc123")
 
-        state = load_relay_state()
+        # Probe is unit-tested separately; here we only care that the
+        # write/read round-trip preserves every field — bind=0.0.0.0
+        # would otherwise refuse on a closed port.
+        with patch("lumen_argus_agent.relay.probe_loopback_health", return_value="match"):
+            state = load_relay_state()
         self.assertIsNotNone(state)
         self.assertEqual(state["port"], 9999)
         self.assertEqual(state["bind"], "0.0.0.0")
         self.assertEqual(state["upstream_url"], "http://proxy:8080")
         self.assertEqual(state["fail_mode"], "closed")
         self.assertEqual(state["pid"], os.getpid())
+        self.assertEqual(state["boot_token"], "abc123")
 
     def test_load_missing_returns_none(self):
         from lumen_argus_agent.relay import load_relay_state
@@ -702,30 +739,154 @@ class TestRelayStateFile(unittest.TestCase):
         self.assertIsNone(load_relay_state())
 
     def test_remove(self):
+        from unittest.mock import patch
+
         from lumen_argus_agent.relay import _remove_relay_state, _write_relay_state, load_relay_state
 
         config = RelayConfig()
-        _write_relay_state(config)
-        self.assertIsNotNone(load_relay_state())
+        _write_relay_state(config, "tok")
+        with patch("lumen_argus_agent.relay.probe_loopback_health", return_value="match"):
+            self.assertIsNotNone(load_relay_state())
 
         _remove_relay_state()
         self.assertIsNone(load_relay_state())
 
     def test_stale_pid_cleaned_up(self):
-        """State file with dead PID is automatically removed."""
+        """State file with dead PID is automatically removed (before any probe)."""
         import json
 
         import lumen_argus_agent.relay as relay_mod
         from lumen_argus_agent.relay import load_relay_state
 
-        state = {"port": 8070, "bind": "127.0.0.1", "pid": 999999999, "upstream_url": ""}
+        state = {
+            "port": 8070,
+            "bind": "127.0.0.1",
+            "pid": 999999999,
+            "upstream_url": "",
+            "boot_token": "deadbeef",
+        }
         with open(relay_mod.RELAY_STATE_PATH, "w") as f:
             json.dump(state, f)
 
-        # Dead PID should cause cleanup
+        # Dead PID short-circuits before the probe runs — no network call.
         result = load_relay_state()
         self.assertIsNone(result)
         self.assertFalse(os.path.exists(relay_mod.RELAY_STATE_PATH))
+
+    def test_legacy_state_without_boot_token_removed(self):
+        """Pre-#77 file (no boot_token) is removed; no migration."""
+        import json
+
+        import lumen_argus_agent.relay as relay_mod
+        from lumen_argus_agent.relay import load_relay_state
+
+        # Live PID — proves the boot_token gate runs before PID check, so
+        # a legacy file from a still-running pre-#77 binary still gets
+        # rewritten on next start.
+        state = {
+            "port": 8070,
+            "bind": "127.0.0.1",
+            "pid": os.getpid(),
+            "upstream_url": "",
+        }
+        with open(relay_mod.RELAY_STATE_PATH, "w") as f:
+            json.dump(state, f)
+
+        self.assertIsNone(load_relay_state())
+        self.assertFalse(os.path.exists(relay_mod.RELAY_STATE_PATH))
+
+    def test_probe_mismatch_removes_file(self):
+        """Foreign /health response → definitive mismatch → file removed."""
+        import json
+        from unittest.mock import patch
+
+        import lumen_argus_agent.relay as relay_mod
+        from lumen_argus_agent.relay import load_relay_state
+
+        state = {
+            "port": 8070,
+            "bind": "127.0.0.1",
+            "pid": os.getpid(),
+            "upstream_url": "",
+            "boot_token": "ours",
+        }
+        with open(relay_mod.RELAY_STATE_PATH, "w") as f:
+            json.dump(state, f)
+
+        with patch("lumen_argus_agent.relay.probe_loopback_health", return_value="mismatch"):
+            result = load_relay_state()
+        self.assertIsNone(result)
+        self.assertFalse(os.path.exists(relay_mod.RELAY_STATE_PATH))
+
+    def test_probe_connection_refused_removes_file(self):
+        """Closed port → definitive refused → file removed."""
+        import json
+        from unittest.mock import patch
+
+        import lumen_argus_agent.relay as relay_mod
+        from lumen_argus_agent.relay import load_relay_state
+
+        state = {
+            "port": 8070,
+            "bind": "127.0.0.1",
+            "pid": os.getpid(),
+            "upstream_url": "",
+            "boot_token": "ours",
+        }
+        with open(relay_mod.RELAY_STATE_PATH, "w") as f:
+            json.dump(state, f)
+
+        with patch("lumen_argus_agent.relay.probe_loopback_health", return_value="refused"):
+            result = load_relay_state()
+        self.assertIsNone(result)
+        self.assertFalse(os.path.exists(relay_mod.RELAY_STATE_PATH))
+
+    def test_probe_ambiguous_leaves_file_intact(self):
+        """Timeout / unknown error → leave file so transient slow relay recovers."""
+        import json
+        from unittest.mock import patch
+
+        import lumen_argus_agent.relay as relay_mod
+        from lumen_argus_agent.relay import load_relay_state
+
+        state = {
+            "port": 8070,
+            "bind": "127.0.0.1",
+            "pid": os.getpid(),
+            "upstream_url": "",
+            "boot_token": "ours",
+        }
+        with open(relay_mod.RELAY_STATE_PATH, "w") as f:
+            json.dump(state, f)
+
+        with patch("lumen_argus_agent.relay.probe_loopback_health", return_value="ambiguous"):
+            result = load_relay_state()
+        self.assertIsNone(result)
+        # Critical: file must NOT be removed on ambiguous outcomes.
+        self.assertTrue(os.path.exists(relay_mod.RELAY_STATE_PATH))
+
+    def test_bind_zero_zero_zero_zero_probes_loopback(self):
+        """bind=0.0.0.0 must probe via 127.0.0.1, not 0.0.0.0."""
+        import json
+        from unittest.mock import patch
+
+        import lumen_argus_agent.relay as relay_mod
+        from lumen_argus_agent.relay import load_relay_state
+
+        state = {
+            "port": 8070,
+            "bind": "0.0.0.0",
+            "pid": os.getpid(),
+            "upstream_url": "",
+            "boot_token": "ours",
+        }
+        with open(relay_mod.RELAY_STATE_PATH, "w") as f:
+            json.dump(state, f)
+
+        with patch("lumen_argus_agent.relay.probe_loopback_health", return_value="match") as probe:
+            load_relay_state()
+        host_arg = probe.call_args[0][0]
+        self.assertEqual(host_arg, "127.0.0.1")
 
 
 class TestReloadEnrollmentConfig(unittest.TestCase):
@@ -768,7 +929,26 @@ class TestReloadEnrollmentConfig(unittest.TestCase):
 
         self.assertEqual(relay.config.fail_mode, "closed")
         # Adopters read relay.json, so the new fail_mode must land on disk.
-        self.write_state.assert_called_once_with(config)
+        # boot_token is process-scoped — same value across rewrites.
+        self.write_state.assert_called_once_with(config, relay.boot_token)
+
+    def test_sighup_preserves_boot_token(self):
+        """SIGHUP rewrite must reuse the in-memory boot_token (#77)."""
+        from unittest.mock import patch
+
+        from lumen_argus_agent.relay import AgentRelay, _reload_enrollment_config
+
+        config = RelayConfig(fail_mode="open")
+        relay = AgentRelay(config)
+        original_token = relay.boot_token
+
+        enrollment = {"policy": {"fail_mode": "closed"}}
+        with patch("lumen_argus_core.enrollment.load_enrollment", return_value=enrollment):
+            _reload_enrollment_config(relay)
+
+        # Token unchanged in memory and forwarded to the writer.
+        self.assertEqual(relay.boot_token, original_token)
+        self.assertEqual(self.write_state.call_args.args[1], original_token)
 
     def test_updates_privacy_flags(self):
         from unittest.mock import patch

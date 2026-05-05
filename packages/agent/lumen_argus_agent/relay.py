@@ -21,6 +21,7 @@ import asyncio
 import itertools
 import logging
 import os
+import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +32,15 @@ from multidict import CIMultiDict
 
 from lumen_argus_agent.context import CallerContext, resolve_context, static_context
 from lumen_argus_agent.upstream_health import UpstreamHealth
+from lumen_argus_core.relay_state import (
+    PROBE_MATCH,
+    PROBE_MISMATCH,
+    PROBE_REFUSED,
+    loopback_host_for,
+    probe_loopback_health,
+    read_relay_state_file,
+    validate_relay_state,
+)
 
 log = logging.getLogger("argus.relay")
 
@@ -131,6 +141,10 @@ class AgentRelay:
     def __init__(self, config: RelayConfig) -> None:
         self.config = config
         self.start_time = time.monotonic()
+        # Per-process identity (#77). Echoed by /health and persisted in
+        # relay.json so adopters can detect a recycled PID claiming the
+        # same record. Stable across SIGHUP rewrites.
+        self.boot_token = secrets.token_hex(16)
         self._upstream_health = UpstreamHealth()
         self._active_requests = 0
         self._upstream_session: aiohttp.ClientSession | None = None
@@ -462,6 +476,9 @@ async def _handle_request(request: web.Request) -> web.StreamResponse:
                 "agent_id": relay.config.agent_id or "",
                 "enrolled": bool(relay.config.agent_id),
                 "uptime": round(time.monotonic() - relay.start_time, 1),
+                # Per-process identity (#77). Loopback-only — never leaves
+                # the workstation. See AgentRelay.__init__.
+                "boot_token": relay.boot_token,
             }
         )
 
@@ -490,8 +507,14 @@ _ARGUS_DIR = os.path.expanduser("~/.lumen-argus")
 RELAY_STATE_PATH = os.path.join(_ARGUS_DIR, "relay.json")
 
 
-def _write_relay_state(config: RelayConfig) -> None:
-    """Write relay state file so the setup wizard can detect the relay."""
+def _write_relay_state(config: RelayConfig, boot_token: str) -> None:
+    """Write relay state file so the setup wizard can detect the relay.
+
+    ``boot_token`` is a per-process identity minted in
+    :class:`AgentRelay.__init__`; persisted here and echoed by ``/health``
+    so adopters can prove the file refers to *this* process and not a
+    PID-recycled successor (#77).
+    """
     import json
 
     from lumen_argus_core.time_utils import now_iso
@@ -504,6 +527,7 @@ def _write_relay_state(config: RelayConfig) -> None:
         "fail_mode": config.fail_mode,
         "pid": os.getpid(),
         "started_at": now_iso(),
+        "boot_token": boot_token,
     }
     try:
         tmp = RELAY_STATE_PATH + ".tmp"
@@ -513,7 +537,7 @@ def _write_relay_state(config: RelayConfig) -> None:
         os.replace(tmp, RELAY_STATE_PATH)
         log.info("relay state written to %s", RELAY_STATE_PATH)
     except OSError as exc:
-        log.warning("could not write relay state: %s", exc)
+        log.warning("could not write relay state: %s", exc, exc_info=True)
 
 
 def _remove_relay_state() -> None:
@@ -524,31 +548,109 @@ def _remove_relay_state() -> None:
     except FileNotFoundError:
         pass
     except OSError as exc:
-        log.warning("could not remove relay state: %s", exc)
+        log.warning("could not remove relay state: %s", exc, exc_info=True)
 
 
-def load_relay_state() -> dict[str, Any] | None:
-    """Load relay state from disk. Returns None if relay is not running.
+# Loopback /health probe budget. Generous for a localhost call (typically
+# resolves in single-digit milliseconds) but tight enough that adopters
+# making the legacy 3x200ms retry loop still complete inside ~1.5s.
+_HEALTH_PROBE_TIMEOUT = 0.5
 
-    Validates the PID — if the recorded process is dead, removes the stale
-    state file and returns None.
-    """
+
+def _read_state_or_remove() -> dict[str, Any] | None:
+    """Read the relay state file. Removes it on corruption; missing → None."""
     import json
 
     try:
-        with open(RELAY_STATE_PATH, encoding="utf-8") as f:
-            state: dict[str, Any] = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return read_relay_state_file(RELAY_STATE_PATH)
+    except FileNotFoundError:
         return None
-
-    # Check if the relay process is still alive
-    pid = state.get("pid", 0)
-    if pid and not _pid_alive(pid):
-        log.debug("stale relay state (pid %d dead) — removing", pid)
+    except (json.JSONDecodeError, TypeError, OSError) as exc:
+        log.warning("relay state unreadable: %s — removing", exc, exc_info=True)
         _remove_relay_state()
         return None
 
-    return state
+
+def _interpret_probe_outcome(
+    outcome: str,
+    state: dict[str, Any],
+    pid: int,
+    host: str,
+    port: int,
+) -> dict[str, Any] | None:
+    """Apply the agent's removal policy to a probe outcome.
+
+    Definitive failures (mismatch, refused) remove the file; ambiguous
+    failures leave it alone so a transient-slow relay can recover on the
+    next probe.
+    """
+    if outcome == PROBE_MATCH:
+        return state
+    if outcome == PROBE_MISMATCH:
+        # Foreign process owns the port. Do not log the token value — it
+        # is loopback-only but still a process-identity secret.
+        log.info(
+            "relay state stale: foreign process responding on %s:%d (pid=%d) — removing",
+            host,
+            port,
+            pid,
+        )
+        _remove_relay_state()
+        return None
+    if outcome == PROBE_REFUSED:
+        log.info(
+            "relay state stale: %s:%d refused connection (pid=%d) — removing",
+            host,
+            port,
+            pid,
+        )
+        _remove_relay_state()
+        return None
+    # INFO not DEBUG: a persistent ambiguous outcome means the relay is up
+    # but its /health is broken — the worst-case silent-fleet condition
+    # this whole change exists to defeat. Match telemetry's level so a
+    # persistent issue leaves an audit trail on both call sites.
+    log.info(
+        "relay state probe ambiguous on %s:%d (pid=%d, outcome=%s) — leaving file",
+        host,
+        port,
+        pid,
+        outcome,
+    )
+    return None
+
+
+def load_relay_state() -> dict[str, Any] | None:
+    """Load relay state from disk. Returns None if the relay is not running.
+
+    Composes three single-purpose helpers cheapest-first so a long-down
+    relay never costs heartbeat latency:
+
+    1. Read + parse — :func:`_read_state_or_remove`.
+    2. Schema validate — :func:`validate_relay_state` (pure, in core).
+    3. PID liveness — :func:`_pid_alive` short-circuits before network I/O.
+    4. Loopback /health probe — :func:`probe_loopback_health` (in core),
+       outcome interpreted by :func:`_interpret_probe_outcome`.
+    """
+    state = _read_state_or_remove()
+    if state is None:
+        return None
+
+    fields = validate_relay_state(state)
+    if isinstance(fields, str):
+        log.info("relay state rejected: %s — removing", fields)
+        _remove_relay_state()
+        return None
+    pid, port, bind, boot_token = fields
+
+    if not _pid_alive(pid):
+        log.debug("stale relay state (pid=%d not running) — removing", pid)
+        _remove_relay_state()
+        return None
+
+    probe_host = loopback_host_for(bind)
+    outcome = probe_loopback_health(probe_host, port, boot_token, _HEALTH_PROBE_TIMEOUT)
+    return _interpret_probe_outcome(outcome, state, pid, probe_host, port)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -605,8 +707,9 @@ def _reload_enrollment_config(relay: AgentRelay) -> None:
     if changed:
         log.info("sighup reload: updated %s", ", ".join(changed))
         # Keep relay.json in sync so adopters comparing on-disk config
-        # see the post-reload fail_mode, not the startup value.
-        _write_relay_state(config)
+        # see the post-reload fail_mode, not the startup value. Token is
+        # process-scoped, so it stays the same across rewrites.
+        _write_relay_state(config, relay.boot_token)
     else:
         log.info("sighup reload: no changes detected")
 
@@ -615,7 +718,7 @@ async def run_relay(config: RelayConfig) -> None:
     """Start the relay and run until interrupted."""
     relay = AgentRelay(config)
     await relay.start()
-    _write_relay_state(config)
+    _write_relay_state(config, relay.boot_token)
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()

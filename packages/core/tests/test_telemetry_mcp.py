@@ -107,8 +107,11 @@ class TestRelayUrlOr(unittest.TestCase):
 
         from lumen_argus_core.telemetry import _relay_url_or
 
-        state = json.dumps({"bind": "127.0.0.1", "port": 8070, "pid": os.getpid()})
-        with patch("builtins.open", return_value=StringIO(state)):
+        state = json.dumps({"bind": "127.0.0.1", "port": 8070, "pid": os.getpid(), "boot_token": "abc"})
+        with (
+            patch("builtins.open", return_value=StringIO(state)),
+            patch("lumen_argus_core.relay_state.probe_loopback_health", return_value="match"),
+        ):
             result = _relay_url_or("http://proxy:8080")
         self.assertEqual(result, "http://127.0.0.1:8070")
 
@@ -118,8 +121,53 @@ class TestRelayUrlOr(unittest.TestCase):
 
         from lumen_argus_core.telemetry import _relay_url_or
 
-        state = json.dumps({"bind": "127.0.0.1", "port": 8070, "pid": 999999})
+        state = json.dumps({"bind": "127.0.0.1", "port": 8070, "pid": 999999, "boot_token": "abc"})
         with patch("builtins.open", return_value=StringIO(state)):
+            result = _relay_url_or("http://proxy:8080")
+        self.assertEqual(result, "http://proxy:8080")
+
+    def test_missing_boot_token_returns_fallback(self):
+        """Pre-#77 file (no boot_token) cannot be adopted by the heartbeat path."""
+        import json
+        import os
+        from io import StringIO
+
+        from lumen_argus_core.telemetry import _relay_url_or
+
+        state = json.dumps({"bind": "127.0.0.1", "port": 8070, "pid": os.getpid()})
+        with patch("builtins.open", return_value=StringIO(state)):
+            result = _relay_url_or("http://proxy:8080")
+        self.assertEqual(result, "http://proxy:8080")
+
+    def test_probe_mismatch_returns_fallback(self):
+        """Recycled PID claiming a foreign /health → fallback (#77)."""
+        import json
+        import os
+        from io import StringIO
+
+        from lumen_argus_core.telemetry import _relay_url_or
+
+        state = json.dumps({"bind": "127.0.0.1", "port": 8070, "pid": os.getpid(), "boot_token": "abc"})
+        with (
+            patch("builtins.open", return_value=StringIO(state)),
+            patch("lumen_argus_core.relay_state.probe_loopback_health", return_value="mismatch"),
+        ):
+            result = _relay_url_or("http://proxy:8080")
+        self.assertEqual(result, "http://proxy:8080")
+
+    def test_probe_refused_returns_fallback(self):
+        """Closed port → fallback; telemetry never mutates relay.json."""
+        import json
+        import os
+        from io import StringIO
+
+        from lumen_argus_core.telemetry import _relay_url_or
+
+        state = json.dumps({"bind": "127.0.0.1", "port": 8070, "pid": os.getpid(), "boot_token": "abc"})
+        with (
+            patch("builtins.open", return_value=StringIO(state)),
+            patch("lumen_argus_core.relay_state.probe_loopback_health", return_value="refused"),
+        ):
             result = _relay_url_or("http://proxy:8080")
         self.assertEqual(result, "http://proxy:8080")
 
