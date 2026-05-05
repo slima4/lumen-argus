@@ -138,6 +138,10 @@ class ScannerPipeline:
         self._finding_dedup = FindingDedup(ttl_seconds=finding_ttl)
         self._finding_dedup.start_cleanup_scheduler()
 
+    def fingerprint_stats(self) -> dict[str, int]:
+        """Return content-fingerprint cache stats for /metrics export."""
+        return self._fingerprint.stats()
+
     def commit_pending(self, result: ScanResult) -> None:
         """Commit deferred fingerprint hashes from a blocked-then-stripped request.
 

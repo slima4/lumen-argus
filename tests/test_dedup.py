@@ -240,6 +240,48 @@ class TestContentFingerprint(unittest.TestCase):
         result, _pending = self.fp.filter_new_fields("conv-1", [])
         self.assertEqual(result, [])
 
+    def test_rejects_max_conversations_below_shard_count(self):
+        """max_conversations < NUM_SHARDS would silently disable LRU eviction."""
+        with self.assertRaises(ValueError) as ctx:
+            ContentFingerprint(conversation_ttl=60, max_conversations=0)
+        self.assertIn("max_conversations", str(ctx.exception))
+        with self.assertRaises(ValueError):
+            ContentFingerprint(conversation_ttl=60, max_conversations=ContentFingerprint.NUM_SHARDS - 1)
+
+    def test_rejects_zero_max_hashes_per_conversation(self):
+        with self.assertRaises(ValueError):
+            ContentFingerprint(
+                conversation_ttl=60,
+                max_conversations=ContentFingerprint.NUM_SHARDS,
+                max_hashes_per_conversation=0,
+            )
+
+    def test_rejects_negative_conversation_ttl(self):
+        with self.assertRaises(ValueError):
+            ContentFingerprint(conversation_ttl=-1, max_conversations=ContentFingerprint.NUM_SHARDS)
+
+    def test_minimum_valid_max_conversations_evicts(self):
+        """At max_conversations == NUM_SHARDS (shard_limit=1), eviction still works."""
+        fp = ContentFingerprint(
+            conversation_ttl=60,
+            max_conversations=ContentFingerprint.NUM_SHARDS,
+            max_hashes_per_conversation=100,
+        )
+        keys: list[str] = []
+        for i in range(5000):
+            k = "conv-%d" % i
+            if fp._shard_for(k) == 0:
+                keys.append(k)
+            if len(keys) == 2:
+                break
+        self.assertEqual(len(keys), 2, "could not find two keys colliding on shard 0 within 5000 candidates")
+        fields = [ScanField(path="m[0]", text="hello", source_filename="")]
+        self._filter_and_commit(fp, keys[0], fields)
+        self._filter_and_commit(fp, keys[1], fields)
+        # Shard 0 holds only one entry — keys[0] should be evicted.
+        self.assertEqual(len(fp._shards[0]), 1)
+        self.assertIn(keys[1], fp._shards[0])
+
     def test_concurrent_overlapping_commits_no_counter_drift(self):
         """Concurrent commits with overlapping hashes must not falsely fill the cap.
 
@@ -248,7 +290,11 @@ class TestContentFingerprint(unittest.TestCase):
         the counter past len(seen_hashes), silently disabling Layer-1 dedup once
         the counter reached _max_hashes.
         """
-        fp = ContentFingerprint(conversation_ttl=60, max_conversations=10, max_hashes_per_conversation=1000)
+        fp = ContentFingerprint(
+            conversation_ttl=60,
+            max_conversations=ContentFingerprint.NUM_SHARDS,
+            max_hashes_per_conversation=1000,
+        )
         conv_key = "conv-shared"
         # Seed the cache so both threads observe the same starting state.
         fp.filter_new_fields(conv_key, [])

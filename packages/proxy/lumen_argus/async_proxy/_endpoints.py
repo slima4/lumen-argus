@@ -38,9 +38,17 @@ async def _handle_health(request: web.Request) -> web.Response:
 async def _handle_metrics(request: web.Request) -> web.Response:
     """Respond to /metrics with Prometheus exposition format."""
     server = request.app[_PROXY_KEY]
+    fp_stats: dict[str, int] | None = None
+    pipeline = getattr(server, "pipeline", None)
+    if pipeline is not None:
+        try:
+            fp_stats = await asyncio.to_thread(pipeline.fingerprint_stats)
+        except Exception:
+            log.debug("fingerprint stats failed", exc_info=True)
     text = server.stats.prometheus_metrics(
         active_requests=server.active_requests,
         active_ws_connections=server.active_ws_connections,
+        fingerprint_stats=fp_stats,
     )
     metrics_hook = server.extensions.get_metrics_hook() if server.extensions else None
     if metrics_hook:

@@ -11,6 +11,7 @@ from typing import Any
 
 from lumen_argus.config._schema import _ENCODING_NAMES, _PIPELINE_STAGE_NAMES
 from lumen_argus.models import ACTION_SET, SEVERITY_SET
+from lumen_argus.pipeline._fingerprint import ContentFingerprint
 
 _VALID_ACTIONS = ACTION_SET
 
@@ -357,6 +358,7 @@ def _validate_config(data: dict[str, Any], source: str) -> list[str]:
     dedup = data.get("dedup", {})
     if isinstance(dedup, dict):
         warnings.extend("%s: unknown key 'dedup.%s'" % (source, key) for key in dedup if key not in _KNOWN_DEDUP_KEYS)
+        _MIN_PER_KEY = {"max_conversations": ContentFingerprint.NUM_SHARDS}
         for int_key in (
             "conversation_ttl_minutes",
             "finding_ttl_minutes",
@@ -366,8 +368,9 @@ def _validate_config(data: dict[str, Any], source: str) -> list[str]:
             if int_key in dedup:
                 try:
                     val = int(dedup[int_key])
-                    if val < 1:
-                        warnings.append("%s: dedup.%s must be positive" % (source, int_key))
+                    floor = _MIN_PER_KEY.get(int_key, 1)
+                    if val < floor:
+                        warnings.append("%s: dedup.%s must be >= %d" % (source, int_key, floor))
                 except (ValueError, TypeError):
                     warnings.append("%s: dedup.%s must be an integer" % (source, int_key))
 

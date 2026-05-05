@@ -36,17 +36,37 @@ class ContentFingerprint:
     resistance — sufficient for dedup.
     """
 
-    _NUM_SHARDS = 16
+    NUM_SHARDS = 16
 
     def __init__(
         self, conversation_ttl: int = 1800, max_conversations: int = 10_000, max_hashes_per_conversation: int = 5_000
     ):
+        if max_conversations < self.NUM_SHARDS:
+            raise ValueError(
+                "max_conversations must be >= %d (one per shard); got %d. "
+                "Set dedup.max_conversations to a positive integer at least %d in config."
+                % (self.NUM_SHARDS, max_conversations, self.NUM_SHARDS)
+            )
+        if max_hashes_per_conversation < 1:
+            raise ValueError("max_hashes_per_conversation must be >= 1; got %d." % max_hashes_per_conversation)
+        if conversation_ttl < 0:
+            raise ValueError("conversation_ttl must be >= 0; got %d." % conversation_ttl)
         self._ttl = conversation_ttl
         self._max_conversations = max_conversations
         self._max_hashes = max_hashes_per_conversation
-        self._shards: list[dict[str, _ConversationCache]] = [{} for _ in range(self._NUM_SHARDS)]
-        self._locks = [threading.Lock() for _ in range(self._NUM_SHARDS)]
+        self._shard_limit = max_conversations // self.NUM_SHARDS
+        self._shards: list[dict[str, _ConversationCache]] = [{} for _ in range(self.NUM_SHARDS)]
+        self._locks = [threading.Lock() for _ in range(self.NUM_SHARDS)]
         self._cleanup_timer: threading.Timer | None = None
+        log.info(
+            "content fingerprint: max_conversations=%d (shard_limit=%d across %d shards), "
+            "max_hashes_per_conversation=%d, ttl=%ds",
+            max_conversations,
+            self._shard_limit,
+            self.NUM_SHARDS,
+            max_hashes_per_conversation,
+            conversation_ttl,
+        )
 
     @staticmethod
     def _hash_text(text: str) -> str:
@@ -54,7 +74,7 @@ class ContentFingerprint:
         return hashlib.sha256(text.encode()).hexdigest()[:16]
 
     def _shard_for(self, key: str) -> int:
-        return hash(key) & (self._NUM_SHARDS - 1)
+        return hash(key) & (self.NUM_SHARDS - 1)
 
     def filter_new_fields(
         self, conversation_key: str, fields: list[ScanField]
@@ -95,8 +115,7 @@ class ContentFingerprint:
 
             # LRU eviction: if adding a new conversation exceeded the
             # per-shard limit, evict the least-recently-accessed entry.
-            shard_limit = self._max_conversations // self._NUM_SHARDS
-            if is_new_conv and len(shard) > shard_limit > 0:
+            if is_new_conv and len(shard) > self._shard_limit:
                 lru_key = min(
                     (k for k in shard if k != conversation_key),
                     key=lambda k: shard[k].last_access,
@@ -129,7 +148,7 @@ class ContentFingerprint:
         """Remove expired conversations. Called periodically."""
         now = time.monotonic()
         total_removed = 0
-        for idx in range(self._NUM_SHARDS):
+        for idx in range(self.NUM_SHARDS):
             with self._locks[idx]:
                 expired = [k for k, v in self._shards[idx].items() if now - v.last_access > self._ttl]
                 for k in expired:
@@ -160,7 +179,7 @@ class ContentFingerprint:
         """Return cache statistics."""
         conversations = 0
         total_hashes = 0
-        for idx in range(self._NUM_SHARDS):
+        for idx in range(self.NUM_SHARDS):
             with self._locks[idx]:
                 for cache in self._shards[idx].values():
                     conversations += 1

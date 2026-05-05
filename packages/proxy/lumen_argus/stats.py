@@ -69,7 +69,12 @@ class SessionStats:
         """Escape a Prometheus label value."""
         return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
-    def prometheus_metrics(self, active_requests: int = 0, active_ws_connections: int = 0) -> str:
+    def prometheus_metrics(
+        self,
+        active_requests: int = 0,
+        active_ws_connections: int = 0,
+        fingerprint_stats: dict[str, int] | None = None,
+    ) -> str:
         """Return stats in Prometheus exposition format (plain text)."""
         with self._lock:
             lines = []
@@ -83,6 +88,18 @@ class SessionStats:
             lines.append("# HELP lumen_argus_ws_active_connections Current active WebSocket connections")
             lines.append("# TYPE lumen_argus_ws_active_connections gauge")
             lines.append("lumen_argus_ws_active_connections %d" % active_ws_connections)
+
+            if fingerprint_stats is not None:
+                lines.append(
+                    "# HELP lumen_argus_fingerprint_conversations Tracked conversations in content-fingerprint cache"
+                )
+                lines.append("# TYPE lumen_argus_fingerprint_conversations gauge")
+                lines.append(
+                    "lumen_argus_fingerprint_conversations %d" % int(fingerprint_stats.get("conversations", 0))
+                )
+                lines.append("# HELP lumen_argus_fingerprint_hashes Total content hashes in fingerprint cache")
+                lines.append("# TYPE lumen_argus_fingerprint_hashes gauge")
+                lines.append("lumen_argus_fingerprint_hashes %d" % int(fingerprint_stats.get("total_hashes", 0)))
 
             # Request counters by action
             lines.append("# HELP lumen_argus_requests_total Total proxied requests by action")

@@ -124,6 +124,17 @@ class TestPrometheusMetrics(unittest.TestCase):
         # Should be valid text, no binary
         self.assertIsInstance(output, str)
 
+    def test_fingerprint_gauge_emitted_when_stats_provided(self):
+        output = SessionStats().prometheus_metrics(fingerprint_stats={"conversations": 42, "total_hashes": 137})
+        self.assertIn("lumen_argus_fingerprint_conversations 42", output)
+        self.assertIn("lumen_argus_fingerprint_hashes 137", output)
+        self.assertIn("# TYPE lumen_argus_fingerprint_conversations gauge", output)
+
+    def test_fingerprint_gauge_omitted_when_stats_missing(self):
+        output = SessionStats().prometheus_metrics()
+        self.assertNotIn("lumen_argus_fingerprint_conversations", output)
+        self.assertNotIn("lumen_argus_fingerprint_hashes", output)
+
     def test_matched_value_not_in_metrics(self):
         """Prometheus output must never contain matched_value."""
         stats = SessionStats()
