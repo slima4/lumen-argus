@@ -240,6 +240,53 @@ class TestContentFingerprint(unittest.TestCase):
         result, _pending = self.fp.filter_new_fields("conv-1", [])
         self.assertEqual(result, [])
 
+    def test_concurrent_overlapping_commits_no_counter_drift(self):
+        """Concurrent commits with overlapping hashes must not falsely fill the cap.
+
+        Regression: hash_count was incremented per commit_hashes call, while
+        seen_hashes (a set) deduped — overlapping concurrent commits could push
+        the counter past len(seen_hashes), silently disabling Layer-1 dedup once
+        the counter reached _max_hashes.
+        """
+        fp = ContentFingerprint(conversation_ttl=60, max_conversations=10, max_hashes_per_conversation=1000)
+        conv_key = "conv-shared"
+        # Seed the cache so both threads observe the same starting state.
+        fp.filter_new_fields(conv_key, [])
+
+        # Each thread filters then commits the SAME field set — both pendings
+        # contain the same hashes, so the union has N entries but two naive
+        # counters would record 2N.
+        fields = [ScanField(path="m[%d]" % i, text="text-%d" % i, source_filename="") for i in range(50)]
+
+        barrier = threading.Barrier(2)
+        errors: list[Exception] = []
+
+        def worker():
+            try:
+                _new, pending = fp.filter_new_fields(conv_key, fields)
+                barrier.wait()  # force overlap on commit
+                fp.commit_hashes(pending)
+            except Exception as exc:  # pragma: no cover
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(errors, [])
+        # Authoritative size = unique hashes added, not number of commits.
+        idx = fp._shard_for(conv_key)
+        cache = fp._shards[idx][conv_key]
+        self.assertEqual(len(cache.seen_hashes), 50)
+        self.assertEqual(fp.stats()["total_hashes"], 50)
+
+        # Cap still effective: a fresh field becomes new (cache not silently full).
+        result = self._filter_and_commit(fp, conv_key, [ScanField(path="m[new]", text="brand-new", source_filename="")])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(fp.stats()["total_hashes"], 51)
+
 
 class TestFindingDedup(unittest.TestCase):
     """Layer 2: Finding-level TTL cache tests."""

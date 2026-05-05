@@ -18,12 +18,11 @@ log = logging.getLogger("argus.pipeline")
 class _ConversationCache:
     """Per-conversation set of seen content hashes."""
 
-    __slots__ = ("hash_count", "last_access", "seen_hashes")
+    __slots__ = ("last_access", "seen_hashes")
 
     def __init__(self) -> None:
         self.seen_hashes: set[str] = set()  # set of str (SHA-256 prefix)
         self.last_access = time.monotonic()
-        self.hash_count = 0
 
 
 class ContentFingerprint:
@@ -122,11 +121,9 @@ class ContentFingerprint:
             cache = shard.get(conversation_key)
             if cache is None:
                 return
-            remaining = self._max_hashes - cache.hash_count
+            remaining = self._max_hashes - len(cache.seen_hashes)
             if remaining > 0:
-                hashes_to_add = new_hashes[:remaining]
-                cache.seen_hashes.update(hashes_to_add)
-                cache.hash_count += len(hashes_to_add)
+                cache.seen_hashes.update(new_hashes[:remaining])
 
     def cleanup(self) -> int:
         """Remove expired conversations. Called periodically."""
@@ -167,5 +164,5 @@ class ContentFingerprint:
             with self._locks[idx]:
                 for cache in self._shards[idx].values():
                     conversations += 1
-                    total_hashes += cache.hash_count
+                    total_hashes += len(cache.seen_hashes)
         return {"conversations": conversations, "total_hashes": total_hashes}
