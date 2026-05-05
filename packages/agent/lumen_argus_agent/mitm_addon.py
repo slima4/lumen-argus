@@ -231,6 +231,17 @@ class LumenArgusAddon:
         # Lazy import to avoid loading context module until needed
         from lumen_argus_agent.context import resolve_context, static_context
 
+        # Strip every caller-supplied x-lumen-argus-* header before
+        # injection (#76). The agent owns this namespace; any pre-existing
+        # value is a spoofing attempt by a local process. mitmproxy's
+        # ``Headers`` is case-insensitive, so __setitem__ later replaces
+        # cleanly, but we still drop fields the agent chooses not to set
+        # (empty ctx, privacy flags, no GitHub login) — those would
+        # otherwise be inherited from the caller.
+        for key in list(flow.request.headers.keys()):
+            if key.lower().startswith(_LUMEN_HEADER_PREFIX):
+                del flow.request.headers[key]
+
         # Attempt PID-level resolution from client address
         # mitmproxy provides client connection info
         client_port = 0

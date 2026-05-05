@@ -27,6 +27,7 @@ from typing import Any
 
 import aiohttp
 from aiohttp import web
+from multidict import CIMultiDict
 
 from lumen_argus_agent.context import CallerContext, resolve_context, static_context
 
@@ -253,12 +254,11 @@ class AgentRelay:
         # Build forwarding headers
         fwd_headers = _build_forward_headers(request, body)
 
-        # Inject X-Lumen-* identity headers
+        # Inject X-Lumen-* identity + agent-token headers (one strip pass
+        # inside owns the entire x-lumen-argus-* namespace — keep token
+        # injection here too so a future caller cannot reintroduce a write
+        # outside the strip's protection window).
         _inject_identity_headers(fwd_headers, self.config, ctx)
-
-        # Inject agent authentication for upstream proxy
-        if self.config.agent_token:
-            fwd_headers["X-Lumen-Argus-Agent-Token"] = self.config.agent_token
 
         # Try upstream proxy
         if self._upstream_healthy and self._upstream_session:
@@ -301,7 +301,7 @@ class AgentRelay:
         path: str,
         body: bytes,
         request: web.Request,
-        fwd_headers: dict[str, str],
+        fwd_headers: CIMultiDict[str],
         original_headers: dict[str, str],
         t0: float,
     ) -> web.StreamResponse:
@@ -310,7 +310,9 @@ class AgentRelay:
         direct_url = "%s%s" % (upstream_base, path)
 
         # Strip X-Lumen-* headers — API providers don't need them
-        clean_headers = {k: v for k, v in fwd_headers.items() if not k.lower().startswith(LUMEN_HEADER_PREFIX)}
+        clean_headers: CIMultiDict[str] = CIMultiDict(
+            (k, v) for k, v in fwd_headers.items() if not k.lower().startswith(LUMEN_HEADER_PREFIX)
+        )
         # Restore original Host header for the API provider
         if "://" in upstream_base:
             clean_headers["Host"] = upstream_base.split("://", 1)[1].rstrip("/")
@@ -344,7 +346,7 @@ class AgentRelay:
         method: str,
         body: bytes,
         request: web.Request,
-        headers: dict[str, str],
+        headers: CIMultiDict[str],
         request_id: int,
     ) -> web.StreamResponse:
         """Forward request and relay response (buffered or SSE streaming)."""
@@ -404,9 +406,16 @@ class AgentRelay:
 # ---------------------------------------------------------------------------
 
 
-def _build_forward_headers(request: web.Request, body: bytes) -> dict[str, str]:
-    """Build forwarding headers, stripping hop-by-hop."""
-    fwd: dict[str, str] = {}
+def _build_forward_headers(request: web.Request, body: bytes) -> CIMultiDict[str]:
+    """Build forwarding headers, stripping hop-by-hop.
+
+    Returns a ``CIMultiDict`` so that subsequent ``headers[name] = value``
+    writes deduplicate case-insensitively. ``add()`` is used for non-special
+    client headers to preserve legitimately repeated names (e.g. ``Set-Cookie``,
+    ``Cache-Control``); only fields the relay actively sets switch to
+    ``__setitem__``.
+    """
+    fwd: CIMultiDict[str] = CIMultiDict()
     for key, val in request.headers.items():
         lk = key.lower()
         if lk in _HOP_BY_HOP:
@@ -416,12 +425,45 @@ def _build_forward_headers(request: web.Request, body: bytes) -> dict[str, str]:
         if lk == "content-length":
             fwd[key] = str(len(body))
             continue
-        fwd[key] = val
+        fwd.add(key, val)
     return fwd
 
 
-def _inject_identity_headers(headers: dict[str, str], config: RelayConfig, ctx: CallerContext) -> None:
-    """Inject X-Lumen-* identity headers into forwarding headers."""
+def _strip_lumen_headers(headers: CIMultiDict[str]) -> None:
+    """Remove every ``x-lumen-argus-*`` header (case-insensitive).
+
+    The relay owns the ``x-lumen-argus-*`` namespace end-to-end. Any
+    incoming value with that prefix is a spoofing attempt by a local
+    process targeting the relay's audit attribution. Strip unconditionally
+    before injection so headers the relay *chooses not to set* (because
+    the ctx field is empty or a privacy flag is off) cannot be inherited
+    from the caller.
+
+    ``CIMultiDict.__delitem__`` removes *all* case-insensitive matches in a
+    single call, so we deduplicate the candidate names by their lowercased
+    form before deleting — otherwise an attacker sending two case-distinct
+    duplicates of the same header (e.g. ``x-lumen-argus-foo`` and
+    ``X-LUMEN-ARGUS-FOO``) would cause the second ``del`` to raise
+    ``KeyError``. Using ``popall(name, [])`` makes the operation idempotent
+    even if the input dict already collapsed duplicates.
+    """
+    names = {key.lower() for key in headers.keys() if key.lower().startswith(LUMEN_HEADER_PREFIX)}
+    for name in names:
+        headers.popall(name, [])
+
+
+def _inject_identity_headers(headers: CIMultiDict[str], config: RelayConfig, ctx: CallerContext) -> None:
+    """Inject X-Lumen-* identity headers into forwarding headers.
+
+    Two-layer integrity guarantee against header spoofing (#76):
+    1. ``_strip_lumen_headers`` drops every caller-supplied
+       ``x-lumen-argus-*`` header up front.
+    2. Writes go through ``CIMultiDict.__setitem__``, which already
+       deduplicates case-insensitively — even if a future change skips
+       the strip pass, a duplicate-cased entry can't survive.
+    """
+    _strip_lumen_headers(headers)
+
     if config.agent_id:
         headers["X-Lumen-Argus-Agent-Id"] = config.agent_id
     if config.machine_id:
@@ -438,6 +480,8 @@ def _inject_identity_headers(headers: dict[str, str], config: RelayConfig, ctx: 
         headers["X-Lumen-Argus-Username"] = ctx.username
     if ctx.client_pid:
         headers["X-Lumen-Argus-Client-PID"] = str(ctx.client_pid)
+    if config.agent_token:
+        headers["X-Lumen-Argus-Agent-Token"] = config.agent_token
 
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,9 @@ from lumen_argus_agent.relay import (
     _build_forward_headers,
     _inject_identity_headers,
     _resolve_direct_upstream,
+    _strip_lumen_headers,
 )
+from multidict import CIMultiDict
 
 
 class TestResolveDirectUpstream(unittest.TestCase):
@@ -178,6 +180,194 @@ class TestBuildForwardHeaders(unittest.TestCase):
         req = self._make_request({"Content-Length": "999"}, body)
         fwd = _build_forward_headers(req, body)
         self.assertEqual(fwd["Content-Length"], str(len(body)))
+
+    def test_returns_cimultidict(self):
+        """Forward headers must be CIMultiDict so __setitem__ dedupes case-insensitively."""
+        req = self._make_request({"Authorization": "Bearer x"})
+        fwd = _build_forward_headers(req, b"{}")
+        self.assertIsInstance(fwd, CIMultiDict)
+
+
+class TestSpoofingDefence(unittest.TestCase):
+    """Regression tests for issue #76 — caller-supplied X-Lumen-Argus-* spoofing.
+
+    A local malicious process hitting the relay on 127.0.0.1:8070 must not be
+    able to attribute its activity to a different working_directory, hostname,
+    username, etc., by sending pre-existing x-lumen-argus-* headers (in any
+    case) that survive forwarding.
+    """
+
+    def _make_request(self, headers: dict[str, str], body: bytes = b"{}"):
+        from aiohttp.test_utils import make_mocked_request
+
+        return make_mocked_request("POST", "/v1/messages", headers=CIMultiDict(headers))
+
+    def test_strip_lumen_headers_drops_all_case_variants(self):
+        headers: CIMultiDict[str] = CIMultiDict()
+        headers.add("x-lumen-argus-working-dir", "SPOOF")
+        headers.add("X-LUMEN-ARGUS-USERNAME", "SPOOF")
+        headers.add("X-Lumen-Argus-Hostname", "SPOOF")
+        headers.add("Authorization", "Bearer real")
+
+        _strip_lumen_headers(headers)
+
+        self.assertEqual(headers.get("Authorization"), "Bearer real")
+        for key in headers.keys():
+            self.assertFalse(
+                key.lower().startswith("x-lumen-argus-"),
+                f"residual lumen header survived strip: {key!r}",
+            )
+
+    def test_strip_handles_duplicate_cased_same_name_header(self):
+        """Attacker sends two case-distinct entries for the *same* header name.
+
+        Regression for the crash the first iteration of this fix had:
+        ``del headers[key]`` on ``CIMultiDict`` removes all CI matches in a
+        single call, so a naive ``for key in list(headers.keys()): del`` raised
+        ``KeyError`` on the second iteration — exactly the attack pattern.
+        """
+        headers: CIMultiDict[str] = CIMultiDict()
+        headers.add("x-lumen-argus-working-dir", "SPOOF1")
+        headers.add("X-LUMEN-ARGUS-WORKING-DIR", "SPOOF2")
+        headers.add("X-Lumen-Argus-Working-Dir", "SPOOF3")
+
+        _strip_lumen_headers(headers)  # must not raise
+
+        self.assertEqual(list(headers.items()), [])
+
+    def test_strip_is_idempotent_on_clean_headers(self):
+        headers: CIMultiDict[str] = CIMultiDict()
+        headers.add("Authorization", "Bearer real")
+        _strip_lumen_headers(headers)
+        _strip_lumen_headers(headers)
+        self.assertEqual(headers.get("Authorization"), "Bearer real")
+
+    def test_inject_overwrites_caller_supplied_value(self):
+        """Even when relay actively sets a field, a duplicate-cased caller value cannot survive."""
+        headers: CIMultiDict[str] = CIMultiDict()
+        headers["x-lumen-argus-working-dir"] = "SPOOF"
+        config = RelayConfig()
+        ctx = CallerContext(working_directory="/real/path")
+
+        _inject_identity_headers(headers, config, ctx)
+
+        values = headers.getall("X-Lumen-Argus-Working-Dir")
+        self.assertEqual(values, ["/real/path"])
+        self.assertNotIn("SPOOF", list(headers.values()))
+
+    def test_inject_strips_caller_value_when_relay_skips_field(self):
+        """The hardest case: relay decides NOT to inject (empty ctx field) — caller's spoof must still die."""
+        headers: CIMultiDict[str] = CIMultiDict()
+        headers["x-lumen-argus-working-dir"] = "SPOOF-cwd"
+        headers["X-Lumen-Argus-Hostname"] = "SPOOF-host"
+        headers["x-lumen-argus-username"] = "SPOOF-user"
+        config = RelayConfig()  # no agent_id — agent fields skipped
+        ctx = CallerContext()  # empty — every field skipped
+
+        _inject_identity_headers(headers, config, ctx)
+
+        for key in headers.keys():
+            self.assertFalse(
+                key.lower().startswith("x-lumen-argus-"),
+                f"caller-supplied lumen header survived inject: {key!r}",
+            )
+
+    def test_inject_strips_caller_hostname_when_privacy_flag_off(self):
+        """send_hostname=False + ctx.hostname populated: the relay does NOT inject hostname.
+
+        A caller-supplied ``X-Lumen-Argus-Hostname: SPOOF`` must still be
+        stripped — otherwise the privacy flag becomes a spoofing window.
+        """
+        headers: CIMultiDict[str] = CIMultiDict()
+        headers["X-Lumen-Argus-Hostname"] = "SPOOF-host"
+        headers["x-lumen-argus-username"] = "SPOOF-user"
+        config = RelayConfig(send_hostname=False, send_username=False)
+        ctx = CallerContext(hostname="real-host", username="real-user")
+
+        _inject_identity_headers(headers, config, ctx)
+
+        self.assertNotIn("X-Lumen-Argus-Hostname", headers)
+        self.assertNotIn("X-Lumen-Argus-Username", headers)
+
+    def test_inject_writes_agent_token(self):
+        """Token is part of the identity namespace and must be injected by the same call.
+
+        Keeps the token write inside the strip's protection window — a future
+        caller cannot reintroduce a write outside that window without noticing.
+        """
+        headers: CIMultiDict[str] = CIMultiDict()
+        headers["x-lumen-argus-agent-token"] = "SPOOF-tok"
+        config = RelayConfig(agent_token="genuine-tok")
+        ctx = CallerContext()
+
+        _inject_identity_headers(headers, config, ctx)
+
+        self.assertEqual(headers["X-Lumen-Argus-Agent-Token"], "genuine-tok")
+        self.assertEqual(headers.getall("X-Lumen-Argus-Agent-Token"), ["genuine-tok"])
+
+    def test_inject_strips_caller_token_when_relay_has_no_token(self):
+        headers: CIMultiDict[str] = CIMultiDict()
+        headers["x-lumen-argus-agent-token"] = "SPOOF-tok"
+        config = RelayConfig()  # no agent_token
+        ctx = CallerContext()
+
+        _inject_identity_headers(headers, config, ctx)
+
+        self.assertNotIn("X-Lumen-Argus-Agent-Token", headers)
+
+    def test_inject_strips_unknown_lumen_field(self):
+        """Caller injecting a x-lumen-argus-* name the relay never sets must still be dropped."""
+        headers: CIMultiDict[str] = CIMultiDict()
+        headers["x-lumen-argus-bogus-field"] = "SPOOF"
+        headers["X-Lumen-Argus-Account-Id"] = "SPOOF"  # set only by mitm path
+        config = RelayConfig(agent_id="real_agent")
+        ctx = CallerContext(os_platform="darwin")
+
+        _inject_identity_headers(headers, config, ctx)
+
+        self.assertNotIn("x-lumen-argus-bogus-field", headers)
+        self.assertNotIn("X-Lumen-Argus-Account-Id", headers)
+        self.assertEqual(headers["X-Lumen-Argus-Agent-Id"], "real_agent")
+
+    def test_inject_does_not_touch_non_lumen_headers(self):
+        headers: CIMultiDict[str] = CIMultiDict()
+        headers["Authorization"] = "Bearer sk-ant-123"
+        headers["x-api-key"] = "test"
+        headers.add("Set-Cookie", "a=1")
+        headers.add("Set-Cookie", "b=2")  # legitimately repeated header
+        config = RelayConfig(agent_id="agent_x")
+        ctx = CallerContext(os_platform="linux")
+
+        _inject_identity_headers(headers, config, ctx)
+
+        self.assertEqual(headers["Authorization"], "Bearer sk-ant-123")
+        self.assertEqual(headers["x-api-key"], "test")
+        self.assertEqual(headers.getall("Set-Cookie"), ["a=1", "b=2"])
+
+    def test_end_to_end_no_spoof_reaches_wire(self):
+        """Build → inject pipeline: the value `SPOOF` must not appear in any forwarded header."""
+        req = self._make_request(
+            {
+                "Authorization": "Bearer real",
+                "x-lumen-argus-working-dir": "SPOOF",
+                "X-LUMEN-ARGUS-USERNAME": "SPOOF",
+                "X-Lumen-Argus-Hostname": "SPOOF",
+                "x-lumen-argus-agent-id": "SPOOF",
+                "x-lumen-argus-agent-token": "SPOOF",
+            }
+        )
+        fwd = _build_forward_headers(req, b"{}")
+        config = RelayConfig(agent_id="genuine_agent", agent_token="genuine_tok")
+        ctx = CallerContext(working_directory="/genuine/path", hostname="real-host", username="real-user")
+
+        _inject_identity_headers(fwd, config, ctx)
+
+        self.assertNotIn("SPOOF", list(fwd.values()))
+        self.assertEqual(fwd["X-Lumen-Argus-Agent-Token"], "genuine_tok")
+        self.assertEqual(fwd["X-Lumen-Argus-Agent-Id"], "genuine_agent")
+        self.assertEqual(fwd["X-Lumen-Argus-Working-Dir"], "/genuine/path")
+        self.assertEqual(fwd["X-Lumen-Argus-Hostname"], "real-host")
+        self.assertEqual(fwd["X-Lumen-Argus-Username"], "real-user")
 
 
 class TestAgentRelayHealth(AioHTTPTestCase):

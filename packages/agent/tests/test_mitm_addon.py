@@ -263,6 +263,173 @@ class TestGitHubAccountExtraction(unittest.TestCase):
         self.assertEqual(flow.request.headers["x-lumen-argus-account-id"], "slima4")
 
 
+class TestRequestSpoofingDefence(unittest.TestCase):
+    """Regression tests for issue #76 — caller-supplied x-lumen-argus-* spoofing.
+
+    A local process speaking HTTPS through the forward proxy must not be able
+    to attribute its activity to a different identity by pre-setting any
+    x-lumen-argus-* header. mitmproxy's ``Headers`` is case-insensitive on
+    __setitem__, but the inject pass must also drop fields the agent
+    *chooses not to set* (empty ctx, privacy flags off, no GitHub login).
+    """
+
+    def setUp(self):
+        from mitmproxy.http import Headers
+
+        self.Headers = Headers
+        self.addon = LumenArgusAddon(
+            upstream_proxy="http://localhost:8080",
+            agent_token="tok_test",
+            agent_id="agent_test",
+        )
+
+    def _make_flow(self, headers, host="api.individual.githubcopilot.com"):
+        flow = mock.MagicMock()
+        flow.request.pretty_host = host
+        flow.request.port = 443
+        flow.request.scheme = "https"
+        flow.request.path = "/v1/responses"
+        flow.request.method = "POST"
+        flow.request.headers = headers
+        flow.client_conn = mock.MagicMock()
+        flow.client_conn.peername = ("127.0.0.1", 54321)
+        return flow
+
+    @mock.patch("lumen_argus_agent.context.resolve_context")
+    def test_strips_caller_lumen_headers_when_agent_sets_field(self, mock_resolve):
+        mock_resolve.return_value = mock.MagicMock(
+            working_directory="/genuine/path",
+            git_branch="main",
+            os_platform="darwin",
+            hostname="genuine-host",
+            username="genuine-user",
+            client_pid=4242,
+        )
+        headers = self.Headers(
+            [
+                (b"x-lumen-argus-working-dir", b"SPOOF"),
+                (b"X-LUMEN-ARGUS-USERNAME", b"SPOOF"),
+                (b"X-Lumen-Argus-Hostname", b"SPOOF"),
+            ]
+        )
+        flow = self._make_flow(headers)
+
+        self.addon.request(flow)
+
+        self.assertEqual(flow.request.headers["x-lumen-argus-working-dir"], "/genuine/path")
+        self.assertEqual(flow.request.headers["x-lumen-argus-username"], "genuine-user")
+        self.assertEqual(flow.request.headers["x-lumen-argus-hostname"], "genuine-host")
+        self.assertNotIn("SPOOF", list(flow.request.headers.values()))
+
+    @mock.patch("lumen_argus_agent.context.resolve_context")
+    def test_strips_caller_lumen_headers_when_agent_skips_field(self, mock_resolve):
+        """Empty ctx + no GitHub login + agent-token/id absent — caller's spoofs must still die."""
+        mock_resolve.return_value = mock.MagicMock(
+            working_directory="",
+            git_branch="",
+            os_platform="",
+            hostname="",
+            username="",
+            client_pid=0,
+        )
+        addon = LumenArgusAddon(upstream_proxy="http://localhost:8080")  # no agent_token, no agent_id
+        headers = self.Headers(
+            [
+                (b"x-lumen-argus-working-dir", b"SPOOF-cwd"),
+                (b"X-Lumen-Argus-Hostname", b"SPOOF-host"),
+                (b"x-lumen-argus-account-id", b"SPOOF-acct"),
+                (b"x-lumen-argus-bogus-field", b"SPOOF"),
+                (b"x-lumen-argus-agent-token", b"SPOOF-tok"),
+            ]
+        )
+        flow = self._make_flow(headers)
+
+        addon.request(flow)
+
+        for key in flow.request.headers.keys():
+            self.assertFalse(
+                key.lower().startswith("x-lumen-argus-"),
+                f"caller-supplied lumen header survived inject: {key!r}",
+            )
+
+    @mock.patch("lumen_argus_agent.context.resolve_context")
+    def test_caller_account_id_replaced_by_cached_github_login(self, mock_resolve):
+        """Spoofed x-lumen-argus-account-id must be overwritten by cached _github_login.
+
+        ``_github_login`` is resolved server-side from the Copilot
+        ``/copilot_internal/user`` response and cached on the addon
+        instance. Once cached, it is injected on every subsequent request.
+        A local process pre-setting ``x-lumen-argus-account-id: SPOOF``
+        must not survive the strip + write.
+        """
+        mock_resolve.return_value = mock.MagicMock(
+            working_directory="",
+            git_branch="",
+            os_platform="darwin",
+            hostname="",
+            username="",
+            client_pid=0,
+        )
+        addon = LumenArgusAddon(upstream_proxy="http://localhost:8080", agent_id="agent_test")
+        addon._github_login = "real_login"
+        headers = self.Headers([(b"x-lumen-argus-account-id", b"SPOOF-acct")])
+        flow = self._make_flow(headers)
+
+        addon.request(flow)
+
+        self.assertEqual(flow.request.headers["x-lumen-argus-account-id"], "real_login")
+        self.assertEqual(flow.request.headers.get_all("x-lumen-argus-account-id"), ["real_login"])
+
+    @mock.patch("lumen_argus_agent.context.resolve_context")
+    def test_caller_account_id_dropped_when_no_github_login_resolved(self, mock_resolve):
+        """Before _github_login is resolved, no caller-supplied account-id may survive.
+
+        The strip must drop the spoofed account-id even though the addon
+        does not write its own value (login not yet cached).
+        """
+        mock_resolve.return_value = mock.MagicMock(
+            working_directory="",
+            git_branch="",
+            os_platform="",
+            hostname="",
+            username="",
+            client_pid=0,
+        )
+        addon = LumenArgusAddon(upstream_proxy="http://localhost:8080")
+        # _github_login left at default ""
+        headers = self.Headers([(b"x-lumen-argus-account-id", b"SPOOF-acct")])
+        flow = self._make_flow(headers)
+
+        addon.request(flow)
+
+        self.assertNotIn("x-lumen-argus-account-id", flow.request.headers)
+
+    @mock.patch("lumen_argus_agent.context.resolve_context")
+    def test_preserves_non_lumen_headers(self, mock_resolve):
+        mock_resolve.return_value = mock.MagicMock(
+            working_directory="",
+            git_branch="",
+            os_platform="darwin",
+            hostname="",
+            username="",
+            client_pid=0,
+        )
+        headers = self.Headers(
+            [
+                (b"Authorization", b"Bearer real-token"),
+                (b"User-Agent", b"copilot-cli/1.0"),
+                (b"x-lumen-argus-working-dir", b"SPOOF"),
+            ]
+        )
+        flow = self._make_flow(headers)
+
+        self.addon.request(flow)
+
+        self.assertEqual(flow.request.headers["Authorization"], "Bearer real-token")
+        self.assertEqual(flow.request.headers["User-Agent"], "copilot-cli/1.0")
+        self.assertNotIn("SPOOF", list(flow.request.headers.values()))
+
+
 class TestResponseStripping(unittest.TestCase):
     """Test addon response handler."""
 
