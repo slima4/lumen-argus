@@ -92,7 +92,7 @@ CREATE INDEX IF NOT EXISTS idx_findings_action ON findings(action_taken);
 CREATE INDEX IF NOT EXISTS idx_findings_intercept ON findings(intercept_mode);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_dedup
 ON findings(content_hash, session_id, namespace_id)
-WHERE content_hash != '';
+WHERE content_hash != '' AND session_id != '';
 """
 
 

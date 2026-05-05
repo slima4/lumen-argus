@@ -7,7 +7,7 @@ import unittest
 
 from lumen_argus.models import Finding, ScanField, SessionContext
 from lumen_argus.pipeline import ContentFingerprint, FindingDedup
-from tests.helpers import StoreTestCase
+from tests.helpers import StoreTestCase, make_finding
 
 
 class TestContentFingerprint(unittest.TestCase):
@@ -350,35 +350,35 @@ class TestFindingDedup(unittest.TestCase):
     def test_first_finding_is_new(self):
         dedup = FindingDedup(ttl_seconds=60)
         f = self._make_finding()
-        self.assertTrue(dedup.is_new(f))
+        self.assertTrue(dedup.is_new(f, session_id="sess-1"))
 
     def test_same_finding_within_ttl_is_not_new(self):
         dedup = FindingDedup(ttl_seconds=60)
         f = self._make_finding()
-        dedup.is_new(f)
-        self.assertFalse(dedup.is_new(f))
+        dedup.is_new(f, session_id="sess-1")
+        self.assertFalse(dedup.is_new(f, session_id="sess-1"))
 
     def test_same_finding_after_ttl_is_new_again(self):
         dedup = FindingDedup(ttl_seconds=0)
         f = self._make_finding()
-        dedup.is_new(f)
+        dedup.is_new(f, session_id="sess-1")
         # TTL=0 means immediately expired
         time.sleep(0.01)
-        self.assertTrue(dedup.is_new(f))
+        self.assertTrue(dedup.is_new(f, session_id="sess-1"))
 
     def test_different_type_is_always_new(self):
         dedup = FindingDedup(ttl_seconds=60)
         f1 = self._make_finding(ftype="aws_access_key")
         f2 = self._make_finding(ftype="aws_secret_key", matched="wJalrXUtnFEMI/SECRET")
-        dedup.is_new(f1)
-        self.assertTrue(dedup.is_new(f2))
+        dedup.is_new(f1, session_id="sess-1")
+        self.assertTrue(dedup.is_new(f2, session_id="sess-1"))
 
     def test_different_detector_is_always_new(self):
         dedup = FindingDedup(ttl_seconds=60)
         f1 = self._make_finding(detector="secrets")
         f2 = self._make_finding(detector="custom")
-        dedup.is_new(f1)
-        self.assertTrue(dedup.is_new(f2))
+        dedup.is_new(f1, session_id="sess-1")
+        self.assertTrue(dedup.is_new(f2, session_id="sess-1"))
 
     def test_same_finding_different_session_is_new(self):
         """Same finding in different sessions should both be recorded."""
@@ -395,17 +395,17 @@ class TestFindingDedup(unittest.TestCase):
         f1 = self._make_finding(ftype="aws_access_key")
         f2 = self._make_finding(ftype="github_token", matched="ghp_1234567890abcdef")
         # Record f1 as seen
-        dedup.is_new(f1)
+        dedup.is_new(f1, session_id="sess-1")
 
         # Filter list containing both
-        result = dedup.filter_new([f1, f2])
+        result = dedup.filter_new([f1, f2], session_id="sess-1")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].type, "github_token")
 
     def test_cleanup_removes_expired(self):
         dedup = FindingDedup(ttl_seconds=0)
         f = self._make_finding()
-        dedup.is_new(f)
+        dedup.is_new(f, session_id="sess-1")
         time.sleep(0.01)
         removed = dedup.cleanup()
         self.assertGreaterEqual(removed, 1)
@@ -421,7 +421,7 @@ class TestFindingDedup(unittest.TestCase):
                         ftype="type_%d_%d" % (thread_id, i),
                         matched="value_%d_%d" % (thread_id, i),
                     )
-                    dedup.is_new(f)
+                    dedup.is_new(f, session_id="sess-%d" % thread_id)
             except Exception as e:
                 errors.append(e)
 
@@ -432,6 +432,65 @@ class TestFindingDedup(unittest.TestCase):
             t.join()
 
         self.assertEqual(errors, [])
+
+    def test_empty_session_id_always_new(self):
+        """Empty session_id must bypass dedup — never collapse across users.
+
+        Regression: a session_id of "" (default fallback when extraction
+        yields nothing) used to share a single global bucket, so the first
+        sessionless finding suppressed every subsequent one for the TTL
+        window, across all users. is_new() must treat "" as "do not dedup"
+        by construction.
+        """
+        dedup = FindingDedup(ttl_seconds=60)
+        f = self._make_finding()
+        # Same finding, same empty session_id, repeated — every call is new.
+        self.assertTrue(dedup.is_new(f, session_id=""))
+        self.assertTrue(dedup.is_new(f, session_id=""))
+        self.assertTrue(dedup.is_new(f, session_id=""))
+        # Default argument == "" — same behavior.
+        self.assertTrue(dedup.is_new(f))
+        self.assertTrue(dedup.is_new(f))
+
+    def test_empty_session_id_does_not_pollute_cache(self):
+        """Empty session_id must not write into the cache.
+
+        Otherwise concurrent empty-session traffic would silently fill
+        shards and contend with real-session keys. Verifies the bypass
+        is read-AND-write skip, not just read skip.
+        """
+        dedup = FindingDedup(ttl_seconds=60)
+        f = self._make_finding()
+        for _ in range(5):
+            dedup.is_new(f, session_id="")
+        total = sum(len(shard) for shard in dedup._shards)
+        self.assertEqual(total, 0)
+
+    def test_empty_session_id_does_not_affect_real_sessions(self):
+        """Empty-session calls must not poison a subsequent real-session call."""
+        dedup = FindingDedup(ttl_seconds=60)
+        f = self._make_finding()
+        # Burn empty-session traffic first.
+        dedup.is_new(f, session_id="")
+        dedup.is_new(f, session_id="")
+        # Real session — first call must still be new.
+        self.assertTrue(dedup.is_new(f, session_id="sess-real"))
+        # Second call in same real session — properly deduped.
+        self.assertFalse(dedup.is_new(f, session_id="sess-real"))
+
+    def test_filter_new_with_empty_session_returns_all(self):
+        """filter_new must short-circuit identically — every finding survives."""
+        dedup = FindingDedup(ttl_seconds=60)
+        f1 = self._make_finding(ftype="aws_access_key")
+        f2 = self._make_finding(ftype="github_token", matched="ghp_1234567890abcdef")
+        # Pre-warm with a real session — must not leak into empty-session path.
+        dedup.is_new(f1, session_id="sess-real")
+        dedup.is_new(f2, session_id="sess-real")
+        result = dedup.filter_new([f1, f2], session_id="")
+        self.assertEqual(len(result), 2)
+        # Repeat — still all new (no caching).
+        result2 = dedup.filter_new([f1, f2], session_id="")
+        self.assertEqual(len(result2), 2)
 
 
 class TestStoreLevelDedup(StoreTestCase):
@@ -560,6 +619,106 @@ class TestStoreLevelDedup(StoreTestCase):
 
         findings, _ = self.store.get_findings_page()
         self.assertEqual(findings[0]["seen_count"], 1)
+
+    def test_empty_session_id_is_not_constrained(self):
+        """Findings with empty session_id must NOT collapse across users.
+
+        Regression for issue #64 (Layer-3): a central proxy serving N
+        users where session extraction has regressed (or the request body
+        has no system + no messages) must record a separate row per
+        finding instead of merging via the UNIQUE constraint. Per-user
+        attribution lives in source_ip / api_key_hash / hostname /
+        username — those are useless if the rows collapse.
+        """
+        f = self._make_finding()
+        # Three "users" — same finding payload, distinct identifying metadata,
+        # all with session_id = "" (the SecOps central-proxy regression case).
+        users = [
+            SessionContext(session_id="", source_ip="10.0.0.1", api_key_hash="aaaa1111"),
+            SessionContext(session_id="", source_ip="10.0.0.2", api_key_hash="bbbb2222"),
+            SessionContext(session_id="", source_ip="10.0.0.3", api_key_hash="cccc3333"),
+        ]
+        for u in users:
+            self.store.record_findings([f], provider="anthropic", session=u)
+
+        findings, total = self.store.get_findings_page()
+        self.assertEqual(total, 3, "expected 3 distinct rows, got %d" % total)
+        # Each row counted once — no ON CONFLICT bumping seen_count.
+        seen_counts = sorted(row["seen_count"] for row in findings)
+        self.assertEqual(seen_counts, [1, 1, 1])
+        # Per-user attribution preserved.
+        ips = sorted(row["source_ip"] for row in findings)
+        self.assertEqual(ips, ["10.0.0.1", "10.0.0.2", "10.0.0.3"])
+
+    def test_empty_session_does_not_break_populated_session_dedup(self):
+        """Mixed traffic: empty-session rows must not collapse into populated-
+        session rows that happen to share content_hash."""
+        f = self._make_finding()
+        # Populated session — UNIQUE applies, second insert bumps seen_count.
+        sess_real = SessionContext(session_id="sess-real")
+        self.store.record_findings([f], provider="anthropic", session=sess_real)
+        self.store.record_findings([f], provider="anthropic", session=sess_real)
+
+        # Empty session — separate row (predicate excludes session_id='').
+        sess_empty = SessionContext(session_id="", source_ip="10.0.0.9")
+        self.store.record_findings([f], provider="anthropic", session=sess_empty)
+
+        findings, total = self.store.get_findings_page()
+        self.assertEqual(total, 2)
+        rows_by_session = {row["session_id"]: row for row in findings}
+        self.assertEqual(rows_by_session["sess-real"]["seen_count"], 2)
+        self.assertEqual(rows_by_session[""]["seen_count"], 1)
+
+    def test_empty_session_warning_throttles(self):
+        """Storage-layer warning must surface the upstream condition,
+        rate-limited to one emission per throttle window."""
+        f = self._make_finding()
+        sess = SessionContext(session_id="", source_ip="10.0.0.1")
+
+        with self.assertLogs("argus.analytics", level="WARNING") as captured:
+            self.store.record_findings([f], provider="anthropic", session=sess)
+            # Different content_hash so this is also a fresh row, not a no-op.
+            f2 = make_finding(
+                type_="github_token",
+                value_preview="ghp_****",
+                matched_value="ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef12",
+            )
+            self.store.record_findings([f2], provider="anthropic", session=sess)
+
+        empty_warnings = [line for line in captured.output if "empty session_id at findings storage" in line]
+        self.assertEqual(
+            len(empty_warnings),
+            1,
+            "expected exactly 1 storage-layer WARNING within throttle window, got: %r" % empty_warnings,
+        )
+
+    def test_no_warning_when_session_id_present(self):
+        """Sanity: populated session_id does not trip the storage warning."""
+        f = self._make_finding()
+        sess = SessionContext(session_id="sess-real")
+
+        with self.assertNoLogs("argus.analytics", level="WARNING"):
+            self.store.record_findings([f], provider="anthropic", session=sess)
+
+    def test_session_none_trips_warning_and_inserts_row(self):
+        """``session=None`` is a distinct branch from ``SessionContext('')``.
+
+        The storage-layer warning condition is ``session is None or not
+        session.session_id`` — both branches must fire the warning AND
+        still insert the row (no early return that drops findings).
+        """
+        f = self._make_finding()
+        with self.assertLogs("argus.analytics", level="WARNING") as captured:
+            self.store.record_findings([f], provider="anthropic", session=None)
+        empty_warnings = [line for line in captured.output if "empty session_id at findings storage" in line]
+        self.assertEqual(len(empty_warnings), 1)
+
+        # Row inserted despite session=None (matched_value-derived content_hash
+        # is non-empty, but session_id column is '' so the partial index does
+        # not constrain).
+        findings, total = self.store.get_findings_page()
+        self.assertEqual(total, 1)
+        self.assertEqual(findings[0]["session_id"], "")
 
 
 class TestValueHash(StoreTestCase):

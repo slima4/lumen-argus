@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 from lumen_argus.extensions import ExtensionRegistry
 from lumen_argus.models import SessionContext
 from lumen_argus.pipeline import ScannerPipeline
-from tests.helpers import StoreTestCase
+from tests.helpers import StoreTestCase, make_finding
 
 # Build dynamically to avoid GitHub push protection
 _STRIPE_KEY = "sk" + "_test_" + "a" * 24 + "EXAMPLE"
@@ -571,6 +571,103 @@ class TestBlockedContentRescanned(StoreTestCase):
         self.assertEqual(r1.action, "alert")
         # Hashes committed immediately, nothing pending
         self.assertIsNone(r1.pending_commit_token)
+
+
+class TestEmptySessionDedupBypass(StoreTestCase):
+    """Regression: empty session_id at the dedup layer must not collapse
+    findings across requests.
+
+    The pre-mortem in issue #64 imagined a future regression in session
+    extraction (no x-session-id header, no provider metadata, empty
+    fingerprint) that lets ``ctx.session_id == ""`` reach the Layer-2
+    dedup. The path already exists today via ``_derive_session_fingerprint``
+    returning ``""`` when ``len(parts) < 2``. These tests pin the
+    contract: every sessionless finding must be recorded.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.ext = ExtensionRegistry()
+        self.ext.set_analytics_store(self.store)
+        self.pipeline = ScannerPipeline(
+            default_action="alert",
+            extensions=self.ext,
+            dedup_config={"conversation_ttl_minutes": 30, "finding_ttl_minutes": 30},
+        )
+
+    def _empty_session_for_user(self) -> SessionContext:
+        """SessionContext with all extractor-input fields blank.
+
+        Mirrors a request whose body had neither system nor messages
+        (so ``_derive_session_fingerprint`` returns "") and no
+        x-session-id / x-opencode-session header.
+        """
+        return SessionContext()
+
+    def test_two_users_same_finding_both_recorded(self):
+        """The original failure mode: user-A and user-B both submit the
+        same secret with empty session_id; both must be recorded."""
+        body = _make_anthropic_body(["Key: AKIAIOSFODNN7EXAMPLE"])
+
+        # User A — empty session.
+        r1 = self.pipeline.scan(body, "anthropic", session=self._empty_session_for_user())
+        self.assertGreater(len(r1.findings), 0)
+        _, after_a = self.store.get_findings_page()
+        self.assertGreater(after_a, 0)
+
+        # User B — empty session, same payload. Layer-1 fingerprint is
+        # session-keyed too, so a fresh session-bound fingerprint is also
+        # absent. Use a *different* body so Layer-1 doesn't filter it.
+        body_b = _make_anthropic_body(["Other key: AKIAIOSFODNN7B2OTHER"])
+        r2 = self.pipeline.scan(body_b, "anthropic", session=self._empty_session_for_user())
+        self.assertGreater(len(r2.findings), 0)
+        _, after_b = self.store.get_findings_page()
+        self.assertGreater(after_b, after_a)
+
+    def test_same_finding_repeated_with_default_session_context(self):
+        """Direct dedup-bypass test: identical finding scanned twice in
+        SessionContext() (every field blank) must record both times.
+
+        We use a fresh Finding through the dedup layer rather than the
+        full pipeline because Layer-1 fingerprinting (which is session-
+        keyed itself) would otherwise mask the Layer-2 contract.
+        """
+        f = make_finding()
+        dedup = self.pipeline._finding_dedup
+        sess_id = SessionContext().session_id  # default == ""
+        self.assertEqual(sess_id, "")
+        self.assertTrue(dedup.is_new(f, session_id=sess_id))
+        self.assertTrue(dedup.is_new(f, session_id=sess_id))
+        self.assertTrue(dedup.is_new(f, session_id=sess_id))
+
+    def test_warning_fires_then_throttles(self):
+        """First empty-session scan with findings emits a WARNING; the
+        second within the throttle window does not. Suppressed count is
+        rolled into the next emission."""
+        body_a = _make_anthropic_body(["Key: AKIAIOSFODNN7EXAMPLE"])
+        body_b = _make_anthropic_body(["Other: AKIAIOSFODNN7B2OTHER"])
+
+        with self.assertLogs("argus.pipeline", level="WARNING") as captured:
+            self.pipeline.scan(body_a, "anthropic", session=self._empty_session_for_user())
+            self.pipeline.scan(body_b, "anthropic", session=self._empty_session_for_user())
+
+        empty_session_warnings = [
+            line for line in captured.output if "empty session_id at finding-dedup boundary" in line
+        ]
+        self.assertEqual(
+            len(empty_session_warnings),
+            1,
+            "expected exactly 1 WARNING within throttle window, got: %r" % empty_session_warnings,
+        )
+        self.assertEqual(self.pipeline._empty_session_warn._suppressed, 1)
+
+    def test_no_warning_when_session_id_present(self):
+        """Sanity: a populated session_id must not trip the empty-session warning."""
+        body = _make_anthropic_body(["Key: AKIAIOSFODNN7EXAMPLE"])
+        session = SessionContext(session_id="sess-real")
+
+        with self.assertNoLogs("argus.pipeline", level="WARNING"):
+            self.pipeline.scan(body, "anthropic", session=session)
 
 
 if __name__ == "__main__":

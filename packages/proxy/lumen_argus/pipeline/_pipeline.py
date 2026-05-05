@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from lumen_argus.analytics.store import AnalyticsStore
 
+from lumen_argus._throttled_log import ThrottledWarning
 from lumen_argus.allowlist import AllowlistMatcher
 from lumen_argus.decoders import ContentDecoder
 from lumen_argus.detectors import BaseDetector
@@ -37,6 +38,8 @@ log = logging.getLogger("argus.pipeline")
 # very large payloads. 200KB covers the most recent/largest fields in
 # a typical session while keeping scan time well under 50ms.
 MAX_SCAN_TEXT_BYTES = 200_000
+
+EMPTY_SESSION_WARN_INTERVAL = 60.0
 
 
 class ScannerPipeline:
@@ -137,6 +140,13 @@ class ScannerPipeline:
         self._fingerprint.start_cleanup_scheduler()
         self._finding_dedup = FindingDedup(ttl_seconds=finding_ttl)
         self._finding_dedup.start_cleanup_scheduler()
+
+        self._empty_session_warn = ThrottledWarning(
+            log,
+            "empty session_id at finding-dedup boundary: provider=%s findings=%d "
+            "(dedup bypassed; %d similar warnings suppressed in last %.0fs)",
+            EMPTY_SESSION_WARN_INTERVAL,
+        )
 
     def fingerprint_stats(self) -> dict[str, int]:
         """Return content-fingerprint cache stats for /metrics export."""
@@ -418,6 +428,8 @@ class ScannerPipeline:
         # policy eval. All findings stay in ScanResult for action enforcement.
         # Session-scoped: same finding in different sessions is always new.
         sess_id = session.session_id if session else ""
+        if not sess_id and result.findings:
+            self._empty_session_warn.emit(provider or "?", len(result.findings))
         new_findings = self._finding_dedup.filter_new(result.findings, session_id=sess_id) if result.findings else []
 
         # Record only NEW findings in analytics store (community dashboard)

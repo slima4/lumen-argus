@@ -39,8 +39,12 @@ class FindingDedup:
     def is_new(self, finding: Finding, session_id: str = "") -> bool:
         """Return True if this finding hasn't been seen within the TTL window.
 
-        Session-scoped: same finding in different sessions is always new.
+        Empty ``session_id`` bypasses the cache entirely — keying on it
+        would collapse every sessionless request from every user into a
+        single bucket.
         """
+        if not session_id:
+            return True
         value_hash = hashlib.sha256(finding.matched_value.encode()).hexdigest()[:16]
         key = (finding.detector, finding.type, value_hash, session_id)
         idx = self._shard_for(key)
@@ -55,6 +59,8 @@ class FindingDedup:
 
     def filter_new(self, findings: list[Finding], session_id: str = "") -> list[Finding]:
         """Return only findings that haven't been recorded within the TTL window."""
+        if not session_id:
+            return list(findings)
         return [f for f in findings if self.is_new(f, session_id=session_id)]
 
     def cleanup(self) -> int:

@@ -7,6 +7,7 @@ import hmac as hmac_mod
 import logging
 from typing import TYPE_CHECKING, Any
 
+from lumen_argus._throttled_log import ThrottledWarning
 from lumen_argus.analytics._db import scalar
 from lumen_argus.analytics.base import BaseRepository
 from lumen_argus.models import Finding, SessionContext
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
     from lumen_argus.analytics.adapter import DatabaseAdapter
 
 log = logging.getLogger("argus.analytics")
+
+EMPTY_SESSION_WARN_INTERVAL = 60.0
 
 _FINDINGS_COLUMNS = (
     "id, timestamp, detector, finding_type, severity, location, action_taken, "
@@ -33,6 +36,12 @@ class FindingsRepository(BaseRepository):
     def __init__(self, adapter: DatabaseAdapter, hmac_key: bytes | None = None) -> None:
         super().__init__(adapter)
         self._hmac_key = hmac_key
+        self._empty_session_warn = ThrottledWarning(
+            log,
+            "empty session_id at findings storage: provider=%s findings=%d "
+            "(unique-index bypassed; %d similar warnings suppressed in last %.0fs)",
+            EMPTY_SESSION_WARN_INTERVAL,
+        )
 
     def record(
         self,
@@ -48,6 +57,13 @@ class FindingsRepository(BaseRepository):
         """
         if not findings:
             return
+
+        # Defence-in-depth with the pipeline-boundary warning: response-scan,
+        # MCP-scan, and reload-import paths all reach record() without going
+        # through ScannerPipeline.scan(), so the storage layer is the only
+        # place that catches every empty-session insert.
+        if session is None or not session.session_id:
+            self._empty_session_warn.emit(provider or "?", len(findings))
 
         now = now_iso_ms()
         s = session  # shorthand
@@ -124,7 +140,7 @@ class FindingsRepository(BaseRepository):
                     "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
                     "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(content_hash, session_id, namespace_id) "
-                    "WHERE content_hash != '' "
+                    "WHERE content_hash != '' AND session_id != '' "
                     "DO UPDATE SET seen_count = findings.seen_count + 1, "
                     "timestamp = excluded.timestamp",
                     rows,
