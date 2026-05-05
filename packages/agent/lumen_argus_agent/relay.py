@@ -83,11 +83,6 @@ class RelayConfig:
 # Direct-mode provider routing (minimal, for fail-open)
 # ---------------------------------------------------------------------------
 
-_PROVIDER_ROUTES: list[tuple[str, str, str]] = [
-    # (path_prefix, header_check, upstream)
-    # Checked in order; first match wins.
-]
-
 
 def _resolve_direct_upstream(path: str, headers: dict[str, str]) -> tuple[str, str]:
     """Resolve upstream API URL for direct forwarding (fail-open).
