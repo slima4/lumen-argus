@@ -285,6 +285,71 @@ class TestTryStripBlockedHistory(unittest.TestCase):
         result = try_strip_blocked_history(req_data, findings)
         self.assertIsNone(result)
 
+    def test_nested_subpath_location_strips_outer_block(self):
+        """Tool_result blocks emit messages[N].content[M].content[K] for nested
+        text. Strip must parse the outer (msg, block) prefix and discard the
+        subpath — the nested text disappears with its parent block."""
+        req_data = {
+            "model": "claude-opus-4-6",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "context"},
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_x",
+                            "content": [
+                                {"type": "text", "text": "leaked sk_live_xxx"},
+                            ],
+                        },
+                        {"type": "text", "text": "user follow-up"},
+                    ],
+                }
+            ],
+        }
+        findings = [_make_finding("messages[0].content[1].content[0]")]
+        result = try_strip_blocked_history(req_data, findings)
+        self.assertIsNotNone(result)
+
+        cleaned = json.loads(result)
+        content = cleaned["messages"][0]["content"]
+        self.assertEqual(len(content), 2)
+        self.assertEqual(content[0]["text"], "context")
+        self.assertEqual(content[1]["text"], "user follow-up")
+
+    def test_string_content_with_subpath_strips_message(self):
+        """String-content location with trailing subpath still resolves to
+        message-level strip (block_idx=-1)."""
+        req_data = {
+            "model": "claude-opus-4-6",
+            "messages": [
+                {"role": "user", "content": "leaked sk_live_xxx"},
+                {"role": "assistant", "content": "blocked"},
+                {"role": "user", "content": "test"},
+            ],
+        }
+        findings = [_make_finding("messages[0].content.subfield")]
+        result = try_strip_blocked_history(req_data, findings)
+        self.assertIsNotNone(result)
+
+        cleaned = json.loads(result)
+        self.assertEqual(len(cleaned["messages"]), 1)
+        self.assertEqual(cleaned["messages"][0]["content"], "test")
+
+    def test_unrelated_identifier_prefix_does_not_match(self):
+        """Locations like messages[0].content_extra must not match the regex —
+        boundary check protects against accidental identifier collisions."""
+        req_data = {
+            "model": "claude-opus-4-6",
+            "messages": [
+                {"role": "user", "content": "test"},
+            ],
+        }
+        findings = [_make_finding("messages[0].content_extra")]
+        result = try_strip_blocked_history(req_data, findings)
+        self.assertIsNone(result)
+
     def test_content_block_out_of_range_index_blocks(self):
         """Out-of-range block index must block, not silently skip."""
         req_data = {

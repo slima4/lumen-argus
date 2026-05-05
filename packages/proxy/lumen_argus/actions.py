@@ -9,11 +9,17 @@ from lumen_argus.models import ScanResult
 
 log = logging.getLogger("argus.actions")
 
-# Match extractor location formats exactly:
-#   "messages[N].content"    — string content (fullmatch)
-#   "messages[N].content[M]" — array content block (fullmatch)
-_MSG_CONTENT_RE = re.compile(r"messages\[(\d+)\]\.content$")
-_CONTENT_BLOCK_RE = re.compile(r"messages\[(\d+)\]\.content\[(\d+)\]$")
+# Match extractor location formats by canonical prefix; trailing subpaths
+# (e.g. nested ".content[K]" emitted for tool_result blocks) are tolerated
+# and discarded — strip operates on the outer message/block index, and any
+# nested content goes away with its parent block. Boundary "(?:\.|$)" keeps
+# unrelated identifiers like "content_extra" from matching.
+#   "messages[N].content"          — string content
+#   "messages[N].content.<sub>"    — string content with subpath
+#   "messages[N].content[M]"       — array content block
+#   "messages[N].content[M].<sub>" — array content block with subpath
+_MSG_CONTENT_RE = re.compile(r"messages\[(\d+)\]\.content(?:\.|$)")
+_CONTENT_BLOCK_RE = re.compile(r"messages\[(\d+)\]\.content\[(\d+)\](?:\.|$)")
 
 
 def build_block_response(result: ScanResult) -> bytes:
