@@ -91,9 +91,12 @@ class ScanResult:
     scan_duration_ms: float = 0.0
     action: str = "pass"  # "pass" | "log" | "alert" | "block" | "strip" (audit-only)
     stage_timings: dict[str, float] = field(default_factory=dict)  # {stage_name: elapsed_ms}
-    # Deferred fingerprint commit token. Set by pipeline on block
-    # so the proxy can commit hashes after successful history stripping.
-    _pending_hashes: tuple[str, list[str]] | None = field(default=None, repr=False)
+    # Deferred fingerprint commit token. Pipeline sets this on `block` so the
+    # proxy can commit hashes via `pipeline.commit_pending(result)` after a
+    # successful history strip (consumer: `_request_scanning.evaluate_block_policy`).
+    # Forgetting to commit causes Layer-1 fingerprint dedup to never arm for
+    # stripped content, doubling scan work on every retry.
+    pending_commit_token: tuple[str, list[str]] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)

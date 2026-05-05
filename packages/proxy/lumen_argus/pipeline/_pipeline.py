@@ -148,7 +148,7 @@ class ScannerPipeline:
         Call this after history stripping succeeds — the stripped content has
         been handled, so future requests can skip re-scanning it.
         """
-        pending = result._pending_hashes
+        pending = result.pending_commit_token
         if pending:
             conv_key, hashes = pending
             log.debug(
@@ -157,7 +157,7 @@ class ScannerPipeline:
                 conv_key[:16] if conv_key else "",
             )
             self._fingerprint.commit_hashes(pending)
-            result._pending_hashes = None
+            result.pending_commit_token = None
 
     def reload(
         self,
@@ -412,7 +412,7 @@ class ScannerPipeline:
         if pending_hashes and result.action not in ("block", "redact"):
             self._fingerprint.commit_hashes(pending_hashes)
         elif pending_hashes and result.action == "block":
-            result._pending_hashes = pending_hashes
+            result.pending_commit_token = pending_hashes
 
         # Layer 2: Finding-level dedup — filter before recording but after
         # policy eval. All findings stay in ScanResult for action enforcement.

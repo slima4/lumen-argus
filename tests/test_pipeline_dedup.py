@@ -541,11 +541,11 @@ class TestBlockedContentRescanned(StoreTestCase):
         # Request 1: blocked, pending hashes stored on result
         r1 = pipeline.scan(body, "anthropic", session=session)
         self.assertEqual(r1.action, "block")
-        self.assertIsNotNone(r1._pending_hashes)
+        self.assertIsNotNone(r1.pending_commit_token)
 
         # Simulate successful strip: commit the pending hashes
         pipeline.commit_pending(r1)
-        self.assertIsNone(r1._pending_hashes)
+        self.assertIsNone(r1.pending_commit_token)
 
         # Request 2 (same content): Layer 1 skips it, no findings, passes
         r2 = pipeline.scan(body, "anthropic", session=session)
@@ -570,7 +570,7 @@ class TestBlockedContentRescanned(StoreTestCase):
         r1 = pipeline.scan(body, "anthropic", session=session)
         self.assertEqual(r1.action, "alert")
         # Hashes committed immediately, nothing pending
-        self.assertIsNone(r1._pending_hashes)
+        self.assertIsNone(r1.pending_commit_token)
 
 
 if __name__ == "__main__":
