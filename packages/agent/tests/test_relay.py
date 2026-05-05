@@ -389,10 +389,28 @@ class TestAgentRelayHealth(AioHTTPTestCase):
         self.assertEqual(resp.status, 200)
         data = await resp.json()
         self.assertEqual(data["status"], "ok")
-        self.assertEqual(data["upstream"], "unhealthy")
+        # Empty rolling window — no traffic yet, no evidence of failure.
+        self.assertEqual(data["upstream"], "healthy")
         self.assertEqual(data["fail_mode"], "open")
         self.assertFalse(data["enrolled"])
         self.assertIn("uptime", data)
+
+    @unittest_run_loop
+    async def test_upstream_state_reflects_recorded_outcomes(self):
+        relay = self.app[_RELAY_KEY]
+        for _ in range(5):
+            relay._upstream_health.record(True)
+        resp = await self.client.get("/health")
+        self.assertEqual((await resp.json())["upstream"], "healthy")
+
+        relay._upstream_health.record(False)
+        resp = await self.client.get("/health")
+        self.assertEqual((await resp.json())["upstream"], "degraded")
+
+        for _ in range(20):
+            relay._upstream_health.record(False)
+        resp = await self.client.get("/health")
+        self.assertEqual((await resp.json())["upstream"], "unhealthy")
 
     @unittest_run_loop
     async def test_health_enrolled(self):
@@ -497,7 +515,6 @@ class TestAgentRelayForwarding(AioHTTPTestCase):
             machine_id="mac_test",
         )
         relay = AgentRelay(config)
-        relay._upstream_healthy = True  # Skip health check for tests
 
         app = web.Application()
         from lumen_argus_agent.relay import _RELAY_KEY, _handle_request
@@ -592,7 +609,6 @@ class TestAgentRelayFailMode(AioHTTPTestCase):
             fail_mode="closed",
         )
         relay = AgentRelay(config)
-        relay._upstream_healthy = False
 
         app = web.Application()
         from lumen_argus_agent.relay import _RELAY_KEY, _handle_request

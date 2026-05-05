@@ -611,6 +611,14 @@ Returns the relay's status and upstream health.
 }
 ```
 
+`upstream` is one of:
+
+- `healthy` — recent forwards all succeeded, or no traffic yet (empty window defaults to `healthy`)
+- `degraded` — recent forwards have a mix of successes and network failures
+- `unhealthy` — all recent forwards failed with `ClientError` / `TimeoutError`
+
+The value is computed from a rolling window (size 10) of real `forward()` outcomes, **not** from an out-of-band probe of the upstream proxy. A success is recorded whenever the upstream returns any HTTP response (the status code is the proxy's call, not a relay-reachability signal); a failure is recorded only on network-level errors. This means a transient burst of 5xx from the proxy will not flip the indicator — the proxy is still reachable and scanning is still running.
+
 No authentication required — designed for sidecar-adoption callers and local health checks.
 
 ### `GET /api/v1/build`

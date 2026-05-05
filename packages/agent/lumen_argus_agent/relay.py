@@ -30,6 +30,7 @@ from aiohttp import web
 from multidict import CIMultiDict
 
 from lumen_argus_agent.context import CallerContext, resolve_context, static_context
+from lumen_argus_agent.upstream_health import UpstreamHealth
 
 log = logging.getLogger("argus.relay")
 
@@ -77,7 +78,6 @@ class RelayConfig:
     timeout: int = 150
     connect_timeout: int = 10
     max_connections: int = 50
-    health_interval: int = 5
 
 
 # ---------------------------------------------------------------------------
@@ -131,19 +131,18 @@ class AgentRelay:
     def __init__(self, config: RelayConfig) -> None:
         self.config = config
         self.start_time = time.monotonic()
-        self._upstream_healthy = False
+        self._upstream_health = UpstreamHealth()
         self._active_requests = 0
         self._upstream_session: aiohttp.ClientSession | None = None
         self._direct_session: aiohttp.ClientSession | None = None
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
-        self._health_task: asyncio.Task[Any] | None = None
 
     # --- Lifecycle ---
 
     async def start(self) -> None:
-        """Start the relay server and upstream health checker."""
+        """Start the relay server."""
         connector_kwargs: dict[str, Any] = {"limit": self.config.max_connections}
         self._upstream_session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(**connector_kwargs),
@@ -163,7 +162,6 @@ class AgentRelay:
         self._site = web.TCPSite(self._runner, self.config.bind, self.config.port)
         await self._site.start()
 
-        self._health_task = asyncio.ensure_future(self._health_loop())
         log.info(
             "relay listening on %s:%d upstream=%s fail_mode=%s agent=%s",
             self.config.bind,
@@ -175,9 +173,6 @@ class AgentRelay:
 
     async def stop(self) -> None:
         """Stop relay and release resources."""
-        if self._health_task:
-            self._health_task.cancel()
-            await asyncio.gather(self._health_task, return_exceptions=True)
         if self._upstream_session:
             await self._upstream_session.close()
         if self._direct_session:
@@ -194,44 +189,6 @@ class AgentRelay:
                 return 0
             await asyncio.sleep(0.1)
         return self._active_requests
-
-    # --- Health checking ---
-
-    async def _health_loop(self) -> None:
-        """Periodically check upstream proxy health."""
-        while True:
-            try:
-                await self._check_upstream()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.debug("health check error", exc_info=True)
-                if self._upstream_healthy:
-                    self._upstream_healthy = False
-                    log.warning("upstream unhealthy: health check exception")
-            await asyncio.sleep(self.config.health_interval)
-
-    async def _check_upstream(self) -> None:
-        """Single upstream health check."""
-        if self._upstream_session is None:
-            self._upstream_healthy = False
-            return
-        try:
-            url = "%s/health" % self.config.upstream_url.rstrip("/")
-            async with self._upstream_session.get(
-                url,
-                timeout=aiohttp.ClientTimeout(total=3),
-            ) as resp:
-                was_healthy = self._upstream_healthy
-                self._upstream_healthy = resp.status == 200
-                if self._upstream_healthy and not was_healthy:
-                    log.info("upstream healthy: %s", self.config.upstream_url)
-                elif not self._upstream_healthy and was_healthy:
-                    log.warning("upstream unhealthy: HTTP %d", resp.status)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            if self._upstream_healthy:
-                log.warning("upstream unhealthy: %s", exc)
-            self._upstream_healthy = False
 
     # --- Forwarding ---
 
@@ -260,13 +217,13 @@ class AgentRelay:
         # outside the strip's protection window).
         _inject_identity_headers(fwd_headers, self.config, ctx)
 
-        # Try upstream proxy
-        if self._upstream_healthy and self._upstream_session:
+        if self._upstream_session:
             upstream_url = "%s%s" % (self.config.upstream_url.rstrip("/"), path)
             try:
                 resp = await self._forward_via(
                     self._upstream_session, upstream_url, method, body, request, fwd_headers, request_id
                 )
+                self._upstream_health.record(True)
                 elapsed = (time.monotonic() - t0) * 1000
                 log.info(
                     "#%d %s %s → %d (%dms) dir=%s pid=%d",
@@ -280,6 +237,7 @@ class AgentRelay:
                 )
                 return resp
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                self._upstream_health.record(False)
                 log.warning("#%d upstream forwarding failed: %s", request_id, exc)
                 # Fall through to fail mode
 
@@ -494,12 +452,11 @@ async def _handle_request(request: web.Request) -> web.StreamResponse:
     relay: AgentRelay = request.app[_RELAY_KEY]
     path = request.path_qs
 
-    # Health endpoint
     if path == "/health":
         return web.json_response(
             {
                 "status": "ok",
-                "upstream": "healthy" if relay._upstream_healthy else "unhealthy",
+                "upstream": relay._upstream_health.state(),
                 "upstream_url": relay.config.upstream_url,
                 "fail_mode": relay.config.fail_mode,
                 "agent_id": relay.config.agent_id or "",
