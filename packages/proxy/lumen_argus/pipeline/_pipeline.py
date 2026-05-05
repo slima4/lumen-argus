@@ -27,7 +27,7 @@ from lumen_argus.extractor import RequestExtractor
 from lumen_argus.models import Finding, ScanField, ScanResult, SessionContext
 from lumen_argus.pipeline._finding_dedup import FindingDedup
 from lumen_argus.pipeline._fingerprint import ContentFingerprint
-from lumen_argus.policy import PolicyEngine
+from lumen_argus.policy import ActionDecision, PolicyEngine
 from lumen_argus.text_utils import sanitize_text
 
 log = logging.getLogger("argus.pipeline")
@@ -370,8 +370,15 @@ class ScannerPipeline:
             try:
                 decision = eval_hook(all_findings, policy)
             except Exception:
-                log.warning("evaluate_hook raised, falling back to default policy")
+                log.warning("evaluate_hook raised, falling back to default policy", exc_info=True)
                 decision = policy.evaluate(all_findings)
+            else:
+                if not isinstance(decision, ActionDecision):
+                    log.error(
+                        "evaluate_hook returned %s, expected ActionDecision — falling back to default policy",
+                        type(decision).__name__,
+                    )
+                    decision = policy.evaluate(all_findings)
         else:
             decision = policy.evaluate(all_findings)
 

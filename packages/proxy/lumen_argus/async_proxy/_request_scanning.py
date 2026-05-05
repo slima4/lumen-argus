@@ -74,7 +74,7 @@ async def scan_request_body(
                         location="pipeline",
                         value_preview="scan failed — request forwarded unscanned",
                         matched_value="",
-                        action="log",
+                        action="alert",
                     )
                 ],
             )

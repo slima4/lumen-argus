@@ -205,6 +205,34 @@ class TestEvaluateHook(unittest.TestCase):
         result = pipeline.scan(self._make_body_with_secret(), "anthropic")
         self.assertEqual(result.action, "block")
 
+    def test_evaluate_hook_malformed_return_falls_back(self):
+        """Non-ActionDecision return must fall back to default policy.
+
+        Without the type guard, malformed returns surfaced as AttributeError
+        and routed through the outer scan-error fail-open as action="pass",
+        silently bypassing scanning.
+        """
+        from lumen_argus.extensions import ExtensionRegistry
+
+        cases = {
+            "dict": lambda findings, policy: {"action": "block", "findings": findings},
+            "none": lambda findings, policy: None,
+            "string": lambda findings, policy: "block",
+            "tuple": lambda findings, policy: ("block", findings),
+        }
+
+        for name, hook in cases.items():
+            with self.subTest(return_type=name):
+                ext = ExtensionRegistry()
+                ext.set_evaluate_hook(hook)
+                pipeline = ScannerPipeline(
+                    default_action="alert",
+                    action_overrides={"secrets": "block"},
+                    extensions=ext,
+                )
+                result = pipeline.scan(self._make_body_with_secret(), "anthropic")
+                self.assertEqual(result.action, "block")
+
     def test_no_hook_uses_default_policy(self):
         """Without evaluate hook, default policy runs as normal."""
         from lumen_argus.extensions import ExtensionRegistry
