@@ -473,11 +473,18 @@ def _build_dashboard(
 
     # Create basic dispatcher if Pro hasn't registered one
     if analytics_store and not extensions.get_dispatcher():
+        from lumen_argus.notifiers._rate_limit import TokenBucket
         from lumen_argus.notifiers.dispatcher import BasicDispatcher
 
+        # 1 alert per minute per (detector, type) for FRAMEWORK-origin
+        # findings — bounds notification volume from a request-deterministic
+        # infrastructure fault (scan_error storm). Real DLP findings
+        # (DETECTOR origin) bypass this gate.
+        framework_bucket = TokenBucket(capacity=1, refill_seconds=60.0)
         basic_dispatcher = BasicDispatcher(
             store=analytics_store,
             builder=extensions.get_notifier_builder(),
+            framework_bucket=framework_bucket,
         )
         basic_dispatcher.rebuild()
         extensions.set_dispatcher(basic_dispatcher)

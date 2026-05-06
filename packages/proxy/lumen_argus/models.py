@@ -1,6 +1,7 @@
 """Core data structures used across all modules."""
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 # Canonical severity levels, ordered from lowest to highest priority.
@@ -12,6 +13,26 @@ SEVERITY_ORDER: dict[str, int] = {s: i for i, s in enumerate(SEVERITIES)}
 # Canonical policy actions, ordered from lowest to highest priority.
 ACTIONS = ("log", "alert", "redact", "block")
 ACTION_SET: frozenset[str] = frozenset(ACTIONS)
+
+
+class FindingOrigin(StrEnum):
+    """Source of a Finding.
+
+    DETECTOR  — produced by a registered DLP detector scanning request data.
+                A real signal about the request payload.
+    FRAMEWORK — produced by proxy/relay infrastructure to surface a
+                self-state event (scan crash fail-open, oversized-body skip,
+                mode change). Decoupled from request payload; sustained
+                emission indicates an operator concern, not detection volume.
+                Subject to dispatcher rate-limiting so a request-deterministic
+                infrastructure fault cannot saturate notification channels.
+    """
+
+    DETECTOR = "detector"
+    FRAMEWORK = "framework"
+
+
+ORIGIN_SET: frozenset[FindingOrigin] = frozenset(FindingOrigin)
 
 
 @dataclass
@@ -26,6 +47,7 @@ class Finding:
     matched_value: str  # full match — kept in memory only, never written to disk
     action: str = ""  # resolved action for this finding
     count: int = 1  # number of occurrences (after deduplication)
+    origin: FindingOrigin = FindingOrigin.DETECTOR
 
 
 @dataclass
@@ -72,6 +94,26 @@ class SessionContext:
     # Intercept mode — HOW CAPTURED
     intercept_mode: str = "reverse"  # "reverse" (base URL) or "forward" (HTTPS_PROXY + TLS)
     original_host: str = ""  # Forward proxy: original destination host (e.g., "api.individual.githubcopilot.com")
+
+
+def _serialize_finding(f: "Finding") -> dict[str, Any]:
+    """JSONL-compact finding serializer.
+
+    Always emits ``origin`` (defaulting to ``"detector"``) to match what REST
+    ``/api/v1/findings`` returns from SQLite and what the SSE finding event
+    carries — same precedent as commit c1a41ee, which switched
+    ``intercept_mode`` to always-emit so JSONL audit and REST stayed in sync.
+    """
+    return {
+        "detector": f.detector,
+        "type": f.type,
+        "severity": f.severity,
+        "location": f.location,
+        "value_preview": f.value_preview,
+        "action_taken": f.action,
+        "count": f.count,
+        "origin": f.origin.value,
+    }
 
 
 @dataclass
@@ -164,18 +206,7 @@ class AuditEntry:
             "model": self.model,
             "endpoint": self.endpoint,
             "action": self.action,
-            "findings": [
-                {
-                    "detector": f.detector,
-                    "type": f.type,
-                    "severity": f.severity,
-                    "location": f.location,
-                    "value_preview": f.value_preview,
-                    "action_taken": f.action,
-                    "count": f.count,
-                }
-                for f in self.findings
-            ],
+            "findings": [_serialize_finding(f) for f in self.findings],
             "scan_duration_ms": round(self.scan_duration_ms, 2),
             "request_size_bytes": self.request_size_bytes,
             "passed": self.passed,

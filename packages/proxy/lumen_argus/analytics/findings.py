@@ -26,7 +26,7 @@ _FINDINGS_COLUMNS = (
     "source_ip, working_directory, git_branch, os_platform, hostname, username, "
     "client_name, client_version, client_type, "
     "raw_user_agent, api_format, sdk_name, sdk_version, runtime, intercept_mode, original_host, "
-    "api_key_hash, content_hash, seen_count, value_hash"
+    "api_key_hash, content_hash, seen_count, value_hash, origin"
 )
 
 
@@ -120,6 +120,7 @@ class FindingsRepository(BaseRepository):
                     *sess,
                     content_hash,
                     vh,
+                    f.origin.value,
                 )
             )
 
@@ -134,11 +135,11 @@ class FindingsRepository(BaseRepository):
                     "client_name, client_version, client_type, "
                     "raw_user_agent, api_format, sdk_name, sdk_version, runtime, "
                     "intercept_mode, original_host, "
-                    "api_key_hash, content_hash, value_hash) "
+                    "api_key_hash, content_hash, value_hash, origin) "
                     "VALUES ("
                     "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
                     "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(content_hash, session_id, namespace_id) "
                     "WHERE content_hash != '' AND session_id != '' "
                     "DO UPDATE SET seen_count = findings.seen_count + 1, "
@@ -181,6 +182,7 @@ class FindingsRepository(BaseRepository):
         runtime: str | None = None,
         intercept_mode: str | None = None,
         original_host: str | None = None,
+        origin: str | None = None,
         days: int | None = None,
         namespace_id: int = 1,
     ) -> tuple[list[dict[str, Any]], Any]:
@@ -234,6 +236,9 @@ class FindingsRepository(BaseRepository):
         if original_host:
             conditions.append("original_host = ?")
             params.append(original_host)
+        if origin:
+            conditions.append("origin = ?")
+            params.append(origin)
         if days and days > 0:
             conditions.append(self._adapter.date_diff_sql("timestamp", min(days, 365)))
         where = " WHERE " + " AND ".join(conditions)

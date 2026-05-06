@@ -11,7 +11,7 @@ from aiohttp import web
 from lumen_argus._logging import log_hook_fail_open
 from lumen_argus.actions import build_block_response, should_forward, try_strip_blocked_history
 from lumen_argus.async_proxy._audit import _log_audit
-from lumen_argus.models import Finding, ScanResult, SessionContext
+from lumen_argus.models import Finding, FindingOrigin, ScanResult, SessionContext
 
 if TYPE_CHECKING:
     from lumen_argus.async_proxy._server import AsyncArgusProxy
@@ -64,7 +64,7 @@ async def scan_request_body(
             return scan_result
         except Exception:
             log_hook_fail_open("scan", request_id=request_id)
-            return ScanResult(
+            err_result = ScanResult(
                 action="pass",
                 findings=[
                     Finding(
@@ -75,9 +75,25 @@ async def scan_request_body(
                         value_preview="scan failed — request forwarded unscanned",
                         matched_value="",
                         action="alert",
+                        origin=FindingOrigin.FRAMEWORK,
                     )
                 ],
             )
+            # emit_findings runs sync record_findings + SSE + post_scan_hook —
+            # must not block the aiohttp event loop. Same to_thread pattern as
+            # the scan() call on line 37.
+            try:
+                await asyncio.to_thread(
+                    server.pipeline.emit_findings,
+                    err_result,
+                    provider=provider,
+                    model=model,
+                    session=session,
+                    body=body,
+                )
+            except Exception:
+                log.warning("#%d emit_findings failed for scan_error", request_id, exc_info=True)
+            return err_result
     elif len(body) > server.max_body_size:
         log.warning(
             "#%d oversized body skipped scanning (%d bytes > %d limit)",
@@ -89,7 +105,7 @@ async def scan_request_body(
             request_id,
             "body too large to scan (%d bytes > %d limit)" % (len(body), server.max_body_size),
         )
-        return ScanResult(
+        oversize_result = ScanResult(
             action="pass",
             findings=[
                 Finding(
@@ -100,9 +116,22 @@ async def scan_request_body(
                     value_preview="%d bytes" % len(body),
                     matched_value="",
                     action="log",
+                    origin=FindingOrigin.FRAMEWORK,
                 )
             ],
         )
+        try:
+            await asyncio.to_thread(
+                server.pipeline.emit_findings,
+                oversize_result,
+                provider=provider,
+                model=model,
+                session=session,
+                body=body,
+            )
+        except Exception:
+            log.warning("#%d emit_findings failed for scan_skipped_oversized", request_id, exc_info=True)
+        return oversize_result
 
     return ScanResult()
 
@@ -187,6 +216,20 @@ def scan_mcp_request(
         )
         _log_audit(server, request_id, path, provider, model, block_result, len(body), False, session)
         server.stats.record(provider, len(body), block_result)
+        # Route the MCP block finding through the unified post-scan side-effects
+        # façade so it reaches record_findings + dispatcher (notifications) +
+        # SSE + post_scan_hook — same architectural seam A1+ closes for the
+        # proxy's framework-origin findings (issue #81).
+        try:
+            server.pipeline.emit_findings(
+                block_result,
+                provider=provider,
+                model=model,
+                session=session,
+                body=body,
+            )
+        except Exception:
+            log.warning("#%d emit_findings failed for MCP blocked_tool '%s'", request_id, tool_name, exc_info=True)
         # Log tool call (blocked)
         if server.extensions:
             _s = server.extensions.get_analytics_store()
@@ -218,21 +261,24 @@ def scan_mcp_request(
         scan_result.findings.extend(mcp_findings)
         log.info("#%d MCP argument scan: %d finding(s) in '%s'", request_id, len(mcp_findings), tool_name)
 
-    # Record MCP argument findings to analytics store
-    # (pipeline.scan() already called record_findings() before MCP scanning,
-    # so MCP findings need their own explicit write)
-    if mcp_findings and server.extensions:
-        _s = server.extensions.get_analytics_store()
-        if _s:
-            try:
-                _s.record_findings(
-                    findings=mcp_findings,
-                    provider=provider,
-                    model=model,
-                    session=session,
-                )
-            except Exception:
-                log.warning("failed to record MCP argument findings", exc_info=True)
+    # Route MCP argument findings through the unified post-scan side-effects
+    # façade — same as the block path above. emit_findings handles record +
+    # dispatcher (notifications) + SSE + post_scan_hook. Build a synthetic
+    # result carrying ONLY the MCP findings so dispatcher and SSE see them
+    # exactly once (pipeline.scan() already fanned out the original
+    # scan_result.findings before MCP detection ran).
+    if mcp_findings:
+        mcp_only_result = ScanResult(action=scan_result.action, findings=list(mcp_findings))
+        try:
+            server.pipeline.emit_findings(
+                mcp_only_result,
+                provider=provider,
+                model=model,
+                session=session,
+                body=body,
+            )
+        except Exception:
+            log.warning("failed to emit MCP argument findings", exc_info=True)
 
     # Log tool call (allowed/alert)
     if server.extensions:

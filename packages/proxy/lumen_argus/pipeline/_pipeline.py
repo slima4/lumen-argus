@@ -432,13 +432,61 @@ class ScannerPipeline:
             self._empty_session_warn.emit(provider or "?", len(result.findings))
         new_findings = self._finding_dedup.filter_new(result.findings, session_id=sess_id) if result.findings else []
 
+        self.emit_findings(
+            result,
+            new_findings=new_findings,
+            provider=provider,
+            model=model,
+            session=session,
+            body=body,
+        )
+
+        return result
+
+    def emit_findings(
+        self,
+        result: ScanResult,
+        *,
+        new_findings: list[Finding] | None = None,
+        provider: str = "",
+        model: str = "",
+        session: SessionContext | None = None,
+        body: bytes = b"",
+    ) -> None:
+        """Run post-scan side effects: record + dispatch + SSE + post_scan_hook.
+
+        Public façade so callers that produce findings outside scan() —
+        fail-open wrappers (`scan_request_body` exception branch and
+        oversized-body skip), hot-reload mode change, and any future
+        framework-event emitter — route them through the same effects
+        pipeline. Without this, synthetic findings are silent in the
+        dispatcher and SSE stream — the architectural gap that made
+        issue #81's storm-protection invisible to the production paths
+        it was written for.
+
+        new_findings defaults to result.findings (treat all as new) —
+        appropriate when caller has not run finding-dedup. scan() passes
+        the dedup-filtered subset so analytics + SSE per-finding events
+        are not duplicated for re-sent conversation history.
+
+        body is forwarded to post_scan_hook (plugin extension point);
+        framework emitters that have no request body (e.g. mode_changed)
+        pass b"" — hooks tolerate it.
+
+        Each effect is best-effort: an exception in one does not suppress
+        the others.
+        """
+        if not self._extensions:
+            return
+        nf = result.findings if new_findings is None else new_findings
+
         # Record only NEW findings in analytics store (community dashboard)
-        if new_findings and self._extensions:
+        if nf:
             rec_store: AnalyticsStore | None = self._extensions.get_analytics_store()
             if rec_store:
                 try:
                     rec_store.record_findings(
-                        new_findings,
+                        nf,
                         provider=provider,
                         model=model,
                         session=session,
@@ -452,7 +500,7 @@ class ScannerPipeline:
         # reference to it. Pro's NotificationDispatcher opts in via a config flag;
         # community's BasicDispatcher ignores the extra argument except to forward
         # it to notifiers, which currently don't consume it.
-        if result.findings and self._extensions:
+        if result.findings:
             dispatcher: Any = self._extensions.get_dispatcher()
             if dispatcher:
                 try:
@@ -467,19 +515,15 @@ class ScannerPipeline:
                     log.warning("notification dispatch failed", exc_info=True)
 
         # Broadcast SSE events for real-time dashboard/tray updates
-        if self._extensions:
-            self._broadcast_sse(result, new_findings, provider, session)
+        self._broadcast_sse(result, nf, provider, session)
 
         # Fire post-scan hook for plugins (analytics, SSE, etc.)
-        if self._extensions:
-            hook = self._extensions.get_post_scan_hook()
-            if hook:
-                try:
-                    hook(result, body, provider, session=session)
-                except Exception:
-                    log.debug("post_scan_hook failed, suppressing", exc_info=True)
-
-        return result
+        hook = self._extensions.get_post_scan_hook()
+        if hook:
+            try:
+                hook(result, body, provider, session=session)
+            except Exception:
+                log.debug("post_scan_hook failed, suppressing", exc_info=True)
 
     def _broadcast_sse(
         self,
@@ -527,6 +571,7 @@ class ScannerPipeline:
                         "location": f.location,
                         "value_preview": f.value_preview,
                         "action": f.action,
+                        "origin": f.origin.value,
                         "client": client,
                         "provider": provider,
                         "intercept_mode": intercept_mode,

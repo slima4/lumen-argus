@@ -16,12 +16,19 @@ if TYPE_CHECKING:
 log = logging.getLogger("argus.cli")
 
 
-def _record_mode_finding(store: Any, old_mode: str, new_mode: str) -> None:
-    """Record a finding when proxy mode transitions to passthrough."""
-    if not store:
+def _record_mode_finding(server: Any, old_mode: str, new_mode: str) -> None:
+    """Emit a framework finding when proxy mode transitions to passthrough.
+
+    Routes through `pipeline.emit_findings` so the finding lands in
+    analytics, dispatcher (rate-limited per origin), SSE event stream,
+    and post_scan_hook — same fan-out as a real scan finding. Direct
+    `store.record_findings` here would silence the dispatcher and SSE,
+    which is the exact gap A1+ closes for issue #81.
+    """
+    if not server or not getattr(server, "pipeline", None):
         return
     try:
-        from lumen_argus.models import Finding
+        from lumen_argus.models import Finding, FindingOrigin, ScanResult
 
         finding = Finding(
             detector="proxy",
@@ -31,10 +38,17 @@ def _record_mode_finding(store: Any, old_mode: str, new_mode: str) -> None:
             value_preview="%s -> %s" % (old_mode, new_mode),
             matched_value="",
             action="log",
+            origin=FindingOrigin.FRAMEWORK,
         )
-        store.record_findings([finding], provider="", model="")
+        server.pipeline.emit_findings(
+            ScanResult(action="pass", findings=[finding]),
+            provider="",
+            model="",
+            session=None,
+            body=b"",
+        )
     except Exception:
-        log.warning("failed to record mode change finding", exc_info=True)
+        log.warning("failed to emit mode change finding", exc_info=True)
 
 
 def do_reload(
@@ -203,7 +217,7 @@ def _apply_mode_override(server: Any, store: Any) -> None:
         server.mode = value
         log.info("proxy mode changed: %s -> %s", old_mode, value)
         if value == "passthrough":
-            _record_mode_finding(store, old_mode, value)
+            _record_mode_finding(server, old_mode, value)
 
 
 def _reload_port_bind(server: Any, old: Any, new_config: Any) -> None:

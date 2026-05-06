@@ -99,6 +99,61 @@ class TestAuditLogger(unittest.TestCase):
             self.assertNotIn("AKIAIOSFODNN7SECRETVALUE", content)
             self.assertNotIn("matched_value", content)
 
+    def test_origin_always_emitted_for_default_detector(self):
+        """JSONL emits ``origin`` for every finding to match REST + SSE
+        (CLAUDE.md §14 parity invariant). c1a41ee precedent: when REST
+        always returns a column with a default, JSONL must too."""
+        from lumen_argus.models import FindingOrigin
+
+        entry = AuditEntry(
+            timestamp="2026-03-14T10:30:00.000Z",
+            request_id=1,
+            provider="anthropic",
+            model="claude-opus-4-6",
+            endpoint="/v1/messages",
+            action="block",
+            findings=[
+                Finding(
+                    detector="secrets",
+                    type="aws_access_key",
+                    severity="critical",
+                    location="messages[0].content",
+                    value_preview="AKIA****",
+                    matched_value="",
+                    action="block",
+                    origin=FindingOrigin.DETECTOR,
+                )
+            ],
+        )
+        d = entry.to_dict()
+        self.assertEqual(d["findings"][0]["origin"], "detector")
+
+    def test_origin_emitted_for_framework(self):
+        from lumen_argus.models import FindingOrigin
+
+        entry = AuditEntry(
+            timestamp="2026-03-14T10:30:00.000Z",
+            request_id=1,
+            provider="anthropic",
+            model="claude-opus-4-6",
+            endpoint="/v1/messages",
+            action="alert",
+            findings=[
+                Finding(
+                    detector="proxy",
+                    type="scan_error",
+                    severity="critical",
+                    location="pipeline",
+                    value_preview="x",
+                    matched_value="",
+                    action="alert",
+                    origin=FindingOrigin.FRAMEWORK,
+                )
+            ],
+        )
+        d = entry.to_dict()
+        self.assertEqual(d["findings"][0]["origin"], "framework")
+
     def test_multiple_entries(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             logger = AuditLogger(log_dir=tmpdir)

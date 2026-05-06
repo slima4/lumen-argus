@@ -34,6 +34,7 @@ _FINDING_FILTER_KEYS: list[tuple[str, str]] = [
     ("runtime", "runtime"),
     ("intercept_mode", "intercept_mode"),
     ("original_host", "original_host"),
+    ("origin", "origin"),
 ]
 
 

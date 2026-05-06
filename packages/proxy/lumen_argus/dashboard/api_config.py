@@ -110,6 +110,25 @@ def handle_status(
         "pro_version": pro_version,
         **proxy_info,
     }
+    # Per-(detector,type) suppression counts for FRAMEWORK-origin findings
+    # so operators see how much notification volume the dispatcher absorbed
+    # from a request-deterministic infrastructure fault. Field omitted when
+    # the dispatcher reports no suppressions (clean-run signal stays clean).
+    # Contract: every dispatcher impl (community + Pro) provides
+    # get_suppression_counts() -> dict[str,int]. The try/except is runtime
+    # fault tolerance for dispatcher implementation bugs (e.g. lock raises,
+    # I/O error in a Pro impl that touches state) — surfaced via WARN log
+    # with traceback. NOT a legacy compatibility shim: a dispatcher missing
+    # the method is a contract violation that will appear in the WARN log.
+    dispatcher = extensions.get_dispatcher() if extensions else None
+    if dispatcher is not None:
+        try:
+            suppressed = dispatcher.get_suppression_counts()
+        except Exception:
+            log.warning("GET /api/v1/status: dispatcher.get_suppression_counts raised", exc_info=True)
+            suppressed = {}
+        if suppressed:
+            data["notification_suppressed"] = suppressed
     return json_response(200, data)
 
 

@@ -257,6 +257,7 @@ def _findings_to_csv(findings: list[dict[str, Any]]) -> bytes:
         "action_taken",
         "provider",
         "model",
+        "origin",
     ]
     lines: list[str] = [",".join(cols)]
     for f in findings:

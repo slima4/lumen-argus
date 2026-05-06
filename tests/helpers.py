@@ -14,7 +14,7 @@ import unittest
 from typing import Any
 
 from lumen_argus.analytics.store import AnalyticsStore
-from lumen_argus.models import Finding
+from lumen_argus.models import Finding, FindingOrigin
 
 
 def free_port() -> int:
@@ -45,6 +45,7 @@ def make_finding(
     value_preview: str = "AKIA****",
     matched_value: str = "AKIAIOSFODNN7EXAMPLE",
     action: str = "block",
+    origin: FindingOrigin = FindingOrigin.DETECTOR,
 ) -> Finding:
     """Create a Finding with sensible test defaults."""
     return Finding(
@@ -55,6 +56,7 @@ def make_finding(
         value_preview=value_preview,
         matched_value=matched_value,
         action=action,
+        origin=origin,
     )
 
 

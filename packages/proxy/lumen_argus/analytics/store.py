@@ -315,6 +315,7 @@ class AnalyticsStore:
         runtime: str | None = None,
         intercept_mode: str | None = None,
         original_host: str | None = None,
+        origin: str | None = None,
         days: int | None = None,
         namespace_id: int = 1,
     ) -> tuple[list[dict[str, Any]], Any]:
@@ -336,6 +337,7 @@ class AnalyticsStore:
             runtime=runtime,
             intercept_mode=intercept_mode,
             original_host=original_host,
+            origin=origin,
             days=days,
             namespace_id=namespace_id,
         )

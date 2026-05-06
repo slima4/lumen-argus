@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS findings (
     api_key_hash TEXT NOT NULL DEFAULT '',
     content_hash TEXT NOT NULL DEFAULT '',
     seen_count INTEGER NOT NULL DEFAULT 1,
-    value_hash TEXT NOT NULL DEFAULT ''
+    value_hash TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL DEFAULT 'detector'
 );
 
 CREATE INDEX IF NOT EXISTS idx_findings_timestamp ON findings(timestamp);
@@ -90,6 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_findings_detector ON findings(detector);
 CREATE INDEX IF NOT EXISTS idx_findings_client ON findings(client_name);
 CREATE INDEX IF NOT EXISTS idx_findings_action ON findings(action_taken);
 CREATE INDEX IF NOT EXISTS idx_findings_intercept ON findings(intercept_mode);
+CREATE INDEX IF NOT EXISTS idx_findings_origin ON findings(origin);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_dedup
 ON findings(content_hash, session_id, namespace_id)
 WHERE content_hash != '' AND session_id != '';

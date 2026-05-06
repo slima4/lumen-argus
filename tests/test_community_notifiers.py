@@ -10,12 +10,19 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from lumen_argus.analytics.store import AnalyticsStore
-from lumen_argus.models import Finding
+from lumen_argus.models import Finding, FindingOrigin
+from lumen_argus.notifiers._rate_limit import TokenBucket
 from lumen_argus.notifiers.dispatcher import BasicDispatcher
 from lumen_argus.notifiers.webhook import WEBHOOK_CHANNEL_TYPE, WebhookNotifier, build_notifier
 
 
-def _make_finding(severity="critical", action="block", detector="secrets", ftype="aws_access_key"):
+def _make_finding(
+    severity="critical",
+    action="block",
+    detector="secrets",
+    ftype="aws_access_key",
+    origin=FindingOrigin.DETECTOR,
+):
     return Finding(
         detector=detector,
         type=ftype,
@@ -24,6 +31,7 @@ def _make_finding(severity="critical", action="block", detector="secrets", ftype
         location="messages[0].content",
         matched_value="AKIAIOSFODNN7EXAMPLE",
         value_preview="AKIA...MPLE",
+        origin=origin,
     )
 
 
@@ -319,6 +327,163 @@ class TestBasicDispatcher(unittest.TestCase):
         self.assertTrue(len(dispatcher.get_last_status()) > 0)
         dispatcher.rebuild()
         self.assertEqual(dispatcher.get_last_status(), {})
+
+
+class TestBasicDispatcherRateLimit(unittest.TestCase):
+    """Issue #81 — FRAMEWORK-origin findings rate-limited per (detector, type)
+    so a request-deterministic infrastructure fault cannot saturate channels.
+    DETECTOR-origin findings (real DLP) bypass the gate."""
+
+    def _make_dispatcher(self, capacity=1, refill=60.0):
+        notified = []
+        store = _MockStore([{"id": 1, "name": "wh", "type": "webhook", "enabled": True, "events": []}])
+        bucket = TokenBucket(capacity=capacity, refill_seconds=refill)
+        dispatcher = BasicDispatcher(
+            store=store,
+            builder=lambda ch: _RecordingNotifier(notified),
+            framework_bucket=bucket,
+        )
+        dispatcher.rebuild()
+        return dispatcher, notified
+
+    def test_framework_finding_storm_rate_limited(self):
+        """100 scan_error findings in <1s → exactly 1 notification dispatched."""
+        dispatcher, notified = self._make_dispatcher()
+        f = _make_finding(
+            detector="proxy",
+            ftype="scan_error",
+            action="alert",
+            origin=FindingOrigin.FRAMEWORK,
+        )
+        for _ in range(100):
+            dispatcher.dispatch([f], provider="anthropic")
+        time.sleep(0.5)
+        self.assertEqual(len(notified), 1)
+        suppressed = dispatcher.get_suppression_counts()
+        self.assertEqual(suppressed["proxy:scan_error"], 99)
+
+    def test_detector_findings_unaffected_by_rate_limit(self):
+        """100 real DLP findings → all 100 dispatched, suppression empty."""
+        dispatcher, notified = self._make_dispatcher()
+        f = _make_finding()  # DETECTOR origin by default
+        for _ in range(100):
+            dispatcher.dispatch([f], provider="anthropic")
+        time.sleep(0.5)
+        self.assertEqual(len(notified), 100)
+        self.assertEqual(dispatcher.get_suppression_counts(), {})
+
+    def test_mixed_batch_partitions_correctly(self):
+        """Single dispatch with framework + detector findings: detector
+        passes through, framework gated.
+
+        ThreadPool worker order is non-deterministic, so do not index
+        ``notified`` positionally — sort by finding count to make the
+        assertion order-independent.
+        """
+        dispatcher, notified = self._make_dispatcher()
+        framework_f = _make_finding(
+            detector="proxy",
+            ftype="scan_error",
+            action="alert",
+            origin=FindingOrigin.FRAMEWORK,
+        )
+        detector_f = _make_finding()
+        # First call: both get through (bucket full)
+        dispatcher.dispatch([framework_f, detector_f], provider="x")
+        # Second call: framework dropped (bucket empty), detector survives
+        dispatcher.dispatch([framework_f, detector_f], provider="x")
+        time.sleep(0.5)
+        self.assertEqual(len(notified), 2)
+        # Sort by finding count: full batch (2) and gated batch (1)
+        by_size = sorted(notified, key=lambda n: len(n["findings"]))
+        self.assertEqual(len(by_size[0]["findings"]), 1)
+        self.assertEqual(len(by_size[1]["findings"]), 2)
+        self.assertEqual(by_size[0]["findings"][0].detector, "secrets")
+        self.assertEqual(dispatcher.get_suppression_counts()["proxy:scan_error"], 1)
+
+    def test_per_detector_type_isolation(self):
+        """scan_error and scan_skipped_oversized share the bucket only by name
+        — different (detector, type) keys are independent."""
+        dispatcher, notified = self._make_dispatcher()
+        scan_error = _make_finding(detector="proxy", ftype="scan_error", action="alert", origin=FindingOrigin.FRAMEWORK)
+        oversized = _make_finding(
+            detector="proxy",
+            ftype="scan_skipped_oversized",
+            action="alert",
+            origin=FindingOrigin.FRAMEWORK,
+        )
+        dispatcher.dispatch([scan_error], provider="x")
+        dispatcher.dispatch([oversized], provider="x")
+        dispatcher.dispatch([scan_error], provider="x")
+        dispatcher.dispatch([oversized], provider="x")
+        time.sleep(0.5)
+        self.assertEqual(len(notified), 2)
+        suppressed = dispatcher.get_suppression_counts()
+        self.assertEqual(suppressed["proxy:scan_error"], 1)
+        self.assertEqual(suppressed["proxy:scan_skipped_oversized"], 1)
+
+    def test_admission_after_refill_window(self):
+        """After refill, framework finding admitted again. Suppression count
+        from prior window stays visible (cumulative)."""
+        dispatcher, notified = self._make_dispatcher(capacity=1, refill=0.2)
+        f = _make_finding(detector="proxy", ftype="scan_error", action="alert", origin=FindingOrigin.FRAMEWORK)
+        dispatcher.dispatch([f], provider="x")
+        dispatcher.dispatch([f], provider="x")
+        dispatcher.dispatch([f], provider="x")
+        time.sleep(0.5)
+        self.assertEqual(len(notified), 1)
+        self.assertEqual(dispatcher.get_suppression_counts()["proxy:scan_error"], 2)
+
+        # Wait past refill window
+        time.sleep(0.25)
+        dispatcher.dispatch([f], provider="x")
+        time.sleep(0.3)
+        self.assertEqual(len(notified), 2)
+        # Suppression counter is cumulative, not reset by admission
+        self.assertEqual(dispatcher.get_suppression_counts()["proxy:scan_error"], 2)
+
+    def test_no_bucket_disables_rate_limit(self):
+        """Dispatcher constructed without a bucket admits everything."""
+        notified = []
+        store = _MockStore([{"id": 1, "name": "wh", "type": "webhook", "enabled": True, "events": []}])
+        dispatcher = BasicDispatcher(store=store, builder=lambda ch: _RecordingNotifier(notified))
+        dispatcher.rebuild()
+        f = _make_finding(detector="proxy", ftype="scan_error", action="alert", origin=FindingOrigin.FRAMEWORK)
+        for _ in range(50):
+            dispatcher.dispatch([f], provider="x")
+        time.sleep(0.5)
+        self.assertEqual(len(notified), 50)
+        self.assertEqual(dispatcher.get_suppression_counts(), {})
+
+    def test_get_suppression_counts_empty_when_no_bucket(self):
+        dispatcher = BasicDispatcher()
+        self.assertEqual(dispatcher.get_suppression_counts(), {})
+
+    def test_rebuild_resets_suppression_counts(self):
+        """Channel reconfiguration restarts the suppression window so
+        operators see post-rebuild gap, not stale lifetime accumulation."""
+        dispatcher, _ = self._make_dispatcher()
+        f = _make_finding(detector="proxy", ftype="scan_error", action="alert", origin=FindingOrigin.FRAMEWORK)
+        for _ in range(20):
+            dispatcher.dispatch([f], provider="x")
+        time.sleep(0.3)
+        self.assertEqual(dispatcher.get_suppression_counts()["proxy:scan_error"], 19)
+        dispatcher.rebuild()
+        self.assertEqual(dispatcher.get_suppression_counts(), {})
+
+    def test_no_notifiers_does_not_consume_tokens(self):
+        """Bucket should not tick when zero channels are configured —
+        suppression counts must reflect drops the user could care about."""
+        bucket = TokenBucket(capacity=1, refill_seconds=60)
+        # No store means rebuild() is a no-op → _notifiers stays empty.
+        dispatcher = BasicDispatcher(framework_bucket=bucket)
+        dispatcher.rebuild()
+        self.assertEqual(dispatcher._notifiers, {})
+        f = _make_finding(detector="proxy", ftype="scan_error", action="alert", origin=FindingOrigin.FRAMEWORK)
+        for _ in range(50):
+            dispatcher.dispatch([f], provider="x")
+        time.sleep(0.2)
+        self.assertEqual(dispatcher.get_suppression_counts(), {})
 
 
 class TestChannelStatusEnrichment(unittest.TestCase):

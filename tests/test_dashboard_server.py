@@ -1003,6 +1003,40 @@ class TestCommunityAPIDirect(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(data["mode"], "passthrough")
 
+    def test_status_includes_notification_suppressed_when_dispatcher_has_drops(self):
+        """#81 — operators see how much notification volume the rate-limiter
+        absorbed. Field present only when there are suppressions."""
+        from lumen_argus.extensions import ExtensionRegistry
+
+        class _StubDispatcher:
+            def get_suppression_counts(self):
+                return {"proxy:scan_error": 99, "proxy:scan_skipped_oversized": 4}
+
+        ext = ExtensionRegistry()
+        ext.set_dispatcher(_StubDispatcher())
+
+        status, body = handle_community_api("/api/v1/status", "GET", b"", self.store, extensions=ext)
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["notification_suppressed"]["proxy:scan_error"], 99)
+        self.assertEqual(data["notification_suppressed"]["proxy:scan_skipped_oversized"], 4)
+
+    def test_status_omits_notification_suppressed_when_empty(self):
+        """Clean run: no suppression key in payload — keeps the dashboard quiet."""
+        from lumen_argus.extensions import ExtensionRegistry
+
+        class _StubDispatcher:
+            def get_suppression_counts(self):
+                return {}
+
+        ext = ExtensionRegistry()
+        ext.set_dispatcher(_StubDispatcher())
+
+        status, body = handle_community_api("/api/v1/status", "GET", b"", self.store, extensions=ext)
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertNotIn("notification_suppressed", data)
+
     def test_status_tier_reflects_license_checker_when_invalid(self):
         """Pro plugin loaded + license checker returning False → tier: community.
 

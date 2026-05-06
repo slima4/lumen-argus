@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from lumen_argus.analytics.store import AnalyticsStore
     from lumen_argus.models import SessionContext
 
+from lumen_argus.models import FindingOrigin
+from lumen_argus.notifiers._rate_limit import TokenBucket
 from lumen_argus_core.time_utils import now_iso
 
 log = logging.getLogger("argus.notifiers.dispatcher")
@@ -31,12 +33,20 @@ def _parse_events(events: Any) -> list[str]:
 class BasicDispatcher:
     """Fire-and-forget notification dispatcher.
 
-    Sends to all enabled channels in a bounded thread pool.
-    Pro replaces this with NotificationDispatcher (retry, circuit breaker, dedup).
+    Sends to all enabled channels in a bounded thread pool. Applies a
+    per-(detector, type) `TokenBucket` to FRAMEWORK-origin findings so a
+    request-deterministic infrastructure fault cannot saturate channels;
+    DETECTOR-origin findings (real DLP signal) bypass the gate.
+    Pro replaces this with NotificationDispatcher (per-channel retry,
+    circuit breaker, cross-channel dedup).
     """
 
     def __init__(
-        self, store: AnalyticsStore | None = None, builder: Callable[..., Any] | None = None, max_workers: int = 4
+        self,
+        store: AnalyticsStore | None = None,
+        builder: Callable[..., Any] | None = None,
+        max_workers: int = 4,
+        framework_bucket: TokenBucket | None = None,
     ) -> None:
         self._store = store
         self._builder = builder
@@ -44,6 +54,11 @@ class BasicDispatcher:
         self._notifiers: dict[int, tuple[dict[str, Any], Any, list[str]]] = {}
         self._last_status: dict[int, dict[str, str]] = {}
         self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="argus-notify")
+        # Rate-limit for FRAMEWORK-origin findings — protects channels from
+        # request-deterministic infrastructure faults (scan_error storm,
+        # mode_changed flap). DETECTOR-origin findings bypass this gate;
+        # legitimate detection volume is the operator's signal, not noise.
+        self._framework_bucket = framework_bucket
 
     def rebuild(self) -> None:
         """Rebuild notifier instances from DB channels."""
@@ -63,6 +78,11 @@ class BasicDispatcher:
             with self._lock:
                 self._notifiers = new_notifiers
                 self._last_status = {}
+            # Channel reconfiguration restarts the suppression window so
+            # operators reading `notification_suppressed` see post-rebuild
+            # gap, not stale lifetime accumulation.
+            if self._framework_bucket is not None:
+                self._framework_bucket.reset()
             log.debug("dispatcher rebuilt: %d active notifiers", len(new_notifiers))
         except Exception:
             log.warning("failed to rebuild dispatcher", exc_info=True)
@@ -107,15 +127,52 @@ class BasicDispatcher:
         with self._lock:
             notifiers = self._notifiers
         if not notifiers:
+            # No subscribers — skip rate-limit gate so suppression counters
+            # don't tick for findings nobody could have received anyway.
+            return
+        admitted = self._apply_framework_rate_limit(findings)
+        if not admitted:
             return
         for channel_id, (channel, notifier, events) in notifiers.items():
             if events:
-                matching = [f for f in findings if f.action in events]
+                matching = [f for f in admitted if f.action in events]
             else:
-                matching = list(findings)
+                matching = list(admitted)
             if not matching:
                 continue
             self._pool.submit(self._safe_notify, channel_id, channel, notifier, matching, provider, model, session)
+
+    def _apply_framework_rate_limit(self, findings: list[Any]) -> list[Any]:
+        """Drop FRAMEWORK-origin findings that exceed the per-(detector,type)
+        token bucket. Returns the surviving list (DETECTOR origins always
+        survive). When no bucket is configured, returns findings unchanged.
+        """
+        if self._framework_bucket is None:
+            return findings
+        admitted: list[Any] = []
+        for f in findings:
+            if f.origin != FindingOrigin.FRAMEWORK:
+                admitted.append(f)
+                continue
+            if self._framework_bucket.try_acquire((f.detector, f.type)):
+                admitted.append(f)
+        return admitted
+
+    def get_suppression_counts(self) -> dict[str, int]:
+        """Return per-(detector,type) suppression counts for FRAMEWORK
+        findings as a dict of ``"{detector}:{type}" -> count``. Empty when
+        no bucket is configured or no suppressions have occurred.
+        """
+        if self._framework_bucket is None:
+            return {}
+        snap = self._framework_bucket.snapshot()
+        out: dict[str, int] = {}
+        for key, count in snap.items():
+            if isinstance(key, tuple) and len(key) == 2:
+                out["%s:%s" % (key[0], key[1])] = count
+            else:
+                out[str(key)] = count
+        return out
 
     def _safe_notify(
         self,

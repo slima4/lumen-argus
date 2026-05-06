@@ -103,6 +103,21 @@ class TestAnalyticsStore(unittest.TestCase):
         self.assertEqual(row["provider"], "")
         self.assertEqual(row["model"], "")
 
+    def test_record_findings_origin_defaults_to_detector(self):
+        """Default Finding origin → DB row stores 'detector'."""
+        self.store.record_findings([_make_finding()])
+        row = self.store.get_finding_by_id(1)
+        self.assertEqual(row["origin"], "detector")
+
+    def test_record_findings_framework_origin_round_trip(self):
+        """FRAMEWORK origin → DB row stores 'framework' (issue #81)."""
+        from lumen_argus.models import FindingOrigin
+
+        f = _make_finding(detector="proxy", type_="scan_error", action="alert", origin=FindingOrigin.FRAMEWORK)
+        self.store.record_findings([f])
+        row = self.store.get_finding_by_id(1)
+        self.assertEqual(row["origin"], "framework")
+
     # ── get_findings_page ─────────────────────────────────────────
 
     def _seed_findings(self):
@@ -159,6 +174,26 @@ class TestAnalyticsStore(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         for r in rows:
             self.assertEqual(r["severity"], "high")
+
+    def test_get_findings_page_filter_by_origin(self):
+        """Filtering by origin separates FRAMEWORK self-state from DETECTOR
+        signal (issue #81 — operators want to query both independently)."""
+        from lumen_argus.models import FindingOrigin, SessionContext
+
+        self._seed_findings()
+        framework_f = _make_finding(
+            detector="proxy", type_="scan_error", action="alert", origin=FindingOrigin.FRAMEWORK
+        )
+        self.store.record_findings([framework_f], session=SessionContext(session_id="s9"))
+
+        framework_rows, framework_total = self.store.get_findings_page(origin="framework")
+        self.assertEqual(framework_total, 1)
+        self.assertEqual(framework_rows[0]["finding_type"], "scan_error")
+
+        detector_rows, detector_total = self.store.get_findings_page(origin="detector")
+        self.assertEqual(detector_total, 5)
+        for r in detector_rows:
+            self.assertNotEqual(r["finding_type"], "scan_error")
 
     def test_get_findings_page_filter_by_detector(self):
         """Filtering by detector should return matching rows only."""
