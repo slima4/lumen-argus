@@ -52,7 +52,7 @@ class TestTokenBucket(unittest.TestCase):
         for _ in range(99):
             bucket.try_acquire("a")
         snap = bucket.snapshot()
-        self.assertEqual(snap[("a")], 99)
+        self.assertEqual(snap["a"], 99)
 
     def test_suppression_count_per_key(self):
         bucket = TokenBucket(capacity=1, refill_seconds=60)

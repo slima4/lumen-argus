@@ -170,5 +170,99 @@ class TestSSEFindingBroadcastIncludesOrigin(unittest.TestCase):
         self.assertEqual(calls["sse_findings"][1]["origin"], "detector")
 
 
+class TestEmitFindingsEndToEndStormProtection(unittest.TestCase):
+    """End-to-end integration: real ScannerPipeline + real BasicDispatcher +
+    real TokenBucket + real AnalyticsStore + real ExtensionRegistry. Pin the
+    bug A1+ closes — synthetic findings reaching dispatcher's storm gate
+    *and* the analytics store *and* the suppression telemetry — without any
+    mocks at the seam between emit_findings and dispatcher.
+
+    Pre-A1+ regression risk: a refactor that drops emit_findings forwarding
+    `findings.origin` into dispatcher.dispatch (or that re-introduces an
+    extension-guard branch bypassing dispatcher) would silently turn off
+    issue #81 storm protection. The mocked unit tests would still pass; this
+    integration test would fail because the dispatcher's real bucket would
+    not be ticked.
+    """
+
+    def test_framework_storm_gated_with_real_dispatcher_and_store(self):
+        import os
+        import shutil
+        import tempfile
+        import time as _time
+
+        from lumen_argus.analytics.store import AnalyticsStore
+        from lumen_argus.extensions import ExtensionRegistry
+        from lumen_argus.notifiers._rate_limit import TokenBucket
+        from lumen_argus.notifiers.dispatcher import BasicDispatcher
+        from lumen_argus.pipeline import ScannerPipeline
+
+        tmpdir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmpdir, ignore_errors=True))
+        store = AnalyticsStore(db_path=os.path.join(tmpdir, "test.db"))
+        self.addCleanup(store._adapter.close)
+
+        notified: list = []
+
+        class _RecNotifier:
+            def notify(self, findings, **kw):
+                notified.append(list(findings))
+
+        # Channel record so dispatcher.rebuild() picks it up — wildcard events
+        # so the per-channel filter never drops anything (we want only the
+        # rate-limit gate to reduce 100 → 1).
+        store.create_notification_channel({"name": "real-wh", "type": "webhook", "config": {"url": "http://x/"}})
+
+        ext = ExtensionRegistry()
+        ext.set_analytics_store(store)
+        bucket = TokenBucket(capacity=1, refill_seconds=60.0)
+        dispatcher = BasicDispatcher(store=store, builder=lambda ch: _RecNotifier(), framework_bucket=bucket)
+        dispatcher.rebuild()
+        ext.set_dispatcher(dispatcher)
+
+        pipeline = ScannerPipeline(extensions=ext)
+
+        framework_finding = Finding(
+            detector="proxy",
+            type="scan_error",
+            severity="critical",
+            location="pipeline",
+            value_preview="x",
+            matched_value="",
+            action="alert",
+            origin=FindingOrigin.FRAMEWORK,
+        )
+        result = ScanResult(action="pass", findings=[framework_finding])
+
+        for _ in range(100):
+            pipeline.emit_findings(
+                result,
+                provider="anthropic",
+                model="opus",
+                session=SessionContext(session_id="s1"),
+                body=b"",
+            )
+
+        # Wait for thread-pool dispatch to land. Poll instead of fixed sleep
+        # to keep the test snappy on fast CI and tolerant on slow CI.
+        deadline = _time.monotonic() + 3.0
+        while _time.monotonic() < deadline and len(notified) < 1:
+            _time.sleep(0.02)
+
+        # 1 admitted by the bucket, 99 suppressed
+        self.assertEqual(len(notified), 1)
+        self.assertEqual(dispatcher.get_suppression_counts()["proxy:scan_error"], 99)
+
+        # Storage path also exercised. The 100 emit_findings calls share the
+        # same (content_hash, session_id) so the ON CONFLICT clause collapses
+        # them into one row with seen_count = 100. This is by design (Layer-1
+        # dedup) — what the assertion pins is that suppression is at the
+        # dispatcher seam, not the store seam: every emit_findings reached
+        # the store's UPDATE path even though only one reached the notifier.
+        rows, total = store.get_findings_page(origin="framework", limit=200)
+        self.assertEqual(total, 1)
+        self.assertEqual(rows[0]["seen_count"], 100)
+
+
 if __name__ == "__main__":
     unittest.main()

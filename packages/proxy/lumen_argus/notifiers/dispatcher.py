@@ -130,7 +130,22 @@ class BasicDispatcher:
             # No subscribers — skip rate-limit gate so suppression counters
             # don't tick for findings nobody could have received anyway.
             return
-        admitted = self._apply_framework_rate_limit(findings)
+        # Pre-filter against the union of channel-events subscriptions so the
+        # rate-limit gate doesn't burn tokens (and inflate suppression counts)
+        # for findings every channel would have dropped on its own filter.
+        # An empty events list on any channel = wildcard ⇒ all findings reach
+        # at least one channel ⇒ skip pre-filter.
+        wildcard = any(not events for _, _, events in notifiers.values())
+        if wildcard:
+            reachable = findings
+        else:
+            allowed_actions: set[str] = set()
+            for _, _, events in notifiers.values():
+                allowed_actions.update(events)
+            reachable = [f for f in findings if f.action in allowed_actions]
+            if not reachable:
+                return
+        admitted = self._apply_framework_rate_limit(reachable)
         if not admitted:
             return
         for channel_id, (channel, notifier, events) in notifiers.items():

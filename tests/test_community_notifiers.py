@@ -363,12 +363,19 @@ class TestBasicDispatcherRateLimit(unittest.TestCase):
         self.assertEqual(suppressed["proxy:scan_error"], 99)
 
     def test_detector_findings_unaffected_by_rate_limit(self):
-        """100 real DLP findings → all 100 dispatched, suppression empty."""
+        """100 real DLP findings → all 100 dispatched, suppression empty.
+
+        100 ThreadPool tasks may not all complete inside a fixed sleep on a
+        slow CI host, so poll until the count lands or hit a generous
+        timeout instead of relying on time.sleep alone.
+        """
         dispatcher, notified = self._make_dispatcher()
         f = _make_finding()  # DETECTOR origin by default
         for _ in range(100):
             dispatcher.dispatch([f], provider="anthropic")
-        time.sleep(0.5)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and len(notified) < 100:
+            time.sleep(0.02)
         self.assertEqual(len(notified), 100)
         self.assertEqual(dispatcher.get_suppression_counts(), {})
 
@@ -469,6 +476,29 @@ class TestBasicDispatcherRateLimit(unittest.TestCase):
         time.sleep(0.3)
         self.assertEqual(dispatcher.get_suppression_counts()["proxy:scan_error"], 19)
         dispatcher.rebuild()
+        self.assertEqual(dispatcher.get_suppression_counts(), {})
+
+    def test_action_unmatched_by_any_channel_does_not_consume_tokens(self):
+        """Pre-filter: if no channel subscribes to the finding's action, the
+        token bucket must not tick — operators reading notification_suppressed
+        should see counts only for findings that real channels would have
+        received absent the storm gate."""
+        notified = []
+        # Channel subscribes only to "block" — incoming "alert" findings would
+        # be dropped by the per-channel events filter.
+        store = _MockStore([{"id": 1, "name": "wh", "type": "webhook", "enabled": True, "events": ["block"]}])
+        bucket = TokenBucket(capacity=1, refill_seconds=60.0)
+        dispatcher = BasicDispatcher(
+            store=store,
+            builder=lambda ch: _RecordingNotifier(notified),
+            framework_bucket=bucket,
+        )
+        dispatcher.rebuild()
+        f = _make_finding(detector="proxy", ftype="scan_error", action="alert", origin=FindingOrigin.FRAMEWORK)
+        for _ in range(50):
+            dispatcher.dispatch([f], provider="x")
+        time.sleep(0.2)
+        self.assertEqual(len(notified), 0)
         self.assertEqual(dispatcher.get_suppression_counts(), {})
 
     def test_no_notifiers_does_not_consume_tokens(self):
