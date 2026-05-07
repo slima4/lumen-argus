@@ -15,6 +15,7 @@ from lumen_argus.display import TerminalDisplay
 from lumen_argus.pipeline import ScannerPipeline
 from lumen_argus.provider import ProviderRouter
 from lumen_argus.stats import SessionStats
+from lumen_argus_core.http import make_passthrough_session
 
 if TYPE_CHECKING:
     from lumen_argus.extensions import ExtensionRegistry
@@ -122,13 +123,9 @@ class AsyncArgusProxy:
 
     async def _on_startup(self, app: web.Application) -> None:
         """Create the aiohttp ClientSession for upstream connections."""
-        connector = aiohttp.TCPConnector(
+        self.client_session = make_passthrough_session(
             limit=self.max_connections,
             ssl=self._ssl_context if self._ssl_context else False,
-        )
-        self.client_session = aiohttp.ClientSession(
-            connector=connector,
-            auto_decompress=False,  # pass through encoding as-is
         )
         log.info("async proxy client session created (max_connections=%d)", self.max_connections)
 

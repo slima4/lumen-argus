@@ -32,6 +32,7 @@ from multidict import CIMultiDict
 
 from lumen_argus_agent.context import CallerContext, resolve_context, static_context
 from lumen_argus_agent.upstream_health import UpstreamHealth
+from lumen_argus_core.http import make_passthrough_session
 from lumen_argus_core.relay_state import (
     PROBE_MATCH,
     PROBE_MISMATCH,
@@ -124,26 +125,6 @@ def _resolve_direct_upstream(path: str, headers: dict[str, str]) -> tuple[str, s
 
     # Default
     return "https://api.anthropic.com", "anthropic"
-
-
-# ---------------------------------------------------------------------------
-# Passthrough session factory
-# ---------------------------------------------------------------------------
-
-
-def make_passthrough_session(*, limit: int) -> aiohttp.ClientSession:
-    """Build a ClientSession for byte-identical response forwarding.
-
-    ``auto_decompress=False`` is load-bearing: ``_forward_via`` propagates
-    the upstream ``Content-Encoding`` header verbatim, so aiohttp must not
-    silently gunzip the body — that would double-encode against the
-    preserved header. Paired with the ``accept-encoding`` strip in
-    ``_build_forward_headers`` (which normalizes the inbound value).
-    """
-    return aiohttp.ClientSession(
-        connector=aiohttp.TCPConnector(limit=limit),
-        auto_decompress=False,
-    )
 
 
 # ---------------------------------------------------------------------------

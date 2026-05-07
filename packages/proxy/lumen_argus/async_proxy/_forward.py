@@ -371,6 +371,7 @@ async def _do_forward(
             lk = key.lower()
             if lk in _HOP_BY_HOP:
                 continue
+            # ``accept-encoding`` strip pairs with ``auto_decompress=False`` — see ``make_passthrough_session``.
             if lk in ("host", "accept-encoding"):
                 continue
             if lk.startswith(("x-lumen-argus-", "x-lumen-forward-")):

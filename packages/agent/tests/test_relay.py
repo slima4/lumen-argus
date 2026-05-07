@@ -16,9 +16,10 @@ from lumen_argus_agent.relay import (
     _inject_identity_headers,
     _resolve_direct_upstream,
     _strip_lumen_headers,
-    make_passthrough_session,
 )
 from multidict import CIMultiDict
+
+from lumen_argus_core.http import make_passthrough_session
 
 
 class TestResolveDirectUpstream(unittest.TestCase):

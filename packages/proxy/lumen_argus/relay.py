@@ -24,6 +24,7 @@ import aiohttp
 from aiohttp import web
 
 from lumen_argus.provider import ProviderRouter
+from lumen_argus_core.http import make_passthrough_session
 
 log = logging.getLogger("argus.relay")
 
@@ -121,14 +122,8 @@ class ArgusRelay:
 
     async def start(self) -> None:
         """Start the relay server and health checker."""
-        self._engine_session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(limit=self.max_connections),
-            auto_decompress=False,
-        )
-        self._upstream_session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(limit=self.max_connections),
-            auto_decompress=False,
-        )
+        self._engine_session = make_passthrough_session(limit=self.max_connections)
+        self._upstream_session = make_passthrough_session(limit=self.max_connections)
 
         self._app = web.Application(middlewares=[_nosniff_middleware])
         self._app[_RELAY_KEY] = self
@@ -433,6 +428,7 @@ def _build_forward_headers(request: web.Request, body: bytes) -> dict[str, str]:
         lk = key.lower()
         if lk in _HOP_BY_HOP:
             continue
+        # ``accept-encoding`` strip pairs with ``auto_decompress=False`` — see ``make_passthrough_session``.
         if lk in ("host", "accept-encoding"):
             continue
         if lk == "content-length":
