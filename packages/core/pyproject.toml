@@ -22,3 +22,10 @@ classifiers = [
     "Topic :: Security",
 ]
 dependencies = []
+
+[dependency-groups]
+# PEP 735 — test-only deps, never installed into the published wheel.
+# `http.py` lazy-imports aiohttp so production stays zero-dep, but the
+# unit tests that pin the helper's TCPConnector contract need aiohttp
+# at test time. Run via: `uv run --group test --package lumen-argus-core ...`.
+test = ["aiohttp"]

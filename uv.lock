@@ -949,6 +949,16 @@ name = "lumen-argus-core"
 version = "0.1.0"
 source = { editable = "packages/core" }
 
+[package.dev-dependencies]
+test = [
+    { name = "aiohttp" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+test = [{ name = "aiohttp" }]
+
 [[package]]
 name = "lumen-argus-proxy"
 version = "0.1.0"
