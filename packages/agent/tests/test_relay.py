@@ -476,11 +476,58 @@ class TestAgentRelayBuildEndpoint(AioHTTPTestCase):
         self.assertNotEqual(resp.status, 200)
 
 
-class TestAgentRelayForwarding(AioHTTPTestCase):
-    """Test relay forwarding to upstream proxy."""
+class _UpstreamRelayTestCase(AioHTTPTestCase):
+    """Base for tests that drive a relay against a real random-port upstream.
+
+    Subclasses override :meth:`configure_upstream` to register routes on
+    the upstream ``web.Application``. The base owns relay construction,
+    upstream lifecycle, and session injection so individual tests carry
+    only their own routing and assertion logic.
+    """
+
+    async def configure_upstream(self, app: web.Application) -> None:
+        raise NotImplementedError("subclasses must override configure_upstream")
 
     async def get_application(self):
-        # Create a mock upstream that records requests
+        from lumen_argus_agent.relay import _handle_request
+
+        upstream_app = web.Application()
+        await self.configure_upstream(upstream_app)
+
+        runner = web.AppRunner(upstream_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        self._upstream_port = site._server.sockets[0].getsockname()[1]
+        self._upstream_runner = runner
+
+        self._relay = AgentRelay(
+            RelayConfig(
+                upstream_url="http://127.0.0.1:%d" % self._upstream_port,
+                agent_id="agent_test",
+                machine_id="mac_test",
+            )
+        )
+
+        app = web.Application()
+        app[_RELAY_KEY] = self._relay
+        app.router.add_route("*", "/{path_info:.*}", _handle_request)
+        return app
+
+    async def setUpAsync(self):
+        await super().setUpAsync()
+        self._relay.attach_upstream_session(make_passthrough_session(limit=10))
+
+    async def tearDownAsync(self):
+        await self._relay.stop()
+        await self._upstream_runner.cleanup()
+        await super().tearDownAsync()
+
+
+class TestAgentRelayForwarding(_UpstreamRelayTestCase):
+    """Test relay forwarding to upstream proxy."""
+
+    async def configure_upstream(self, app: web.Application) -> None:
         self._upstream_requests: list[web.Request] = []
         self._upstream_bodies: list[bytes] = []
         self._upstream_headers: list[dict[str, str]] = []
@@ -508,48 +555,9 @@ class TestAgentRelayForwarding(AioHTTPTestCase):
         async def mock_health(request: web.Request) -> web.Response:
             return web.json_response({"status": "ok"})
 
-        # Build upstream app
-        upstream_app = web.Application()
-        upstream_app.router.add_post("/v1/messages", mock_upstream)
-        upstream_app.router.add_post("/v1/messages/stream", mock_upstream_sse)
-        upstream_app.router.add_get("/health", mock_health)
-
-        # Start upstream on a random port
-        runner = web.AppRunner(upstream_app)
-        await runner.setup()
-        site = web.TCPSite(runner, "127.0.0.1", 0)
-        await site.start()
-        # Get the actual port
-        self._upstream_port = site._server.sockets[0].getsockname()[1]
-        self._upstream_runner = runner
-
-        # Build relay pointing to mock upstream
-        config = RelayConfig(
-            upstream_url="http://127.0.0.1:%d" % self._upstream_port,
-            agent_id="agent_test",
-            machine_id="mac_test",
-        )
-        relay = AgentRelay(config)
-
-        app = web.Application()
-        from lumen_argus_agent.relay import _RELAY_KEY, _handle_request
-
-        app[_RELAY_KEY] = relay
-        app.router.add_route("*", "/{path_info:.*}", _handle_request)
-
-        # Store relay for session management
-        self._relay = relay
-        return app
-
-    async def setUpAsync(self):
-        await super().setUpAsync()
-        self._relay._upstream_session = make_passthrough_session(limit=10)
-
-    async def tearDownAsync(self):
-        if self._relay._upstream_session:
-            await self._relay._upstream_session.close()
-        await self._upstream_runner.cleanup()
-        await super().tearDownAsync()
+        app.router.add_post("/v1/messages", mock_upstream)
+        app.router.add_post("/v1/messages/stream", mock_upstream_sse)
+        app.router.add_get("/health", mock_health)
 
     @unittest_run_loop
     async def test_forwards_request(self):
@@ -629,22 +637,21 @@ class TestAgentRelayForwarding(AioHTTPTestCase):
         self.assertIn(b"data: [DONE]", body)
 
 
-class TestAgentRelayGzipPassthrough(AioHTTPTestCase):
+class TestAgentRelayGzipPassthrough(_UpstreamRelayTestCase):
     """Regression guard for the auto_decompress=False / accept-encoding pair.
 
     Stands up a real gzip upstream and asserts byte-identical forwarding
     across buffered and SSE paths.
     """
 
-    async def get_application(self):
+    async def configure_upstream(self, app: web.Application) -> None:
         self._upstream_headers: list[dict[str, str]] = []
 
         async def gzip_json(request: web.Request) -> web.Response:
             self._upstream_headers.append(dict(request.headers))
             payload = json.dumps({"message": "hello"}).encode()
-            compressed = gzip.compress(payload)
             return web.Response(
-                body=compressed,
+                body=gzip.compress(payload),
                 status=200,
                 headers={"Content-Type": "application/json", "Content-Encoding": "gzip"},
             )
@@ -661,43 +668,16 @@ class TestAgentRelayGzipPassthrough(AioHTTPTestCase):
             await resp.write_eof()
             return resp
 
-        upstream_app = web.Application()
-        upstream_app.router.add_get("/buffered", gzip_json)
-        upstream_app.router.add_get("/stream", gzip_sse)
-
-        runner = web.AppRunner(upstream_app)
-        await runner.setup()
-        site = web.TCPSite(runner, "127.0.0.1", 0)
-        await site.start()
-        self._upstream_port = site._server.sockets[0].getsockname()[1]
-        self._upstream_runner = runner
-
-        config = RelayConfig(
-            upstream_url="http://127.0.0.1:%d" % self._upstream_port,
-            agent_id="agent_test",
-            machine_id="mac_test",
-        )
-        relay = AgentRelay(config)
-        self._relay = relay
-
-        app = web.Application()
-        app[_RELAY_KEY] = relay
-        from lumen_argus_agent.relay import _handle_request
-
-        app.router.add_route("*", "/{path_info:.*}", _handle_request)
-        return app
+        app.router.add_get("/buffered", gzip_json)
+        app.router.add_get("/stream", gzip_sse)
 
     async def setUpAsync(self):
         await super().setUpAsync()
-        self._relay._upstream_session = make_passthrough_session(limit=10)
         # Client session must NOT auto-decompress — we are asserting raw bytes.
         self._raw_client = make_passthrough_session(limit=10)
 
     async def tearDownAsync(self):
         await self._raw_client.close()
-        if self._relay._upstream_session:
-            await self._relay._upstream_session.close()
-        await self._upstream_runner.cleanup()
         await super().tearDownAsync()
 
     @unittest_run_loop

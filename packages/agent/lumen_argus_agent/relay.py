@@ -189,6 +189,16 @@ class AgentRelay:
             await self._runner.cleanup()
         log.info("relay stopped")
 
+    def attach_upstream_session(self, session: aiohttp.ClientSession) -> None:
+        """Inject a pre-built upstream session.
+
+        Production code calls :meth:`start`, which builds sessions internally
+        and binds the listener. This seam exists so AioHTTPTestCase-based
+        tests can drive ``_handle_request`` against a custom upstream without
+        binding a real port. Closed by :meth:`stop` like any session.
+        """
+        self._upstream_session = session
+
     async def drain(self, timeout: int = 10) -> int:
         """Wait for in-flight requests to complete. Returns remaining count."""
         deadline = time.monotonic() + timeout
