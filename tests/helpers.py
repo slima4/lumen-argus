@@ -5,13 +5,18 @@ Usage:
 """
 
 import asyncio
+import contextlib
 import os
 import shutil
 import socket
 import tempfile
 import threading
 import unittest
+from collections.abc import AsyncIterator
 from typing import Any
+
+import aiohttp
+from aiohttp import web
 
 from lumen_argus.analytics.store import AnalyticsStore
 from lumen_argus.models import Finding, FindingOrigin
@@ -170,3 +175,32 @@ class StoreTestCase(unittest.TestCase):
 
     def tearDown(self) -> None:
         shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+
+@contextlib.asynccontextmanager
+async def echo_ws_upstream(port: int) -> AsyncIterator[None]:
+    """Run a ``/ws`` WebSocket echo upstream on ``127.0.0.1:port``.
+
+    Each TEXT frame is echoed back as ``"echo:" + msg.data`` for the
+    duration of the ``async with`` block. Cleanup runs unconditionally —
+    caller does not own the runner.
+    """
+
+    async def handler(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        async for msg in ws:
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                await ws.send_str("echo:" + msg.data)
+        return ws
+
+    app = web.Application()
+    app.router.add_get("/ws", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+    try:
+        yield
+    finally:
+        await runner.cleanup()

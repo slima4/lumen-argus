@@ -13,6 +13,7 @@ from lumen_argus.audit import AuditLogger
 from lumen_argus.display import TerminalDisplay
 from lumen_argus.pipeline import ScannerPipeline
 from lumen_argus.provider import ProviderRouter
+from tests.helpers import echo_ws_upstream
 from tests.helpers import free_port as _get_free_port
 
 
@@ -1349,35 +1350,21 @@ class TestAsyncProxyWebSocketRelay(unittest.TestCase):
         echo_port = _get_free_port()
 
         async def _test():
-            async def echo_handler(request):
-                ws = aiohttp.web.WebSocketResponse()
-                await ws.prepare(request)
-                async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        await ws.send_str("echo:" + msg.data)
-                return ws
-
-            echo_app = aiohttp.web.Application()
-            echo_app.router.add_get("/ws", echo_handler)
-            echo_runner = aiohttp.web.AppRunner(echo_app)
-            await echo_runner.setup()
-            await aiohttp.web.TCPSite(echo_runner, "127.0.0.1", echo_port).start()
-            await proxy.start()
-
-            session = aiohttp.ClientSession()
-            try:
-                url = "http://127.0.0.1:%d/ws?url=ws://127.0.0.1:%d/ws" % (proxy_port, echo_port)
-                ws = await session.ws_connect(url)
-                await ws.send_str("hello world")
-                msg = await asyncio.wait_for(ws.receive(), timeout=3)
-                self.assertEqual(msg.type, aiohttp.WSMsgType.TEXT)
-                self.assertEqual(msg.data, "echo:hello world")
-                await ws.close()
-            finally:
-                await session.close()
-                await asyncio.sleep(0.1)  # let relay coroutines finish
-                await proxy.stop()
-                await echo_runner.cleanup()
+            async with echo_ws_upstream(echo_port):
+                await proxy.start()
+                session = aiohttp.ClientSession()
+                try:
+                    url = "http://127.0.0.1:%d/ws?url=ws://127.0.0.1:%d/ws" % (proxy_port, echo_port)
+                    ws = await session.ws_connect(url)
+                    await ws.send_str("hello world")
+                    msg = await asyncio.wait_for(ws.receive(), timeout=3)
+                    self.assertEqual(msg.type, aiohttp.WSMsgType.TEXT)
+                    self.assertEqual(msg.data, "echo:hello world")
+                    await ws.close()
+                finally:
+                    await session.close()
+                    await asyncio.sleep(0.1)  # let relay coroutines finish
+                    await proxy.stop()
 
         asyncio.run(_test())
 
@@ -1387,37 +1374,23 @@ class TestAsyncProxyWebSocketRelay(unittest.TestCase):
         echo_port = _get_free_port()
 
         async def _test():
-            async def echo_handler(request):
-                ws = aiohttp.web.WebSocketResponse()
-                await ws.prepare(request)
-                async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        await ws.send_str("echo:" + msg.data)
-                return ws
-
-            echo_app = aiohttp.web.Application()
-            echo_app.router.add_get("/ws", echo_handler)
-            echo_runner = aiohttp.web.AppRunner(echo_app)
-            await echo_runner.setup()
-            await aiohttp.web.TCPSite(echo_runner, "127.0.0.1", echo_port).start()
-            await proxy.start()
-
-            session = aiohttp.ClientSession()
-            try:
-                url = "http://127.0.0.1:%d/ws?url=ws://127.0.0.1:%d/ws" % (proxy_port, echo_port)
-                ws = await session.ws_connect(url)
-                await ws.send_str("key=AKIAIOSFODNN7EXAMPLE")
-                msg = await asyncio.wait_for(ws.receive(), timeout=3)
-                # Block should close the connection
-                self.assertIn(
-                    msg.type,
-                    (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR),
-                )
-            finally:
-                await session.close()
-                await asyncio.sleep(0.1)
-                await proxy.stop()
-                await echo_runner.cleanup()
+            async with echo_ws_upstream(echo_port):
+                await proxy.start()
+                session = aiohttp.ClientSession()
+                try:
+                    url = "http://127.0.0.1:%d/ws?url=ws://127.0.0.1:%d/ws" % (proxy_port, echo_port)
+                    ws = await session.ws_connect(url)
+                    await ws.send_str("key=AKIAIOSFODNN7EXAMPLE")
+                    msg = await asyncio.wait_for(ws.receive(), timeout=3)
+                    # Block should close the connection
+                    self.assertIn(
+                        msg.type,
+                        (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR),
+                    )
+                finally:
+                    await session.close()
+                    await asyncio.sleep(0.1)
+                    await proxy.stop()
 
         asyncio.run(_test())
 
@@ -1427,35 +1400,21 @@ class TestAsyncProxyWebSocketRelay(unittest.TestCase):
         echo_port = _get_free_port()
 
         async def _test():
-            async def echo_handler(request):
-                ws = aiohttp.web.WebSocketResponse()
-                await ws.prepare(request)
-                async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        await ws.send_str("echo:" + msg.data)
-                return ws
-
-            echo_app = aiohttp.web.Application()
-            echo_app.router.add_get("/ws", echo_handler)
-            echo_runner = aiohttp.web.AppRunner(echo_app)
-            await echo_runner.setup()
-            await aiohttp.web.TCPSite(echo_runner, "127.0.0.1", echo_port).start()
-            await proxy.start()
-
-            session = aiohttp.ClientSession()
-            try:
-                url = "http://127.0.0.1:%d/ws?url=ws://127.0.0.1:%d/ws" % (proxy_port, echo_port)
-                ws = await session.ws_connect(url)
-                await ws.send_str("key=AKIAIOSFODNN7EXAMPLE")
-                msg = await asyncio.wait_for(ws.receive(), timeout=3)
-                self.assertEqual(msg.type, aiohttp.WSMsgType.TEXT)
-                self.assertIn("AKIAIOSFODNN7EXAMPLE", msg.data)
-                await ws.close()
-            finally:
-                await session.close()
-                await asyncio.sleep(0.1)
-                await proxy.stop()
-                await echo_runner.cleanup()
+            async with echo_ws_upstream(echo_port):
+                await proxy.start()
+                session = aiohttp.ClientSession()
+                try:
+                    url = "http://127.0.0.1:%d/ws?url=ws://127.0.0.1:%d/ws" % (proxy_port, echo_port)
+                    ws = await session.ws_connect(url)
+                    await ws.send_str("key=AKIAIOSFODNN7EXAMPLE")
+                    msg = await asyncio.wait_for(ws.receive(), timeout=3)
+                    self.assertEqual(msg.type, aiohttp.WSMsgType.TEXT)
+                    self.assertIn("AKIAIOSFODNN7EXAMPLE", msg.data)
+                    await ws.close()
+                finally:
+                    await session.close()
+                    await asyncio.sleep(0.1)
+                    await proxy.stop()
 
         asyncio.run(_test())
 
