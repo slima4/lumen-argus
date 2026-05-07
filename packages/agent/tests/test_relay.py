@@ -1,5 +1,6 @@
 """Tests for the agent relay forwarding proxy."""
 
+import gzip
 import json
 import os
 import unittest
@@ -15,6 +16,7 @@ from lumen_argus_agent.relay import (
     _inject_identity_headers,
     _resolve_direct_upstream,
     _strip_lumen_headers,
+    make_passthrough_session,
 )
 from multidict import CIMultiDict
 
@@ -540,10 +542,7 @@ class TestAgentRelayForwarding(AioHTTPTestCase):
 
     async def setUpAsync(self):
         await super().setUpAsync()
-        # Create upstream session for relay
-        import aiohttp as aio
-
-        self._relay._upstream_session = aio.ClientSession(auto_decompress=False)
+        self._relay._upstream_session = make_passthrough_session(limit=10)
 
     async def tearDownAsync(self):
         if self._relay._upstream_session:
@@ -627,6 +626,122 @@ class TestAgentRelayForwarding(AioHTTPTestCase):
         self.assertIn(b"data: chunk1", body)
         self.assertIn(b"data: chunk2", body)
         self.assertIn(b"data: [DONE]", body)
+
+
+class TestAgentRelayGzipPassthrough(AioHTTPTestCase):
+    """Regression guard for the auto_decompress=False / accept-encoding pair.
+
+    Stands up a real gzip upstream and asserts byte-identical forwarding
+    across buffered and SSE paths.
+    """
+
+    async def get_application(self):
+        self._upstream_headers: list[dict[str, str]] = []
+
+        async def gzip_json(request: web.Request) -> web.Response:
+            self._upstream_headers.append(dict(request.headers))
+            payload = json.dumps({"message": "hello"}).encode()
+            compressed = gzip.compress(payload)
+            return web.Response(
+                body=compressed,
+                status=200,
+                headers={"Content-Type": "application/json", "Content-Encoding": "gzip"},
+            )
+
+        async def gzip_sse(request: web.Request) -> web.StreamResponse:
+            self._upstream_headers.append(dict(request.headers))
+            resp = web.StreamResponse(
+                status=200,
+                headers={"Content-Type": "text/event-stream", "Content-Encoding": "gzip"},
+            )
+            await resp.prepare(request)
+            for chunk in [b"data: a\n\n", b"data: b\n\n", b"data: [DONE]\n\n"]:
+                await resp.write(gzip.compress(chunk))
+            await resp.write_eof()
+            return resp
+
+        upstream_app = web.Application()
+        upstream_app.router.add_get("/buffered", gzip_json)
+        upstream_app.router.add_get("/stream", gzip_sse)
+
+        runner = web.AppRunner(upstream_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        self._upstream_port = site._server.sockets[0].getsockname()[1]
+        self._upstream_runner = runner
+
+        config = RelayConfig(
+            upstream_url="http://127.0.0.1:%d" % self._upstream_port,
+            agent_id="agent_test",
+            machine_id="mac_test",
+        )
+        relay = AgentRelay(config)
+        self._relay = relay
+
+        app = web.Application()
+        app[_RELAY_KEY] = relay
+        from lumen_argus_agent.relay import _handle_request
+
+        app.router.add_route("*", "/{path_info:.*}", _handle_request)
+        return app
+
+    async def setUpAsync(self):
+        await super().setUpAsync()
+        self._relay._upstream_session = make_passthrough_session(limit=10)
+        # Client session must NOT auto-decompress — we are asserting raw bytes.
+        self._raw_client = make_passthrough_session(limit=10)
+
+    async def tearDownAsync(self):
+        await self._raw_client.close()
+        if self._relay._upstream_session:
+            await self._relay._upstream_session.close()
+        await self._upstream_runner.cleanup()
+        await super().tearDownAsync()
+
+    @unittest_run_loop
+    async def test_buffered_gzip_body_byte_identical(self):
+        """Buffered response: gzip body forwarded verbatim, Content-Encoding preserved."""
+        url = self.server.make_url("/buffered")
+        async with self._raw_client.get(url) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.headers.get("Content-Encoding"), "gzip")
+            received = await resp.read()
+        self.assertEqual(json.loads(gzip.decompress(received)), {"message": "hello"})
+        self.assertEqual(
+            received,
+            gzip.compress(json.dumps({"message": "hello"}).encode()),
+        )
+
+    @unittest_run_loop
+    async def test_sse_gzip_chunks_byte_identical(self):
+        """Streaming response: per-chunk gzip frames forwarded verbatim."""
+        url = self.server.make_url("/stream")
+        async with self._raw_client.get(url) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.headers.get("Content-Encoding"), "gzip")
+            received = await resp.read()
+        expected = b"".join(gzip.compress(c) for c in [b"data: a\n\n", b"data: b\n\n", b"data: [DONE]\n\n"])
+        self.assertEqual(received, expected)
+
+    @unittest_run_loop
+    async def test_client_accept_encoding_does_not_pass_through(self):
+        """Sentinel codec from inbound Accept-Encoding must not reach upstream.
+
+        aiohttp injects its own default Accept-Encoding on the outbound
+        request, so we cannot assert the header is absent — only that the
+        original client value is not propagated.
+        """
+        url = self.server.make_url("/buffered")
+        async with self._raw_client.get(url, headers={"Accept-Encoding": "x-lumen-sentinel-codec"}) as resp:
+            await resp.read()
+        self.assertEqual(len(self._upstream_headers), 1)
+        upstream = {k.lower(): v for k, v in self._upstream_headers[0].items()}
+        self.assertNotIn(
+            "x-lumen-sentinel-codec",
+            upstream.get("accept-encoding", ""),
+            "client accept-encoding leaked to upstream — strip invariant broken",
+        )
 
 
 class TestAgentRelayFailMode(AioHTTPTestCase):

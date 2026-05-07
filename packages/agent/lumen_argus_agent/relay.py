@@ -127,6 +127,26 @@ def _resolve_direct_upstream(path: str, headers: dict[str, str]) -> tuple[str, s
 
 
 # ---------------------------------------------------------------------------
+# Passthrough session factory
+# ---------------------------------------------------------------------------
+
+
+def make_passthrough_session(*, limit: int) -> aiohttp.ClientSession:
+    """Build a ClientSession for byte-identical response forwarding.
+
+    ``auto_decompress=False`` is load-bearing: ``_forward_via`` propagates
+    the upstream ``Content-Encoding`` header verbatim, so aiohttp must not
+    silently gunzip the body — that would double-encode against the
+    preserved header. Paired with the ``accept-encoding`` strip in
+    ``_build_forward_headers`` (which normalizes the inbound value).
+    """
+    return aiohttp.ClientSession(
+        connector=aiohttp.TCPConnector(limit=limit),
+        auto_decompress=False,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Relay server
 # ---------------------------------------------------------------------------
 
@@ -157,15 +177,8 @@ class AgentRelay:
 
     async def start(self) -> None:
         """Start the relay server."""
-        connector_kwargs: dict[str, Any] = {"limit": self.config.max_connections}
-        self._upstream_session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(**connector_kwargs),
-            auto_decompress=False,
-        )
-        self._direct_session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(**connector_kwargs),
-            auto_decompress=False,
-        )
+        self._upstream_session = make_passthrough_session(limit=self.config.max_connections)
+        self._direct_session = make_passthrough_session(limit=self.config.max_connections)
 
         self._app = web.Application()
         self._app[_RELAY_KEY] = self
@@ -392,6 +405,7 @@ def _build_forward_headers(request: web.Request, body: bytes) -> CIMultiDict[str
         lk = key.lower()
         if lk in _HOP_BY_HOP:
             continue
+        # ``accept-encoding`` strip pairs with ``auto_decompress=False`` — see ``make_passthrough_session``.
         if lk in ("host", "accept-encoding"):
             continue
         if lk == "content-length":
