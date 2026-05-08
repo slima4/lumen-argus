@@ -27,6 +27,9 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 if TYPE_CHECKING:
     from lumen_argus.analytics.store import AnalyticsStore
+    from lumen_argus.models import ScanResult
+    from lumen_argus.pipeline._pipeline import ScannerPipeline
+    from lumen_argus.policy import ActionDecision, PolicyEngine
 
 from lumen_argus.detectors import BaseDetector
 from lumen_argus.models import Finding, SessionContext
@@ -60,6 +63,32 @@ class ProxyServerProtocol(Protocol):
     def active_ws_connections(self) -> int: ...
 
 
+class PostScanHook(Protocol):
+    """Called after each request scan: (result, body, provider, *, session, model).
+
+    Pipeline invokes positionally with ``session=`` keyword; response-side
+    invokes with all keyword arguments including ``model``. ``model`` is
+    optional — pipeline omits it. Exceptions are caught by callers.
+    """
+
+    def __call__(
+        self,
+        result: "ScanResult",
+        body: bytes,
+        provider: str,
+        *,
+        session: SessionContext | None = ...,
+        model: str = ...,
+    ) -> None: ...
+
+
+# Hook type aliases — fixed-arg signatures use Callable; PostScanHook is a
+# Protocol because ``model`` is keyword-only with a default.
+EvaluateHook = Callable[[list[Finding], "PolicyEngine"], "ActionDecision"]
+PreRequestHook = Callable[[int], None]
+ConfigReloadHook = Callable[["ScannerPipeline"], None]
+
+
 class ExtensionRegistry:
     """Discovers and loads extensions via Python entry points."""
 
@@ -77,10 +106,10 @@ class ExtensionRegistry:
         self._notifiers: list[Any] = []
         self._redact_hook: ExtensionRegistry.RedactHook | None = None
         self._response_chunk_hook: ExtensionRegistry.ResponseChunkHook | None = None
-        self._post_scan_hook: Callable[..., Any] | None = None
-        self._config_reload_hook: Callable[..., Any] | None = None
-        self._evaluate_hook: Callable[..., Any] | None = None
-        self._pre_request_hook: Callable[..., Any] | None = None
+        self._post_scan_hook: PostScanHook | None = None
+        self._config_reload_hook: ConfigReloadHook | None = None
+        self._evaluate_hook: EvaluateHook | None = None
+        self._pre_request_hook: PreRequestHook | None = None
         self._proxy_server: ProxyServerProtocol | None = None
         self._loaded_plugins: list[tuple[str, str]] = []
         # Parallel to _loaded_plugins: ep.name -> module object, populated on
@@ -166,7 +195,7 @@ class ExtensionRegistry:
         """Return the registered response chunk hook, or None."""
         return self._response_chunk_hook
 
-    def set_post_scan_hook(self, hook: Callable[..., Any]) -> None:
+    def set_post_scan_hook(self, hook: PostScanHook) -> None:
         """Register: hook(scan_result, body, provider, session=ctx) after each scan.
 
         The session kwarg (SessionContext or None) was added in v0.3.
@@ -174,17 +203,17 @@ class ExtensionRegistry:
         """
         self._post_scan_hook = hook
 
-    def get_post_scan_hook(self) -> Callable[..., Any] | None:
+    def get_post_scan_hook(self) -> PostScanHook | None:
         return self._post_scan_hook
 
-    def set_config_reload_hook(self, hook: Callable[..., Any]) -> None:
+    def set_config_reload_hook(self, hook: ConfigReloadHook) -> None:
         """Register: hook(pipeline) called after SIGHUP config reload."""
         self._config_reload_hook = hook
 
-    def get_config_reload_hook(self) -> Callable[..., Any] | None:
+    def get_config_reload_hook(self) -> ConfigReloadHook | None:
         return self._config_reload_hook
 
-    def set_evaluate_hook(self, hook: Callable[..., Any]) -> None:
+    def set_evaluate_hook(self, hook: EvaluateHook) -> None:
         """Register: hook(findings, policy) -> ActionDecision.
 
         If set, called INSTEAD of PolicyEngine.evaluate() — the hook
@@ -197,14 +226,14 @@ class ExtensionRegistry:
         """
         self._evaluate_hook = hook
 
-    def get_evaluate_hook(self) -> Callable[..., Any] | None:
+    def get_evaluate_hook(self) -> EvaluateHook | None:
         return self._evaluate_hook
 
-    def set_pre_request_hook(self, hook: Callable[..., Any]) -> None:
+    def set_pre_request_hook(self, hook: PreRequestHook) -> None:
         """Register: hook(request_id) called at the start of each request."""
         self._pre_request_hook = hook
 
-    def get_pre_request_hook(self) -> Callable[..., Any] | None:
+    def get_pre_request_hook(self) -> PreRequestHook | None:
         return self._pre_request_hook
 
     def set_proxy_server(self, server: ProxyServerProtocol) -> None:
