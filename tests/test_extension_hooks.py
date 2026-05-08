@@ -674,5 +674,236 @@ class TestLoadPluginsTopoSort(unittest.TestCase):
         self.assertEqual(self.calls, ["a", "b", "c"])
 
 
+class TestConfigurePlugins(unittest.TestCase):
+    """Two-phase plugin lifecycle: configure_plugins runs after load_plugins
+    once load_config has produced a Config. Static contributions stay in
+    register(); runtime work moves to configure(registry, config).
+    """
+
+    def setUp(self):
+        self.events: list[tuple[str, str]] = []  # (phase, plugin_name)
+
+    def _build_module(self, name: str, deps: tuple[str, ...] = (), configure=None, configure_attr=None):
+        """Make a fake plugin module that records register/configure calls."""
+        import types
+
+        mod = types.ModuleType(f"fake_mod_{name}")
+        if deps:
+            mod.LUMEN_ARGUS_PLUGIN_DEPENDS_ON = deps
+
+        def register(_registry, _name=name):
+            self.events.append(("register", _name))
+
+        mod.register = register
+
+        if configure is not None:
+            mod.configure = configure
+        elif configure_attr is not None:
+            mod.configure = configure_attr  # may be non-callable
+        return mod
+
+    def _registry_with_loaded(self, modules) -> ExtensionRegistry:
+        """Build an ExtensionRegistry pre-populated as if load_plugins ran."""
+        reg = ExtensionRegistry()
+        for name, mod in modules.items():
+            mod.register(reg)
+            reg._loaded_plugins.append((name, "0.0.1"))
+            reg._loaded_plugin_modules[name] = mod
+        return reg
+
+    def test_configure_called_in_load_order(self):
+        """configure_plugins iterates _loaded_plugins, so topo order is preserved."""
+
+        def cfg_a(_r, _c):
+            self.events.append(("configure", "a"))
+
+        def cfg_b(_r, _c):
+            self.events.append(("configure", "b"))
+
+        a = self._build_module("a", configure=cfg_a)
+        b = self._build_module("b", deps=("a",), configure=cfg_b)
+        reg = self._registry_with_loaded({"a": a, "b": b})
+        reg.configure_plugins(config=object())
+
+        configures = [n for phase, n in self.events if phase == "configure"]
+        self.assertEqual(configures, ["a", "b"])
+
+    def test_configure_optional_plugin_without_configure_skipped(self):
+        a = self._build_module("a")  # no configure
+        reg = self._registry_with_loaded({"a": a})
+        reg.configure_plugins(config=object())
+        self.assertEqual([phase for phase, _ in self.events], ["register"])
+        self.assertIn("a", reg._configured_plugins)
+
+    def test_configure_receives_registry_and_config(self):
+        captured = {}
+
+        def cfg(reg, config):
+            captured["reg"] = reg
+            captured["config"] = config
+
+        a = self._build_module("a", configure=cfg)
+        reg = self._registry_with_loaded({"a": a})
+        sentinel = object()
+        reg.configure_plugins(config=sentinel)
+        self.assertIs(captured["reg"], reg)
+        self.assertIs(captured["config"], sentinel)
+
+    def test_configure_exception_does_not_abort_siblings(self):
+        def cfg_a(_r, _c):
+            raise RuntimeError("boom")
+
+        def cfg_b(_r, _c):
+            self.events.append(("configure", "b"))
+
+        a = self._build_module("a", configure=cfg_a)
+        b = self._build_module("b", configure=cfg_b)
+        reg = self._registry_with_loaded({"a": a, "b": b})
+        reg.configure_plugins(config=object())
+
+        configures = [n for phase, n in self.events if phase == "configure"]
+        self.assertEqual(configures, ["b"])
+        # Failed plugin still recorded — best-effort, no retry on next call.
+        self.assertIn("a", reg._configured_plugins)
+        self.assertIn("b", reg._configured_plugins)
+
+    def test_configure_is_idempotent(self):
+        def cfg(_r, _c):
+            self.events.append(("configure", "a"))
+
+        a = self._build_module("a", configure=cfg)
+        reg = self._registry_with_loaded({"a": a})
+        reg.configure_plugins(config=object())
+        reg.configure_plugins(config=object())  # second call no-op
+        configures = [n for phase, n in self.events if phase == "configure"]
+        self.assertEqual(configures, ["a"])
+
+    def test_non_callable_configure_attribute_skipped_with_warning(self):
+        a = self._build_module("a", configure_attr="not a function")
+        reg = self._registry_with_loaded({"a": a})
+        with self.assertLogs("argus.extensions", level="WARNING") as captured:
+            reg.configure_plugins(config=object())
+        self.assertTrue(any("non-callable configure" in m for m in captured.output))
+        self.assertIn("a", reg._configured_plugins)
+
+    def test_configure_skipped_for_plugins_not_in_loaded(self):
+        """If a plugin was dropped (missing dep / cycle), it isn't in
+        _loaded_plugins, so its configure must not run even if its module
+        is sitting in _loaded_plugin_modules from an earlier load."""
+
+        def cfg(_r, _c):
+            self.events.append(("configure", "ghost"))
+
+        ghost = self._build_module("ghost", configure=cfg)
+        reg = ExtensionRegistry()
+        # Module present in modules dict but absent from loaded list — the
+        # exact shape produced when a plugin is dropped during load_plugins.
+        reg._loaded_plugin_modules["ghost"] = ghost
+        reg.configure_plugins(config=object())
+        configures = [n for phase, n in self.events if phase == "configure"]
+        self.assertEqual(configures, [])
+
+    def test_configure_empty_registry_is_noop(self):
+        reg = ExtensionRegistry()
+        reg.configure_plugins(config=object())  # must not raise
+        self.assertEqual(reg._configured_plugins, set())
+
+
+class TestConfigurePluginsTopoIntegration(unittest.TestCase):
+    """End-to-end: configure_plugins iterates _loaded_plugins in the order
+    set by load_plugins() — meaning topo-sort governs configure ordering,
+    not the order plugins happen to be discovered.
+
+    The other TestConfigurePlugins suite populates _loaded_plugins
+    directly to test the iterator; this suite drives the real
+    load_plugins → configure_plugins path through the same fake
+    entry-point machinery TestLoadPluginsTopoSort uses, so a regression
+    in _resolve_plugin_load_order would surface here.
+    """
+
+    def setUp(self):
+        self.events: list[tuple[str, str]] = []
+
+    def _make_plugin(self, name, deps=()):
+        import types
+
+        module_name = f"fake_mod_topo_cfg_{name}"
+        mod = types.ModuleType(module_name)
+        if deps:
+            mod.LUMEN_ARGUS_PLUGIN_DEPENDS_ON = tuple(deps)
+
+        def register(_registry, _name=name):
+            self.events.append(("register", _name))
+
+        def configure(_registry, _config, _name=name):
+            self.events.append(("configure", _name))
+
+        mod.register = register
+        mod.configure = configure
+        return _FakeEntryPoint(name, module_name, register), mod
+
+    def _run(self, plugin_pairs):
+        import importlib
+        import importlib.metadata
+        import sys as _sys
+        from unittest.mock import patch
+
+        real_import = importlib.import_module
+        eps = [pair[0] for pair in plugin_pairs]
+        modules = {ep.module: mod for ep, mod in plugin_pairs}
+
+        def fake_entry_points(group=None):
+            if group == "lumen_argus.extensions":
+                return list(eps)
+            return []
+
+        def fake_import(name, package=None):
+            if name in modules:
+                return modules[name]
+            return real_import(name, package)
+
+        # load_plugins records modules via ``sys.modules.get(ep.module)``,
+        # so patched ``import_module`` is not enough — the fake modules
+        # must also be visible through sys.modules for configure_plugins
+        # to find them later.
+        with (
+            patch.object(importlib.metadata, "entry_points", fake_entry_points),
+            patch.object(importlib, "import_module", fake_import),
+            patch.dict(_sys.modules, modules),
+        ):
+            reg = ExtensionRegistry()
+            reg.load_plugins()
+            reg.configure_plugins(config=object())
+            return reg
+
+    def test_configure_follows_topo_order_under_reverse_iteration(self):
+        # Entry-point iteration order puts dependent before dependency;
+        # topo-sort must reorder, and configure_plugins must walk the
+        # resulting _loaded_plugins order. If configure ran in iteration
+        # order, b.configure would fire before a.configure.
+        a = self._make_plugin("a")
+        b = self._make_plugin("b", deps=("a",))
+        self._run([b, a])
+        configures = [n for phase, n in self.events if phase == "configure"]
+        self.assertEqual(configures, ["a", "b"])
+
+    def test_configure_skips_dropped_plugin_with_missing_dep(self):
+        # x depends on never_installed → dropped from _loaded_plugins →
+        # x.configure must not fire even though x's module has it.
+        x = self._make_plugin("x", deps=("never_installed",))
+        z = self._make_plugin("z")
+        self._run([x, z])
+        configures = [n for phase, n in self.events if phase == "configure"]
+        self.assertEqual(configures, ["z"])
+
+    def test_configure_chain_of_three_resolves_correctly(self):
+        a = self._make_plugin("a")
+        b = self._make_plugin("b", deps=("a",))
+        c = self._make_plugin("c", deps=("b",))
+        self._run([c, b, a])
+        configures = [n for phase, n in self.events if phase == "configure"]
+        self.assertEqual(configures, ["a", "b", "c"])
+
+
 if __name__ == "__main__":
     unittest.main()

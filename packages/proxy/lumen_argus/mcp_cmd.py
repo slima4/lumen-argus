@@ -70,6 +70,10 @@ def run_mcp(args: argparse.Namespace, extensions: ExtensionRegistry | None = Non
     if extensions is None:
         extensions = _ER()
         extensions.load_plugins()
+    # Runtime phase — plugins receive resolved Config. Idempotent, so
+    # extensions provided by an outer caller (already configured for the
+    # serve path) re-entering here pay no cost.
+    extensions.configure_plugins(config)
     policy_engine = extensions.get_mcp_policy_engine()
     escalation_fn = extensions.get_mcp_session_escalation()
     tool_policy_evaluator = extensions.get_tool_policy_evaluator()

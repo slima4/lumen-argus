@@ -138,9 +138,16 @@ def build_pipeline_config(cfg: Any) -> dict[str, Any]:
 def register_default_hooks(extensions: ExtensionRegistry) -> None:
     """Register community defaults for hooks plugins may override.
 
-    Each registration uses a non-clobbering guard so a plugin (e.g. Pro)
-    can register its own hook from ``register()`` before ``run_server``
-    runs, and that registration wins.
+    Each registration uses a non-clobbering guard so a plugin's earlier
+    binding wins. Plugins can bind from either lifecycle phase:
+
+    * ``register(registry)`` — runs at plugin discovery time, before
+      ``run_server``. Right place for hooks that don't need config.
+    * ``configure(registry, config)`` — runs inside ``run_server`` just
+      before this function. Right place for hooks that need ``Config``
+      (e.g. constructing a dispatcher with a config-driven channel
+      limit). Both phases are protected by the same non-clobbering
+      guards, so order between them is mechanical, not load-bearing.
     """
     from lumen_argus.notifiers import WEBHOOK_CHANNEL_TYPE, build_notifier
     from lumen_argus.redaction import redact_request_body
@@ -222,6 +229,12 @@ def run_server(
     else:
         display = TerminalDisplay(no_color=args.no_color)
     audit = AuditLogger(log_dir=audit_log_dir, retention_days=config.audit.retention_days)
+
+    # Plugin runtime phase — runs after load_config so plugins receive
+    # the resolved Config. Must precede register_default_hooks so a
+    # plugin's configure() can override a hook before community fills
+    # in defaults via the non-clobbering ``if not get_..._hook()`` guard.
+    extensions.configure_plugins(config)
 
     register_default_hooks(extensions)
 

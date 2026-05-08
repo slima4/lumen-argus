@@ -1,8 +1,23 @@
 """Extension registry with entry point discovery.
 
 Any pip-installed package can register extensions by declaring an entry point
-in the "lumen_argus.extensions" group. The entry point should point to a
-callable that accepts an ExtensionRegistry instance:
+in the "lumen_argus.extensions" group. The entry point points to a callable
+that accepts an ExtensionRegistry instance.
+
+Plugin lifecycle has two phases:
+
+1. ``register(registry)`` — static contributions only. CLI commands,
+   channel types, schema DDL, dashboard pages, dependency declarations.
+   Runs at ``load_plugins()`` time, before argparse, before
+   ``load_config``. Must not touch config, IO, or the database.
+
+2. ``configure(registry, config)`` — runtime initialization. Optional.
+   Pushed an Analytics store subclass via ``set_analytics_store``,
+   license check, hook binding, dispatcher construction. Runs after
+   ``load_config()`` produces a Config object. See
+   ``ExtensionRegistry.configure_plugins`` for the full contract.
+
+Example::
 
     # In the extension's pyproject.toml:
     [project.entry-points."lumen_argus.extensions"]
@@ -10,8 +25,14 @@ callable that accepts an ExtensionRegistry instance:
 
     # In my_package/__init__.py:
     def register(registry):
+        # Static phase — no config, no IO.
         from my_package.detectors import MyDetector
         registry.add_detector(MyDetector())
+
+    def configure(registry, config):
+        # Optional runtime phase — config-aware setup.
+        from my_package.store import MyStore
+        registry.set_analytics_store(MyStore(config.analytics.db_path))
 
 This is how lumen-argus-pro registers itself. Community users can also
 write custom detectors using the same mechanism.
@@ -27,6 +48,7 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 if TYPE_CHECKING:
     from lumen_argus.analytics.store import AnalyticsStore
+    from lumen_argus.config import Config
     from lumen_argus.models import ScanResult
     from lumen_argus.pipeline._pipeline import ScannerPipeline
     from lumen_argus.policy import ActionDecision, PolicyEngine
@@ -116,6 +138,10 @@ class ExtensionRegistry:
         # successful load. Used by loaded_plugin_build_infos() to read each
         # plugin's ``__build_info__`` (sidecar-build-identity-spec.md).
         self._loaded_plugin_modules: dict[str, Any] = {}
+        # Idempotency tracker for ``configure_plugins`` — names recorded here
+        # whether the configure call succeeded or raised, so a flaky plugin
+        # is not re-attempted on a second invocation.
+        self._configured_plugins: set[str] = set()
         # Dashboard extension hooks
         self._dashboard_pages: list[dict[str, Any]] = []
         self._dashboard_css: list[str] = []
@@ -985,3 +1011,60 @@ class ExtensionRegistry:
                     log.info("loaded extension: %s", ep.name)
                 except Exception as e:
                     log.error("failed to load extension '%s': %s", ep.name, e, exc_info=True)
+
+    def configure_plugins(self, config: "Config") -> None:
+        """Runtime phase — invoke each loaded plugin's optional ``configure`` callable.
+
+        Plugin lifecycle has two phases:
+
+        1. ``register(registry)`` — static contributions only. CLI commands,
+           channel types, schema DDL, dashboard pages, dependency declarations.
+           Runs at ``load_plugins()`` time, before argparse, before
+           ``load_config``. Must not touch config, IO, or the database.
+        2. ``configure(registry, config)`` — runtime initialization. A plugin
+           that wants its own Analytics store subclass pushes it via
+           ``registry.set_analytics_store(...)`` here; community's
+           ``initialize_analytics`` later calls ``get_analytics_store`` and
+           adopts what the plugin set, otherwise falls back to a community
+           default. Same push-model applies to license checkers, dispatchers,
+           and hook bindings. Runs after ``load_config()`` has produced a
+           ``Config`` object.
+
+        The contract: a plugin module that wants config-aware initialization
+        exposes a ``configure(registry, config)`` callable alongside its
+        entry-point ``register``. Plugins without ``configure`` are skipped
+        silently — the second phase is opt-in.
+
+        Iteration order matches ``_loaded_plugins`` (the topo-sorted load
+        order set by ``load_plugins``), so a plugin's declared dependencies
+        have already had their ``configure`` invoked. Idempotent: a plugin
+        is configured at most once per registry instance, recorded whether
+        its ``configure`` succeeded or raised.
+
+        Best-effort: an exception raised by one plugin's ``configure`` is
+        caught and logged at ERROR; sibling plugins continue to be
+        configured. Matches the failure semantics of ``register``.
+        """
+        for name, _version in self._loaded_plugins:
+            if name in self._configured_plugins:
+                continue
+            module = self._loaded_plugin_modules.get(name)
+            configure_fn = getattr(module, "configure", None) if module is not None else None
+            if configure_fn is None:
+                self._configured_plugins.add(name)
+                continue
+            if not callable(configure_fn):
+                log.warning(
+                    "plugin %r has non-callable configure attribute (%s); skipping",
+                    name,
+                    type(configure_fn).__name__,
+                )
+                self._configured_plugins.add(name)
+                continue
+            try:
+                configure_fn(self, config)
+                log.info("configured extension: %s", name)
+            except Exception as e:
+                log.error("failed to configure extension '%s': %s", name, e, exc_info=True)
+            finally:
+                self._configured_plugins.add(name)
