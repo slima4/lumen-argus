@@ -56,9 +56,9 @@ def _build_dashboard_html() -> str:
     js = "\n".join(_read_static(m) for m in _JS_MODULES)
     actions_json = json.dumps(list(ACTIONS), separators=(",", ":"))
     html = template.replace("{{STYLE}}", css).replace("{{SCRIPT}}", js).replace("{{ACTIONS_JSON}}", actions_json)
-    assert "{{STYLE}}" not in html, "Unreplaced {{STYLE}} placeholder"
-    assert "{{SCRIPT}}" not in html, "Unreplaced {{SCRIPT}} placeholder"
-    assert "{{ACTIONS_JSON}}" not in html, "Unreplaced {{ACTIONS_JSON}} placeholder"
+    for placeholder in ("{{STYLE}}", "{{SCRIPT}}", "{{ACTIONS_JSON}}"):
+        if placeholder in html:
+            raise RuntimeError("Unreplaced %s placeholder" % placeholder)
     return html
 
 

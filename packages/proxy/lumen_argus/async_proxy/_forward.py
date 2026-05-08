@@ -568,7 +568,8 @@ async def _do_forward(
         # MCP response scanning
         scan_mcp_response(server, request_id, resp_text, _mcp_info, _mcp_method, provider, model, session)
 
-        assert response is not None
+        if response is None:
+            raise RuntimeError("forward path produced no response object")
         return response
 
     except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):

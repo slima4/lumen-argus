@@ -206,7 +206,7 @@ def print_setup_instructions() -> None:
 
 def _extract_cert_from_combined(combined_path: str, cert_path: str) -> None:
     """Extract the public certificate from a combined key+cert PEM file."""
-    with open(combined_path, "r") as f:
+    with open(combined_path, "r", encoding="utf-8") as f:
         content = f.read()
 
     # Find the certificate block
