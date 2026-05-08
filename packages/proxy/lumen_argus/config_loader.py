@@ -65,7 +65,7 @@ def load_rules_bundle(path: str | None = None, pro: bool = False) -> tuple[list[
     """Load a rules JSON bundle. Returns (rules_list, version, tier)."""
     if path:
         with open(path, encoding="utf-8") as f:
-            bundle = json.loads(f.read())
+            bundle = json.load(f)
         return bundle.get("rules", []), bundle.get("version", ""), bundle.get("tier", "custom")
 
     if pro:
@@ -80,14 +80,14 @@ def load_rules_bundle(path: str | None = None, pro: bool = False) -> tuple[list[
 
             try:
                 with _resources.open_text("lumen_argus_pro.rules", "pro.json") as f:
-                    bundle = json.loads(f.read())
+                    bundle = json.load(f)
                 return bundle.get("rules", []), bundle.get("version", ""), "pro"
             except (ModuleNotFoundError, FileNotFoundError):
                 print("lumen-argus: Pro rules bundle not found. Is lumen-argus-pro installed?", file=sys.stderr)
                 sys.exit(1)
         try:
             with open(pro_path, encoding="utf-8") as f:
-                bundle = json.loads(f.read())
+                bundle = json.load(f)
             return bundle.get("rules", []), bundle.get("version", ""), "pro"
         except FileNotFoundError:
             print("lumen-argus: Pro rules bundle not found. Is lumen-argus-pro installed?", file=sys.stderr)
@@ -96,7 +96,7 @@ def load_rules_bundle(path: str | None = None, pro: bool = False) -> tuple[list[
     # Community bundle
     bundle_path = os.path.join(os.path.dirname(__file__), "rules", "community.json")
     with open(bundle_path, encoding="utf-8") as f:
-        bundle = json.loads(f.read())
+        bundle = json.load(f)
     return bundle.get("rules", []), bundle.get("version", ""), "community"
 
 

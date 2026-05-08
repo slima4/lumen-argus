@@ -46,7 +46,8 @@ async def run_ws_bridge(
 
     pending_requests: dict[Any, Any] = {}
 
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=None, sock_connect=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.ws_connect(upstream_url) as ws:
             ws_transport = WebSocketClientTransport(ws)
             client = await StdioTransport.from_process_stdio()

@@ -94,7 +94,7 @@ def fetch_enrollment_config(server_url: str, token: str = "") -> dict[str, Any]:
     try:
         ctx = ssl_context_for_proxy()
         with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-            data: dict[str, Any] = json.loads(resp.read())
+            data: dict[str, Any] = json.load(resp)
             return data
     except urllib.error.HTTPError as e:
         if e.code == 402:
@@ -146,7 +146,7 @@ def register_agent(server_url: str, agent_id: str, machine_id: str, token: str =
         ctx = ssl_context_for_proxy()
         with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
             try:
-                response_data: dict[str, Any] = json.loads(resp.read())
+                response_data: dict[str, Any] = json.load(resp)
             except ValueError:
                 response_data = {}
     except urllib.error.HTTPError as e:

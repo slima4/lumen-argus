@@ -51,7 +51,8 @@ async def run_http_listener(
     start_time = time.monotonic()
     log.info("mcp: HTTP listener on %s:%d -> %s", listen_host, listen_port, upstream_url)
 
-    upstream_session = aiohttp.ClientSession()
+    timeout = aiohttp.ClientTimeout(total=300, sock_connect=10)
+    upstream_session = aiohttp.ClientSession(timeout=timeout)
     upstream = HTTPClientTransport(upstream_session, upstream_url)
 
     async def handle_health(request: web.Request) -> web.Response:

@@ -105,7 +105,7 @@ def _rules_validate(args: argparse.Namespace) -> None:
 
     try:
         with open(args.file, encoding="utf-8") as f:
-            bundle = json.loads(f.read())
+            bundle = json.load(f)
     except FileNotFoundError:
         print("lumen-argus: file not found: %s" % args.file, file=sys.stderr)
         sys.exit(1)

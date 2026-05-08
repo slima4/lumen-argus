@@ -168,7 +168,7 @@ def probe_loopback_health(
             if resp.status != 200:
                 return PROBE_AMBIGUOUS
             try:
-                payload = json.loads(resp.read())
+                payload = json.load(resp)
             except (ValueError, OSError):
                 return PROBE_AMBIGUOUS
     except urllib.error.HTTPError:

@@ -45,7 +45,8 @@ async def run_http_bridge(
 
     pending_requests: dict[Any, Any] = {}
 
-    session = aiohttp.ClientSession()
+    timeout = aiohttp.ClientTimeout(total=300, sock_connect=10)
+    session = aiohttp.ClientSession(timeout=timeout)
     transport = HTTPClientTransport(session, upstream_url)
     client = await StdioTransport.from_process_stdio()
 

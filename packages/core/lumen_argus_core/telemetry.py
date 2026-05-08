@@ -119,7 +119,7 @@ def send_heartbeat() -> bool:
         ctx = ssl_context_for_proxy()
         with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
             try:
-                response_data = json.loads(resp.read())
+                response_data = json.load(resp)
             except ValueError:
                 response_data = {}
         log.debug("heartbeat sent to %s", dashboard_url)
