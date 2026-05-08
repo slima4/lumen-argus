@@ -23,7 +23,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 if TYPE_CHECKING:
     from lumen_argus.analytics.store import AnalyticsStore
@@ -42,6 +42,22 @@ class CliCommandDef:
     handler: Callable[..., Any]  # callable(args) invoked when subcommand runs
     help: str = ""  # help text for argparse
     arguments: list[dict[str, Any]] = field(default_factory=list)  # list of {"args": [...], "kwargs": {...}}
+
+
+class ProxyServerProtocol(Protocol):
+    """Surface that ExtensionRegistry consumers expect from the registered
+    proxy server. AsyncArgusProxy structurally satisfies this; alternate
+    server implementations registered via set_proxy_server() must expose
+    the same attributes.
+    """
+
+    port: int
+    bind: str
+    mode: str
+    standalone: bool
+
+    @property
+    def active_ws_connections(self) -> int: ...
 
 
 class ExtensionRegistry:
@@ -65,7 +81,7 @@ class ExtensionRegistry:
         self._config_reload_hook: Callable[..., Any] | None = None
         self._evaluate_hook: Callable[..., Any] | None = None
         self._pre_request_hook: Callable[..., Any] | None = None
-        self._proxy_server: Any | None = None
+        self._proxy_server: ProxyServerProtocol | None = None
         self._loaded_plugins: list[tuple[str, str]] = []
         # Parallel to _loaded_plugins: ep.name -> module object, populated on
         # successful load. Used by loaded_plugin_build_infos() to read each
@@ -191,11 +207,11 @@ class ExtensionRegistry:
     def get_pre_request_hook(self) -> Callable[..., Any] | None:
         return self._pre_request_hook
 
-    def set_proxy_server(self, server: object) -> None:
+    def set_proxy_server(self, server: ProxyServerProtocol) -> None:
         """Store server reference for plugin runtime config updates."""
         self._proxy_server = server
 
-    def get_proxy_server(self) -> Any | None:
+    def get_proxy_server(self) -> ProxyServerProtocol | None:
         return self._proxy_server
 
     def get_ws_active_count(self) -> int:
@@ -206,9 +222,9 @@ class ExtensionRegistry:
         structures.
         """
         proxy = self._proxy_server
-        if proxy and hasattr(proxy, "active_ws_connections"):
-            return proxy.active_ws_connections  # type: ignore[no-any-return]
-        return 0
+        if proxy is None:
+            return 0
+        return proxy.active_ws_connections
 
     def extra_detectors(self) -> list[BaseDetector]:
         return list(self._detectors)
