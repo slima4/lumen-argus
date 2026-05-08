@@ -309,7 +309,7 @@ class AgentRelay:
             log.info("#%d %s %s → %d (%dms) via direct:%s", request_id, method, path, resp.status, elapsed, provider)
             return resp
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            log.error("#%d direct upstream failed: %s", request_id, exc)
+            log.error("#%d direct upstream failed: %s", request_id, exc, exc_info=True)
             return web.json_response(
                 {"error": {"type": "upstream_error", "message": "upstream provider unreachable"}},
                 status=502,
@@ -363,7 +363,7 @@ class AgentRelay:
                 except asyncio.TimeoutError:
                     # Headers already flushed — close stream cleanly instead
                     # of surfacing a second response the client can't parse.
-                    log.error("#%d upstream SSE idle timeout", request_id)
+                    log.error("#%d upstream SSE idle timeout", request_id, exc_info=True)
                 try:
                     await stream_resp.write_eof()
                 except (ConnectionResetError, BrokenPipeError, OSError):

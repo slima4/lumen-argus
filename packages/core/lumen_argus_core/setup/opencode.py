@@ -65,7 +65,7 @@ def configure_opencode(
             if not isinstance(data, dict):
                 data = {}
         except (json.JSONDecodeError, OSError) as e:
-            log.error("could not parse %s — skipping OpenCode config: %s", config_path, e)
+            log.error("could not parse %s — skipping OpenCode config: %s", config_path, e, exc_info=True)
             return None
 
     overrides = build_provider_overrides(proxy_url)
@@ -117,6 +117,7 @@ def configure_opencode(
             "cannot create %s — elevated privileges required for managed config: %s",
             os.path.dirname(expanded),
             e,
+            exc_info=True,
         )
         return None
 
@@ -126,7 +127,7 @@ def configure_opencode(
             backup_path = _backup_file(expanded)
             log.info("backed up %s (JSONC comments will not be preserved in rewrite)", expanded)
         except OSError as e:
-            log.error("cannot proceed without backup for %s: %s", expanded, e)
+            log.error("cannot proceed without backup for %s: %s", expanded, e, exc_info=True)
             return None
 
     try:

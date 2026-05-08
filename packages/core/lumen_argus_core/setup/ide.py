@@ -50,7 +50,7 @@ def update_ide_settings(
     try:
         backup_path = _backup_file(expanded)
     except OSError as e:
-        log.error("cannot proceed without backup for %s: %s", expanded, e)
+        log.error("cannot proceed without backup for %s: %s", expanded, e, exc_info=True)
         return None
 
     settings[key] = value

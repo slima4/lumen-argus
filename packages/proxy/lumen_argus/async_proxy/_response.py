@@ -119,7 +119,7 @@ async def stream_sse_response(
     except asyncio.TimeoutError:
         # Socket idle past sock_read. Headers already flushed, so we can't
         # emit a fresh 504 JSON body — close the SSE stream cleanly instead.
-        log.error("#%d upstream SSE idle timeout after %d bytes", request_id, resp_size)
+        log.error("#%d upstream SSE idle timeout after %d bytes", request_id, resp_size, exc_info=True)
 
     resp_text = ""
     if should_accumulate and text_parts:

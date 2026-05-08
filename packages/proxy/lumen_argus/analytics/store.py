@@ -126,6 +126,7 @@ class AnalyticsStore:
                     "schema extension #%d: placeholder resolution failed: %s",
                     idx,
                     e,
+                    exc_info=True,
                 )
                 continue
             try:

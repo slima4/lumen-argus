@@ -76,7 +76,7 @@ def main(argv: list[str] | None = None) -> None:
                 sub.add_argument(*arg["args"], **arg["kwargs"])
             plugin_commands[cmd.name] = cmd.handler
         except (KeyError, TypeError) as exc:
-            log.error("skipping malformed plugin command %r: %s", cmd.name, exc)
+            log.error("skipping malformed plugin command %r: %s", cmd.name, exc, exc_info=True)
 
     args = parser.parse_args(argv)
 

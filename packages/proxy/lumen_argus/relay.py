@@ -394,7 +394,7 @@ class ArgusRelay:
                         except (ConnectionResetError, ConnectionAbortedError):
                             break
                 except asyncio.TimeoutError:
-                    log.error("#%d upstream SSE idle timeout via %s", request_id, via)
+                    log.error("#%d upstream SSE idle timeout via %s", request_id, via, exc_info=True)
                 try:
                     await stream_resp.write_eof()
                 except (ConnectionResetError, BrokenPipeError, OSError):

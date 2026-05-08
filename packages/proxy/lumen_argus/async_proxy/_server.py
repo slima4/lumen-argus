@@ -192,6 +192,7 @@ class AsyncArgusProxy:
                 target_port,
                 old_bind,
                 old_port,
+                exc_info=True,
             )
             self.port = old_port
             self.bind = old_bind

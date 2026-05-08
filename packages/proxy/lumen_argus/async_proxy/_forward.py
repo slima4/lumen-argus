@@ -468,7 +468,7 @@ async def _do_forward(
                 "Raise proxy.timeout in ~/.lumen-argus/config.yaml or the "
                 "dashboard Settings page if upstream needs longer idle windows." % server.timeout
             )
-            log.error("#%d upstream idle timeout after %ds", request_id, server.timeout)
+            log.error("#%d upstream idle timeout after %ds", request_id, server.timeout, exc_info=True)
             server.display.show_error(request_id, msg)
             server.stats.record(provider, len(body), scan_result)
             return web.json_response(
@@ -537,7 +537,7 @@ async def _do_forward(
                 "If behind a corporate proxy, set proxy.ca_bundle in "
                 "~/.lumen-argus/config.yaml" % (host, e)
             )
-            log.error("#%d %s", request_id, msg)
+            log.error("#%d %s", request_id, msg, exc_info=True)
             server.display.show_error(request_id, msg)
             server.stats.record(provider, len(body), scan_result)
             return web.json_response(

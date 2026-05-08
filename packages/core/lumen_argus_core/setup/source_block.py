@@ -81,7 +81,7 @@ def install_source_block(profile_path: str = "", dry_run: bool = False) -> Setup
         try:
             backup_path = _backup_file(profile_path)
         except OSError as e:
-            log.error("cannot proceed without backup for %s: %s", profile_path, e)
+            log.error("cannot proceed without backup for %s: %s", profile_path, e, exc_info=True)
             return None
 
     try:

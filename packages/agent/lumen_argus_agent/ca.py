@@ -272,7 +272,7 @@ def _install_ca_macos(cert_path: str) -> bool:
         log.error("macOS CA install failed: %s", result.stderr.strip())
         return False
     except (OSError, subprocess.TimeoutExpired) as exc:
-        log.error("macOS CA install failed: %s", exc)
+        log.error("macOS CA install failed: %s", exc, exc_info=True)
         return False
 
 
@@ -298,5 +298,5 @@ def _install_ca_linux(cert_path: str) -> bool:
         log.error("update-ca-certificates failed: %s", result.stderr.strip())
         return False
     except (OSError, subprocess.TimeoutExpired) as exc:
-        log.error("Linux CA install failed: %s", exc)
+        log.error("Linux CA install failed: %s", exc, exc_info=True)
         return False
